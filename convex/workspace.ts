@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
-import { assertOwnerKey } from "./lib/auth";
+import { assertOwnerKey, isOwnerKeyValid } from "./lib/auth";
 import { buildUniquePageSlug, computeNodePosition, deleteNodeTree, enqueueNodeAiWork, listPageNodes, syncLinksForNode } from "./lib/workspace";
 import { nodeKindValidator, nullableNodeIdValidator, priorityValidator, taskStatusValidator } from "./lib/validators";
 
@@ -22,6 +22,15 @@ export const listPages = query({
         query.eq("archived", false),
       )
       .collect();
+  },
+});
+
+export const validateOwnerKey = query({
+  args: {
+    ownerKey: v.string(),
+  },
+  handler: async (_ctx, args) => {
+    return isOwnerKeyValid(args.ownerKey);
   },
 });
 

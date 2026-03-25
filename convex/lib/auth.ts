@@ -1,11 +1,15 @@
-export function assertOwnerKey(ownerKey: string) {
+export function isOwnerKeyValid(ownerKey: string) {
   const configuredOwnerKey = process.env.OWNER_ACCESS_TOKEN;
 
   if (!configuredOwnerKey) {
-    return;
+    return true;
   }
 
-  if (ownerKey !== configuredOwnerKey) {
+  return ownerKey === configuredOwnerKey;
+}
+
+export function assertOwnerKey(ownerKey: string) {
+  if (!isOwnerKeyValid(ownerKey)) {
     throw new Error("Invalid owner access token.");
   }
 }

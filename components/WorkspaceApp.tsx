@@ -2,13 +2,21 @@
 
 import clsx from "clsx";
 import { useAction, useMutation, useQuery } from "convex/react";
-import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
 
 const SKIP = "skip" as const;
 const SIDEBAR_SECTIONS = ["Models", "Tasks", "Templates", "Journal"] as const;
+const OWNER_KEY_STORAGE_KEY = "maleshflow-owner-key";
+const OWNER_KEY_EVENT = "maleshflow-owner-key-change";
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
 type PageType = "default" | "model";
@@ -32,27 +40,46 @@ type TreeNode = OutlineTreeNode<{
 }>;
 
 function useOwnerKey() {
-  const [{ ownerKey, isReady }, setState] = useState(() => {
-    if (typeof window === "undefined") {
-      return { ownerKey: "", isReady: false };
-    }
+  const ownerKey = useSyncExternalStore(
+    (onChange) => {
+      if (typeof window === "undefined") {
+        return () => undefined;
+      }
 
-    return {
-      ownerKey: window.localStorage.getItem("maleshflow-owner-key") ?? "",
-      isReady: true,
-    };
-  });
+      const listener = () => onChange();
+      window.addEventListener("storage", listener);
+      window.addEventListener(OWNER_KEY_EVENT, listener);
+
+      return () => {
+        window.removeEventListener("storage", listener);
+        window.removeEventListener(OWNER_KEY_EVENT, listener);
+      };
+    },
+    () => {
+      if (typeof window === "undefined") {
+        return "";
+      }
+
+      return window.localStorage.getItem(OWNER_KEY_STORAGE_KEY) ?? "";
+    },
+    () => "",
+  );
 
   const updateOwnerKey = (nextValue: string) => {
-    setState({ ownerKey: nextValue, isReady: true });
-    if (typeof window !== "undefined" && nextValue.trim().length > 0) {
-      window.localStorage.setItem("maleshflow-owner-key", nextValue);
-    } else if (typeof window !== "undefined") {
-      window.localStorage.removeItem("maleshflow-owner-key");
+    if (typeof window === "undefined") {
+      return;
     }
+
+    if (nextValue.trim().length > 0) {
+      window.localStorage.setItem(OWNER_KEY_STORAGE_KEY, nextValue);
+    } else {
+      window.localStorage.removeItem(OWNER_KEY_STORAGE_KEY);
+    }
+
+    window.dispatchEvent(new Event(OWNER_KEY_EVENT));
   };
 
-  return { ownerKey, setOwnerKey: updateOwnerKey, isReady };
+  return { ownerKey, setOwnerKey: updateOwnerKey };
 }
 
 function toTreeNodes(nodes: Doc<"nodes">[]) {
@@ -139,7 +166,7 @@ function parseNodeDraft(draft: string) {
 
 export default function WorkspaceApp() {
   const convexConfigured = Boolean(process.env.NEXT_PUBLIC_CONVEX_URL);
-  const { ownerKey, setOwnerKey, isReady } = useOwnerKey();
+  const { ownerKey, setOwnerKey } = useOwnerKey();
   const [draftOwnerKey, setDraftOwnerKey] = useState("");
 
   if (!convexConfigured) {
@@ -161,26 +188,13 @@ export default function WorkspaceApp() {
     );
   }
 
-  if (!isReady) {
-    return (
-      <main className="grid min-h-screen place-items-center bg-[#f7f4ec] text-[#1b1916]">
-        <div className="rounded-[1.5rem] border border-[#d8cfbf] bg-white px-5 py-4 text-sm">
-          Loading workspace…
-        </div>
-      </main>
-    );
-  }
-
   if (!ownerKey) {
     return (
       <main className="grid min-h-screen place-items-center bg-[#f7f4ec] p-6 text-[#1b1916]">
-        <div className="w-full max-w-md rounded-[2rem] border border-[#d8cfbf] bg-white p-8 shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]">
+        <div className="w-full max-w-md border border-[#d8cfbf] bg-white p-8 shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]">
           <p className="text-xs uppercase tracking-[0.3em] text-[#8a6c2d]">
             Owner Access
           </p>
-          <h1 className="mt-4 text-4xl font-semibold tracking-tight">
-            MaleshFlow
-          </h1>
           <p className="mt-3 text-sm leading-6 text-[#6a6257]">
             Enter the owner access token to unlock the workspace.
           </p>
@@ -196,11 +210,11 @@ export default function WorkspaceApp() {
               value={draftOwnerKey}
               onChange={(event) => setDraftOwnerKey(event.target.value)}
               placeholder="Owner access token"
-              className="w-full rounded-[1.25rem] border border-[#d8cfbf] bg-[#fcfbf8] px-4 py-3 text-sm outline-none transition focus:border-[#8a6c2d]"
+              className="w-full border border-[#d8cfbf] bg-[#fcfbf8] px-4 py-3 text-sm outline-none transition focus:border-[#8a6c2d]"
             />
             <button
               type="submit"
-              className="w-full rounded-[1.25rem] bg-[#1f4a45] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#163733]"
+              className="w-full bg-[#1f4a45] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#163733]"
             >
               Unlock Workspace
             </button>
@@ -227,10 +241,19 @@ function ConfiguredWorkspace({
   const [isCreatingPage, setIsCreatingPage] = useState<SidebarSection | null>(null);
   const [isSendingChat, setIsSendingChat] = useState(false);
 
-  const pages = useQuery(api.workspace.listPages, ownerKey ? { ownerKey } : SKIP);
+  const isOwnerKeyValid = useQuery(
+    api.workspace.validateOwnerKey,
+    ownerKey ? { ownerKey } : SKIP,
+  );
+  const pages = useQuery(
+    api.workspace.listPages,
+    ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
+  );
   const pageTree = useQuery(
     api.workspace.getPageTree,
-    ownerKey && selectedPageId ? { ownerKey, pageId: selectedPageId } : SKIP,
+    ownerKey && isOwnerKeyValid && selectedPageId
+      ? { ownerKey, pageId: selectedPageId }
+      : SKIP,
   );
 
   const createPage = useMutation(api.workspace.createPage);
@@ -239,6 +262,12 @@ function ConfiguredWorkspace({
   const updateNode = useMutation(api.workspace.updateNode);
   const deleteNode = useMutation(api.workspace.deleteNode);
   const runChatPlanner = useAction(api.chat.runChatPlanner);
+
+  useEffect(() => {
+    if (isOwnerKeyValid === false) {
+      setOwnerKey("");
+    }
+  }, [isOwnerKeyValid, setOwnerKey]);
 
   useEffect(() => {
     if (!pages || pages.length === 0) {
@@ -337,15 +366,7 @@ function ConfiguredWorkspace({
     <main className="min-h-screen bg-[#f7f4ec] text-[#1b1916]">
       <div className="mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)]">
         <aside className="border-b border-[#d8cfbf] bg-[#efe7d9] p-6 lg:border-b-0 lg:border-r">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-[#8a6c2d]">
-                Workspace
-              </p>
-              <h1 className="mt-3 text-3xl font-semibold tracking-tight">
-                MaleshFlow
-              </h1>
-            </div>
+          <div className="flex items-start justify-end gap-4">
             <button
               type="button"
               onClick={() => setOwnerKey("")}
@@ -469,13 +490,11 @@ function ConfiguredWorkspace({
                     <input
                       value={modelChatInput}
                       onChange={(event) => setModelChatInput(event.target.value)}
-                      placeholder="Ask this model page to generate or reorganize examples…"
+                      placeholder=""
                       className="w-full border-0 border-b border-[#d8cfbf] bg-transparent px-0 py-2 text-sm outline-none"
                     />
                     <div className="flex items-center justify-between gap-4">
-                      <p className="text-sm text-[#6a6257]">
-                        {chatStatus || "Chat lives at the bottom of model pages."}
-                      </p>
+                      <p className="text-sm text-[#6a6257]">{chatStatus}</p>
                       <button
                         type="submit"
                         disabled={isSendingChat || modelChatInput.trim().length === 0}
