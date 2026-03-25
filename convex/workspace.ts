@@ -373,7 +373,8 @@ export const moveNode = mutation({
     }
 
     const pageId = args.pageId ?? node.pageId;
-    const parentNodeId = args.parentNodeId ?? node.parentNodeId;
+    const parentNodeId =
+      args.parentNodeId === undefined ? node.parentNodeId : args.parentNodeId;
     const position = await computeNodePosition(
       ctx.db,
       pageId,

@@ -26,6 +26,19 @@ const modelRewriteSchema = z.object({
   modelLines: z.array(z.string()).min(1).max(24),
 });
 
+type ModelRewriteDebug = {
+  model: string;
+  systemPrompt: string;
+  userPrompt: string;
+  response:
+    | {
+        summary: string;
+        modelLines: string[];
+      }
+    | null;
+  error: string | null;
+};
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ensureChatThreadRef = api.chatData.ensureChatThread as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -222,6 +235,7 @@ export const rewriteModelSection = action({
     messageId: Id<"chatMessages">;
     summary: string;
     modelLines: string[];
+    debug: ModelRewriteDebug;
   }> => {
     assertOwnerKey(args.ownerKey);
 
@@ -262,42 +276,54 @@ export const rewriteModelSection = action({
 
     let summary = "Updated the model section.";
     let modelLines = fallbackModelLines;
+    let shouldApplyModelLines = false;
+    const model = process.env.OPENAI_CHAT_MODEL ?? "gpt-5-mini";
+    const systemPrompt =
+      "You rewrite only the Model section of a page. Use Recent Examples only as evidence and inspiration. Never rewrite, summarize, or mention the Recent Examples section in the output. Return concise plain-text model lines only. No bullets, no numbering, no markdown headings, no checkbox syntax.";
+    const userPrompt = [
+      `Page title: ${modelContext.page.title}`,
+      `Request: ${args.prompt}`,
+      "",
+      "Current Model lines:",
+      existingModelLines.length > 0
+        ? existingModelLines.map((line: string) => `- ${line}`).join("\n")
+        : "(empty)",
+      "",
+      "Recent Examples for context only:",
+      recentExampleLines.length > 0
+        ? recentExampleLines.map((line: string) => `- ${line}`).join("\n")
+        : "(empty)",
+      "",
+      "Recent conversation:",
+      priorMessages
+        .slice(-6)
+        .map((message: { role: string; text: string }) => `${message.role}: ${message.text}`)
+        .join("\n") || "(none)",
+    ].join("\n");
+    const debug: ModelRewriteDebug = {
+      model,
+      systemPrompt,
+      userPrompt,
+      response: null,
+      error: null,
+    };
 
     const client = getOpenAIClient();
     if (!client) {
       summary = "OpenAI is not configured, so the model section was left unchanged.";
+      debug.error = "OPENAI_API_KEY is not configured in Convex.";
     } else {
       try {
         const response = await client.responses.parse({
-          model: process.env.OPENAI_CHAT_MODEL ?? "gpt-5-mini",
+          model,
           input: [
             {
               role: "system",
-              content:
-                "You rewrite only the Model section of a page. Use Recent Examples only as evidence and inspiration. Never rewrite, summarize, or mention the Recent Examples section in the output. Return concise plain-text model lines only. No bullets, no numbering, no markdown headings, no checkbox syntax.",
+              content: systemPrompt,
             },
             {
               role: "user",
-              content: [
-                `Page title: ${modelContext.page.title}`,
-                `Request: ${args.prompt}`,
-                "",
-                "Current Model lines:",
-                existingModelLines.length > 0
-                  ? existingModelLines.map((line: string) => `- ${line}`).join("\n")
-                  : "(empty)",
-                "",
-                "Recent Examples for context only:",
-                recentExampleLines.length > 0
-                  ? recentExampleLines.map((line: string) => `- ${line}`).join("\n")
-                  : "(empty)",
-                "",
-                "Recent conversation:",
-                priorMessages
-                  .slice(-6)
-                  .map((message: { role: string; text: string }) => `${message.role}: ${message.text}`)
-                  .join("\n") || "(none)",
-              ].join("\n"),
+              content: userPrompt,
             },
           ],
           text: {
@@ -311,16 +337,22 @@ export const rewriteModelSection = action({
           modelLines = parsed.modelLines
             .map((line) => line.trim())
             .filter((line) => line.length > 0);
+          shouldApplyModelLines = modelLines.length > 0;
+          debug.response = {
+            summary: parsed.summary,
+            modelLines,
+          };
         }
       } catch (error) {
         summary =
           error instanceof Error
             ? `OpenAI rewrite failed: ${error.message}`
             : "OpenAI could not rewrite the model section, so it was left unchanged.";
+        debug.error = error instanceof Error ? error.message : "Unknown OpenAI error.";
       }
     }
 
-    if (client && modelLines.length > 0) {
+    if (shouldApplyModelLines && modelLines.length > 0) {
       await ctx.runMutation(replaceModelSectionRef, {
         pageId: args.pageId,
         sectionNodeId: modelContext.modelSection._id,
@@ -341,6 +373,7 @@ export const rewriteModelSection = action({
       messageId,
       summary,
       modelLines,
+      debug,
     };
   },
 });

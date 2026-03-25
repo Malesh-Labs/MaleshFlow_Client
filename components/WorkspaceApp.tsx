@@ -6,6 +6,7 @@ import {
   useEffect,
   useState,
   useSyncExternalStore,
+  type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
 } from "react";
@@ -23,6 +24,20 @@ type PageType = "default" | "model";
 type UpdateNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.updateNode>>;
 type CreateNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.createNode>>;
 type DeleteNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.deleteNode>>;
+type MoveNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.moveNode>>;
+
+type ModelChatDebug = {
+  model: string;
+  systemPrompt: string;
+  userPrompt: string;
+  response:
+    | {
+        summary: string;
+        modelLines: string[];
+      }
+    | null;
+  error: string | null;
+};
 
 type TreeNode = OutlineTreeNode<{
   _id: string;
@@ -164,6 +179,14 @@ function parseNodeDraft(draft: string) {
   };
 }
 
+function splitPastedLines(text: string) {
+  return text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => line.trim().length > 0);
+}
+
 export default function WorkspaceApp() {
   const convexConfigured = Boolean(process.env.NEXT_PUBLIC_CONVEX_URL);
   const { ownerKey, setOwnerKey } = useOwnerKey();
@@ -238,6 +261,7 @@ function ConfiguredWorkspace({
   const [pageTitleDraft, setPageTitleDraft] = useState("");
   const [modelChatInput, setModelChatInput] = useState("");
   const [chatStatus, setChatStatus] = useState("");
+  const [modelChatDebug, setModelChatDebug] = useState<ModelChatDebug | null>(null);
   const [isCreatingPage, setIsCreatingPage] = useState<SidebarSection | null>(null);
   const [isSendingChat, setIsSendingChat] = useState(false);
 
@@ -261,6 +285,7 @@ function ConfiguredWorkspace({
   const createNode = useMutation(api.workspace.createNode);
   const updateNode = useMutation(api.workspace.updateNode);
   const deleteNode = useMutation(api.workspace.deleteNode);
+  const moveNode = useMutation(api.workspace.moveNode);
   const rewriteModelSection = useAction(api.chat.rewriteModelSection);
 
   useEffect(() => {
@@ -282,11 +307,15 @@ function ConfiguredWorkspace({
   useEffect(() => {
     setPageTitleDraft(pageTree?.page?.title ?? "");
     setChatStatus("");
+    setModelChatDebug(null);
   }, [pageTree?.page?._id, pageTree?.page?.title]);
 
   const selectedPage = pageTree?.page ?? null;
   const pageMeta = getPageMeta(selectedPage);
   const tree = pageTree ? toTreeNodes(pageTree.nodes) : [];
+  const nodeMap = new Map(
+    (pageTree?.nodes ?? []).map((node) => [node._id as string, node]),
+  );
 
   const modelSection = findModelSection(tree, "model");
   const recentExamplesSection = findModelSection(tree, "recentExamples");
@@ -347,12 +376,16 @@ function ConfiguredWorkspace({
     setIsSendingChat(true);
     setChatStatus("");
     try {
-      const result = await rewriteModelSection({
+      const result = (await rewriteModelSection({
         ownerKey,
         pageId: selectedPageId,
         prompt: modelChatInput.trim(),
-      });
+      })) as {
+        summary: string;
+        debug: ModelChatDebug;
+      };
       setChatStatus(result.summary);
+      setModelChatDebug(result.debug);
       setModelChatInput("");
     } catch (error) {
       setChatStatus(
@@ -360,6 +393,7 @@ function ConfiguredWorkspace({
           ? error.message
           : "Could not update the model right now.",
       );
+      setModelChatDebug(null);
     } finally {
       setIsSendingChat(false);
     }
@@ -449,33 +483,36 @@ function ConfiguredWorkspace({
                       sectionNode={modelSection}
                       ownerKey={ownerKey}
                       pageId={selectedPage._id}
+                      nodeMap={nodeMap}
                       updateNode={updateNode}
                       createNode={createNode}
                       deleteNode={deleteNode}
+                      moveNode={moveNode}
                     />
                     <ModelSection
                       title="Recent"
                       sectionNode={recentExamplesSection}
                       ownerKey={ownerKey}
                       pageId={selectedPage._id}
+                      nodeMap={nodeMap}
                       updateNode={updateNode}
                       createNode={createNode}
                       deleteNode={deleteNode}
+                      moveNode={moveNode}
                     />
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {genericRoots.map((node) => (
-                      <OutlineNodeEditor
-                        key={`${node._id}:${node.updatedAt}`}
-                        node={node}
-                        ownerKey={ownerKey}
-                        pageId={selectedPage._id}
-                        updateNode={updateNode}
-                        createNode={createNode}
-                        deleteNode={deleteNode}
-                      />
-                    ))}
+                    <OutlineNodeList
+                      nodes={genericRoots}
+                      ownerKey={ownerKey}
+                      pageId={selectedPage._id}
+                      nodeMap={nodeMap}
+                      updateNode={updateNode}
+                      createNode={createNode}
+                      deleteNode={deleteNode}
+                      moveNode={moveNode}
+                    />
                     <InlineComposer
                       ownerKey={ownerKey}
                       pageId={selectedPage._id}
@@ -507,6 +544,40 @@ function ConfiguredWorkspace({
                       </button>
                     </div>
                   </form>
+                  {modelChatDebug ? (
+                    <div className="mt-4 space-y-3 border-t border-[#ebe2d2] pt-4 text-xs text-[#5c5348]">
+                      <div>
+                        <p className="font-semibold uppercase tracking-[0.18em] text-[#8a6c2d]">
+                          OpenAI Request
+                        </p>
+                        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap border border-[#ebe2d2] bg-[#fcfbf8] p-3 leading-6">
+{JSON.stringify(
+  {
+    model: modelChatDebug.model,
+    systemPrompt: modelChatDebug.systemPrompt,
+    userPrompt: modelChatDebug.userPrompt,
+  },
+  null,
+  2,
+)}
+                        </pre>
+                      </div>
+                      <div>
+                        <p className="font-semibold uppercase tracking-[0.18em] text-[#8a6c2d]">
+                          OpenAI Response
+                        </p>
+                        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap border border-[#ebe2d2] bg-[#fcfbf8] p-3 leading-6">
+{JSON.stringify(
+  modelChatDebug.error
+    ? { error: modelChatDebug.error }
+    : modelChatDebug.response,
+  null,
+  2,
+)}
+                        </pre>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -522,36 +593,41 @@ function ModelSection({
   sectionNode,
   ownerKey,
   pageId,
+  nodeMap,
   updateNode,
   createNode,
   deleteNode,
+  moveNode,
 }: {
   title: string;
   sectionNode: TreeNode | null;
   ownerKey: string;
   pageId: Id<"pages">;
+  nodeMap: Map<string, Doc<"nodes">>;
   updateNode: UpdateNodeMutation;
   createNode: CreateNodeMutation;
   deleteNode: DeleteNodeMutation;
+  moveNode: MoveNodeMutation;
 }) {
-  const lastChild = sectionNode?.children[sectionNode.children.length - 1] ?? null;
+  const lastChild = sectionNode
+    ? sectionNode.children[sectionNode.children.length - 1] ?? null
+    : null;
 
   return (
     <div>
       <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
       <div className="mt-2 border-b border-[#d8cfbf]" />
       <div className="mt-4 space-y-2">
-        {sectionNode?.children.map((child) => (
-          <OutlineNodeEditor
-            key={`${child._id}:${child.updatedAt}`}
-            node={child}
-            ownerKey={ownerKey}
-            pageId={child.pageId as Id<"pages">}
-            updateNode={updateNode}
-            createNode={createNode}
-            deleteNode={deleteNode}
-          />
-        ))}
+        <OutlineNodeList
+          nodes={sectionNode?.children ?? []}
+          ownerKey={ownerKey}
+          pageId={pageId}
+          nodeMap={nodeMap}
+          updateNode={updateNode}
+          createNode={createNode}
+          deleteNode={deleteNode}
+          moveNode={moveNode}
+        />
         <InlineComposer
           ownerKey={ownerKey}
           pageId={pageId}
@@ -564,21 +640,74 @@ function ModelSection({
   );
 }
 
-function OutlineNodeEditor({
-  node,
+function OutlineNodeList({
+  nodes,
   ownerKey,
   pageId,
+  nodeMap,
   updateNode,
   createNode,
   deleteNode,
+  moveNode,
   depth = 0,
+  parentNodeId = null,
 }: {
-  node: TreeNode;
+  nodes: TreeNode[];
   ownerKey: string;
   pageId: Id<"pages">;
+  nodeMap: Map<string, Doc<"nodes">>;
   updateNode: UpdateNodeMutation;
   createNode: CreateNodeMutation;
   deleteNode: DeleteNodeMutation;
+  moveNode: MoveNodeMutation;
+  depth?: number;
+  parentNodeId?: Id<"nodes"> | null;
+}) {
+  return (
+    <>
+      {nodes.map((node, index) => (
+        <OutlineNodeEditor
+          key={`${node._id}:${node.updatedAt}`}
+          node={node}
+          previousSibling={index > 0 ? nodes[index - 1]! : null}
+          ownerKey={ownerKey}
+          pageId={pageId}
+          parentNodeId={parentNodeId}
+          nodeMap={nodeMap}
+          updateNode={updateNode}
+          createNode={createNode}
+          deleteNode={deleteNode}
+          moveNode={moveNode}
+          depth={depth}
+        />
+      ))}
+    </>
+  );
+}
+
+function OutlineNodeEditor({
+  node,
+  previousSibling,
+  ownerKey,
+  pageId,
+  parentNodeId,
+  nodeMap,
+  updateNode,
+  createNode,
+  deleteNode,
+  moveNode,
+  depth = 0,
+}: {
+  node: TreeNode;
+  previousSibling: TreeNode | null;
+  ownerKey: string;
+  pageId: Id<"pages">;
+  parentNodeId: Id<"nodes"> | null;
+  nodeMap: Map<string, Doc<"nodes">>;
+  updateNode: UpdateNodeMutation;
+  createNode: CreateNodeMutation;
+  deleteNode: DeleteNodeMutation;
+  moveNode: MoveNodeMutation;
   depth?: number;
 }) {
   const [draft, setDraft] = useState(node.text);
@@ -586,18 +715,18 @@ function OutlineNodeEditor({
   const nodeMeta = getNodeMeta(node);
   const isLocked = nodeMeta.locked === true;
 
-  const handleSave = async () => {
+  const applyParsedDraft = async (nextDraft: string) => {
     if (isLocked) {
-      return;
+      return { deleted: false };
     }
 
-    const parsed = parseNodeDraft(draft);
+    const parsed = parseNodeDraft(nextDraft);
     if (parsed.shouldDelete) {
       await deleteNode({
         ownerKey,
         nodeId: node._id as Id<"nodes">,
       });
-      return;
+      return { deleted: true };
     }
 
     if (
@@ -605,7 +734,7 @@ function OutlineNodeEditor({
       parsed.kind === node.kind &&
       parsed.taskStatus === node.taskStatus
     ) {
-      return;
+      return { deleted: false };
     }
 
     await updateNode({
@@ -615,15 +744,110 @@ function OutlineNodeEditor({
       kind: parsed.kind,
       taskStatus: parsed.taskStatus,
     });
+
+    return { deleted: false };
+  };
+
+  const handleSave = async () => {
+    return await applyParsedDraft(draft);
+  };
+
+  const createSiblingNodesFromLines = async (lines: string[]) => {
+    let lastCreatedId = node._id as Id<"nodes">;
+
+    for (const line of lines) {
+      const parsed = parseNodeDraft(line);
+      if (parsed.shouldDelete) {
+        continue;
+      }
+
+      lastCreatedId = await createNode({
+        ownerKey,
+        pageId,
+        parentNodeId,
+        afterNodeId: lastCreatedId,
+        text: parsed.text,
+        kind: parsed.kind,
+        taskStatus: parsed.taskStatus,
+      });
+    }
+  };
+
+  const handlePaste = async (event: ClipboardEvent<HTMLInputElement>) => {
+    const pastedText = event.clipboardData.getData("text");
+    const lines = splitPastedLines(pastedText);
+    if (lines.length <= 1 || isLocked) {
+      return;
+    }
+
+    event.preventDefault();
+    const [firstLine, ...restLines] = lines;
+    if (!firstLine) {
+      return;
+    }
+
+    setDraft(firstLine);
+    const result = await applyParsedDraft(firstLine);
+    if (!result.deleted && restLines.length > 0) {
+      await createSiblingNodesFromLines(restLines);
+    }
   };
 
   const handleKeyDown = async (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Tab") {
+      if (isLocked) {
+        return;
+      }
+
+      event.preventDefault();
+      const result = await handleSave();
+      if (result.deleted) {
+        return;
+      }
+
+      if (event.shiftKey) {
+        if (!node.parentNodeId) {
+          return;
+        }
+
+        const parentNode = nodeMap.get(node.parentNodeId as string);
+        if (!parentNode) {
+          return;
+        }
+
+        await moveNode({
+          ownerKey,
+          nodeId: node._id as Id<"nodes">,
+          pageId,
+          parentNodeId: (parentNode.parentNodeId as Id<"nodes"> | null) ?? null,
+          afterNodeId: parentNode._id as Id<"nodes">,
+        });
+        return;
+      }
+
+      if (!previousSibling) {
+        return;
+      }
+
+      await moveNode({
+        ownerKey,
+        nodeId: node._id as Id<"nodes">,
+        pageId,
+        parentNodeId: previousSibling._id as Id<"nodes">,
+      });
+      return;
+    }
+
     if (event.key !== "Enter" || isLocked) {
       return;
     }
 
     event.preventDefault();
-    await handleSave();
+    const result = await handleSave();
+    if (result.deleted) {
+      return;
+    }
+
     const parsed = parseNodeDraft(draft);
     if (parsed.shouldDelete) {
       return;
@@ -632,7 +856,7 @@ function OutlineNodeEditor({
     await createNode({
       ownerKey,
       pageId,
-      parentNodeId: (node.parentNodeId as Id<"nodes"> | null) ?? null,
+      parentNodeId,
       afterNodeId: node._id as Id<"nodes">,
       text: "",
       kind: "note",
@@ -646,24 +870,25 @@ function OutlineNodeEditor({
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onBlur={() => void handleSave()}
+          onPaste={(event) => void handlePaste(event)}
           onKeyDown={(event) => void handleKeyDown(event)}
           placeholder="Write a line…"
           disabled={isLocked}
           className="w-full border-0 border-b border-transparent bg-transparent px-0 py-1 text-[15px] leading-7 outline-none transition focus:border-[#d8cfbf] disabled:text-[#5c5348]"
         />
       </div>
-      {node.children.map((child) => (
-        <OutlineNodeEditor
-          key={`${child._id}:${child.updatedAt}`}
-          node={child}
-          ownerKey={ownerKey}
-          pageId={pageId}
-          updateNode={updateNode}
-          createNode={createNode}
-          deleteNode={deleteNode}
-          depth={depth + 1}
-        />
-      ))}
+      <OutlineNodeList
+        nodes={node.children}
+        ownerKey={ownerKey}
+        pageId={pageId}
+        parentNodeId={node._id as Id<"nodes">}
+        nodeMap={nodeMap}
+        updateNode={updateNode}
+        createNode={createNode}
+        deleteNode={deleteNode}
+        moveNode={moveNode}
+        depth={depth + 1}
+      />
     </div>
   );
 }
@@ -684,20 +909,29 @@ function InlineComposer({
   const [draft, setDraft] = useState("");
 
   const handleSubmit = async () => {
-    const parsed = parseNodeDraft(draft);
-    if (parsed.shouldDelete) {
+    const lines = splitPastedLines(draft);
+    if (lines.length === 0) {
       return;
     }
 
-    await createNode({
-      ownerKey,
-      pageId,
-      parentNodeId: parentNodeId ?? null,
-      afterNodeId,
-      text: parsed.text,
-      kind: parsed.kind,
-      taskStatus: parsed.taskStatus,
-    });
+    let lastCreatedId = afterNodeId;
+    for (const line of lines) {
+      const parsed = parseNodeDraft(line);
+      if (parsed.shouldDelete) {
+        continue;
+      }
+
+      lastCreatedId = await createNode({
+        ownerKey,
+        pageId,
+        parentNodeId: parentNodeId ?? null,
+        afterNodeId: lastCreatedId,
+        text: parsed.text,
+        kind: parsed.kind,
+        taskStatus: parsed.taskStatus,
+      });
+    }
+
     setDraft("");
   };
 
@@ -710,10 +944,39 @@ function InlineComposer({
     await handleSubmit();
   };
 
+  const handlePaste = async (event: ClipboardEvent<HTMLInputElement>) => {
+    const pastedText = event.clipboardData.getData("text");
+    const lines = splitPastedLines(pastedText);
+    if (lines.length <= 1) {
+      return;
+    }
+
+    event.preventDefault();
+    let lastCreatedId = afterNodeId;
+    for (const line of lines) {
+      const parsed = parseNodeDraft(line);
+      if (parsed.shouldDelete) {
+        continue;
+      }
+
+      lastCreatedId = await createNode({
+        ownerKey,
+        pageId,
+        parentNodeId: parentNodeId ?? null,
+        afterNodeId: lastCreatedId,
+        text: parsed.text,
+        kind: parsed.kind,
+        taskStatus: parsed.taskStatus,
+      });
+    }
+    setDraft("");
+  };
+
   return (
     <input
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
+      onPaste={(event) => void handlePaste(event)}
       onKeyDown={(event) => void handleKeyDown(event)}
       placeholder="New line…"
       className="w-full border-0 border-b border-transparent bg-transparent px-0 py-1 text-[15px] leading-7 outline-none transition focus:border-[#d8cfbf]"
