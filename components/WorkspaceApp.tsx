@@ -2,7 +2,7 @@
 
 import clsx from "clsx";
 import { useAction, useMutation, useQuery } from "convex/react";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
@@ -94,6 +94,47 @@ function findModelSection(nodes: TreeNode[], slot: "model" | "recentExamples") {
 
 function collectChildren(nodes: TreeNode[], excludedIds: Set<string>) {
   return nodes.filter((node) => !excludedIds.has(node._id));
+}
+
+function parseNodeDraft(draft: string) {
+  const trimmed = draft.trim();
+
+  if (trimmed.length === 0) {
+    return { shouldDelete: true as const };
+  }
+
+  const doneMatch = trimmed.match(/^\[x\]\s*(.*)$/i);
+  if (doneMatch) {
+    const text = doneMatch[1]?.trim() ?? "";
+    return text.length === 0
+      ? { shouldDelete: true as const }
+      : {
+          shouldDelete: false as const,
+          text,
+          kind: "task" as const,
+          taskStatus: "done" as const,
+        };
+  }
+
+  const todoMatch = trimmed.match(/^\[\s\]\s*(.*)$/);
+  if (todoMatch) {
+    const text = todoMatch[1]?.trim() ?? "";
+    return text.length === 0
+      ? { shouldDelete: true as const }
+      : {
+          shouldDelete: false as const,
+          text,
+          kind: "task" as const,
+          taskStatus: "todo" as const,
+        };
+  }
+
+  return {
+    shouldDelete: false as const,
+    text: trimmed,
+    kind: "note" as const,
+    taskStatus: null,
+  };
 }
 
 export default function WorkspaceApp() {
@@ -268,34 +309,6 @@ function ConfiguredWorkspace({
     });
   };
 
-  const handleCreateRootNode = async () => {
-    if (!selectedPage) {
-      return;
-    }
-
-    await createNode({
-      ownerKey,
-      pageId: selectedPage._id,
-      parentNodeId: null,
-      text: "",
-      kind: "note",
-    });
-  };
-
-  const handleCreateSectionNode = async (parentNodeId: Id<"nodes">) => {
-    if (!selectedPage) {
-      return;
-    }
-
-    await createNode({
-      ownerKey,
-      pageId: selectedPage._id,
-      parentNodeId,
-      text: "",
-      kind: "note",
-    });
-  };
-
   const handleRunModelChat = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!selectedPageId || modelChatInput.trim().length === 0) {
@@ -336,7 +349,7 @@ function ConfiguredWorkspace({
             <button
               type="button"
               onClick={() => setOwnerKey("")}
-              className="rounded-full border border-[#c9bda8] px-3 py-1 text-xs font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
+              className="border border-[#c9bda8] px-3 py-1 text-xs font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
             >
               Lock
             </button>
@@ -355,10 +368,10 @@ function ConfiguredWorkspace({
                       type="button"
                       onClick={() => setSelectedPageId(page._id)}
                       className={clsx(
-                        "block w-full rounded-[1.1rem] px-4 py-3 text-left text-sm transition",
+                        "block w-full border-l-2 px-3 py-2 text-left text-sm transition",
                         selectedPageId === page._id
-                          ? "bg-[#1f4a45] text-white shadow-[0_14px_40px_-20px_rgba(31,74,69,0.7)]"
-                          : "bg-[#f8f3ea] text-[#433d35] hover:bg-white",
+                          ? "border-[#1f4a45] bg-[#f8f3ea] text-[#1f4a45]"
+                          : "border-transparent text-[#433d35] hover:border-[#bcae96] hover:bg-[#f8f3ea]",
                       )}
                     >
                       {page.title}
@@ -369,7 +382,7 @@ function ConfiguredWorkspace({
                   type="button"
                   onClick={() => void handleCreatePage(section)}
                   disabled={isCreatingPage === section}
-                  className="mt-3 w-full rounded-[1.1rem] border border-dashed border-[#bcae96] px-4 py-3 text-left text-sm font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:bg-[#f8f3ea] disabled:cursor-wait disabled:opacity-60"
+                  className="mt-3 w-full border border-dashed border-[#bcae96] px-3 py-2 text-left text-sm font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:bg-[#f8f3ea] disabled:cursor-wait disabled:opacity-60"
                 >
                   {isCreatingPage === section ? "Creating page…" : `New ${section.slice(0, -1)}`}
                 </button>
@@ -380,7 +393,7 @@ function ConfiguredWorkspace({
 
         <section className="p-6 md:p-10">
           {!selectedPage ? (
-            <div className="grid min-h-[60vh] place-items-center rounded-[2rem] border border-dashed border-[#d8cfbf] bg-white/70 p-8 text-center">
+            <div className="grid min-h-[60vh] place-items-center border border-dashed border-[#d8cfbf] bg-white/70 p-8 text-center">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-[#8a6c2d]">
                   Empty Workspace
@@ -391,7 +404,7 @@ function ConfiguredWorkspace({
               </div>
             </div>
           ) : (
-            <div className="flex min-h-[calc(100vh-5rem)] flex-col rounded-[2rem] border border-[#d8cfbf] bg-white shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]">
+            <div className="flex min-h-[calc(100vh-5rem)] flex-col border border-[#d8cfbf] bg-white">
               <div className="border-b border-[#ebe2d2] px-6 py-6 md:px-8">
                 <p className="text-xs uppercase tracking-[0.3em] text-[#8a6c2d]">
                   {pageMeta.sidebarSection}
@@ -410,12 +423,8 @@ function ConfiguredWorkspace({
                     <ModelSection
                       title="Model"
                       sectionNode={modelSection}
-                      onAdd={() =>
-                        modelSection
-                          ? void handleCreateSectionNode(modelSection._id as Id<"nodes">)
-                          : undefined
-                      }
                       ownerKey={ownerKey}
+                      pageId={selectedPage._id}
                       updateNode={updateNode}
                       createNode={createNode}
                       deleteNode={deleteNode}
@@ -423,46 +432,15 @@ function ConfiguredWorkspace({
                     <ModelSection
                       title="Recent Examples"
                       sectionNode={recentExamplesSection}
-                      onAdd={() =>
-                        recentExamplesSection
-                          ? void handleCreateSectionNode(recentExamplesSection._id as Id<"nodes">)
-                          : undefined
-                      }
                       ownerKey={ownerKey}
+                      pageId={selectedPage._id}
                       updateNode={updateNode}
                       createNode={createNode}
                       deleteNode={deleteNode}
                     />
-                    {genericRoots.length > 0 ? (
-                      <div className="rounded-[1.5rem] border border-[#ebe2d2] bg-[#fcfbf8] p-5">
-                        <h3 className="text-sm font-semibold uppercase tracking-[0.22em] text-[#7a6e5f]">
-                          Other Notes
-                        </h3>
-                        <div className="mt-4 space-y-3">
-                          {genericRoots.map((node) => (
-                            <OutlineNodeEditor
-                              key={`${node._id}:${node.updatedAt}`}
-                              node={node}
-                              ownerKey={ownerKey}
-                              pageId={selectedPage._id}
-                              updateNode={updateNode}
-                              createNode={createNode}
-                              deleteNode={deleteNode}
-                            />
-                          ))}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => void handleCreateRootNode()}
-                          className="mt-4 rounded-full border border-[#c9bda8] px-4 py-2 text-sm font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
-                        >
-                          Add note
-                        </button>
-                      </div>
-                    ) : null}
                   </div>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="space-y-2">
                     {genericRoots.map((node) => (
                       <OutlineNodeEditor
                         key={`${node._id}:${node.updatedAt}`}
@@ -474,31 +452,26 @@ function ConfiguredWorkspace({
                         deleteNode={deleteNode}
                       />
                     ))}
-                    <button
-                      type="button"
-                      onClick={() => void handleCreateRootNode()}
-                      className="rounded-full border border-[#c9bda8] px-4 py-2 text-sm font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
-                    >
-                      Add root note
-                    </button>
+                    <InlineComposer
+                      ownerKey={ownerKey}
+                      pageId={selectedPage._id}
+                      parentNodeId={null}
+                      afterNodeId={genericRoots[genericRoots.length - 1]?._id as Id<"nodes"> | undefined}
+                      createNode={createNode}
+                    />
                   </div>
                 )}
               </div>
 
               {pageMeta.pageType === "model" ? (
                 <div className="border-t border-[#ebe2d2] px-6 py-5 md:px-8">
-                  <form
-                    onSubmit={(event) => void handleRunModelChat(event)}
-                    className="space-y-3"
-                  >
-                    <div className="rounded-[1.4rem] border border-[#d8cfbf] bg-[#fcfbf8] px-4 py-3">
-                      <input
-                        value={modelChatInput}
-                        onChange={(event) => setModelChatInput(event.target.value)}
-                        placeholder="Ask this model page to generate or reorganize examples…"
-                        className="w-full border-0 bg-transparent p-0 text-sm outline-none"
-                      />
-                    </div>
+                  <form onSubmit={(event) => void handleRunModelChat(event)} className="space-y-3">
+                    <input
+                      value={modelChatInput}
+                      onChange={(event) => setModelChatInput(event.target.value)}
+                      placeholder="Ask this model page to generate or reorganize examples…"
+                      className="w-full border-0 border-b border-[#d8cfbf] bg-transparent px-0 py-2 text-sm outline-none"
+                    />
                     <div className="flex items-center justify-between gap-4">
                       <p className="text-sm text-[#6a6257]">
                         {chatStatus || "Chat lives at the bottom of model pages."}
@@ -506,7 +479,7 @@ function ConfiguredWorkspace({
                       <button
                         type="submit"
                         disabled={isSendingChat || modelChatInput.trim().length === 0}
-                        className="rounded-full bg-[#1f4a45] px-5 py-2 text-sm font-semibold text-white transition hover:bg-[#163733] disabled:cursor-not-allowed disabled:opacity-60"
+                        className="border border-[#1f4a45] px-4 py-2 text-sm font-semibold text-[#1f4a45] transition hover:bg-[#1f4a45] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {isSendingChat ? "Thinking…" : "Send"}
                       </button>
@@ -525,33 +498,27 @@ function ConfiguredWorkspace({
 function ModelSection({
   title,
   sectionNode,
-  onAdd,
   ownerKey,
+  pageId,
   updateNode,
   createNode,
   deleteNode,
 }: {
   title: string;
   sectionNode: TreeNode | null;
-  onAdd: () => void;
   ownerKey: string;
+  pageId: Id<"pages">;
   updateNode: UpdateNodeMutation;
   createNode: CreateNodeMutation;
   deleteNode: DeleteNodeMutation;
 }) {
+  const lastChild = sectionNode?.children[sectionNode.children.length - 1] ?? null;
+
   return (
-    <div className="rounded-[1.6rem] border border-[#ebe2d2] bg-[#fcfbf8] p-5">
-      <div className="flex items-center justify-between gap-4">
-        <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
-        <button
-          type="button"
-          onClick={onAdd}
-          className="rounded-full border border-[#c9bda8] px-4 py-2 text-sm font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
-        >
-          Add item
-        </button>
-      </div>
-      <div className="mt-4 space-y-3">
+    <div>
+      <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
+      <div className="mt-2 border-b border-[#d8cfbf]" />
+      <div className="mt-4 space-y-2">
         {sectionNode?.children.map((child) => (
           <OutlineNodeEditor
             key={`${child._id}:${child.updatedAt}`}
@@ -563,11 +530,13 @@ function ModelSection({
             deleteNode={deleteNode}
           />
         ))}
-        {!sectionNode || sectionNode.children.length === 0 ? (
-          <p className="rounded-[1.1rem] border border-dashed border-[#d8cfbf] px-4 py-5 text-sm text-[#807667]">
-            Nothing here yet.
-          </p>
-        ) : null}
+        <InlineComposer
+          ownerKey={ownerKey}
+          pageId={pageId}
+          parentNodeId={(sectionNode?._id as Id<"nodes"> | undefined) ?? undefined}
+          afterNodeId={(lastChild?._id as Id<"nodes"> | undefined) ?? undefined}
+          createNode={createNode}
+        />
       </div>
     </div>
   );
@@ -594,103 +563,72 @@ function OutlineNodeEditor({
 
   const nodeMeta = getNodeMeta(node);
   const isLocked = nodeMeta.locked === true;
-  const isTask = node.kind === "task";
 
   const handleSave = async () => {
-    if (draft === node.text) {
+    if (isLocked) {
+      return;
+    }
+
+    const parsed = parseNodeDraft(draft);
+    if (parsed.shouldDelete) {
+      await deleteNode({
+        ownerKey,
+        nodeId: node._id as Id<"nodes">,
+      });
+      return;
+    }
+
+    if (
+      parsed.text === node.text &&
+      parsed.kind === node.kind &&
+      parsed.taskStatus === node.taskStatus
+    ) {
       return;
     }
 
     await updateNode({
       ownerKey,
       nodeId: node._id as Id<"nodes">,
-      text: draft,
+      text: parsed.text,
+      kind: parsed.kind,
+      taskStatus: parsed.taskStatus,
+    });
+  };
+
+  const handleKeyDown = async (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter" || isLocked) {
+      return;
+    }
+
+    event.preventDefault();
+    await handleSave();
+    const parsed = parseNodeDraft(draft);
+    if (parsed.shouldDelete) {
+      return;
+    }
+
+    await createNode({
+      ownerKey,
+      pageId,
+      parentNodeId: (node.parentNodeId as Id<"nodes"> | null) ?? null,
+      afterNodeId: node._id as Id<"nodes">,
+      text: "",
+      kind: "note",
     });
   };
 
   return (
-    <div className="space-y-3">
-      <div
-        className="rounded-[1.15rem] border border-[#ebe2d2] bg-white p-3"
-        style={{ marginLeft: `${depth * 20}px` }}
-      >
-        <div className="flex items-start gap-3">
-          <button
-            type="button"
-            onClick={() =>
-              void updateNode({
-                ownerKey,
-                nodeId: node._id as Id<"nodes">,
-                kind: isTask ? "note" : "task",
-                taskStatus: isTask ? null : "todo",
-              })
-            }
-            className={clsx(
-              "mt-1 h-5 w-5 rounded border transition",
-              isTask
-                ? "border-[#1f4a45] bg-[#1f4a45]"
-                : "border-[#c9bda8] bg-transparent",
-            )}
-            aria-label={isTask ? "Convert to note" : "Convert to task"}
-          >
-            {isTask ? <span className="block text-[10px] text-white">✓</span> : null}
-          </button>
-          <textarea
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            onBlur={() => void handleSave()}
-            placeholder="Write something…"
-            disabled={isLocked}
-            rows={Math.max(1, draft.split("\n").length)}
-            className="min-h-[1.75rem] flex-1 resize-none border-0 bg-transparent p-0 text-[15px] leading-7 outline-none disabled:text-[#5c5348]"
-          />
-        </div>
-        {!isLocked ? (
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() =>
-                void createNode({
-                  ownerKey,
-                  pageId,
-                  parentNodeId: node._id as Id<"nodes">,
-                  text: "",
-                  kind: "note",
-                })
-              }
-              className="rounded-full border border-[#c9bda8] px-3 py-1 text-xs font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
-            >
-              Add child
-            </button>
-            {isTask ? (
-              <button
-                type="button"
-                onClick={() =>
-                  void updateNode({
-                    ownerKey,
-                    nodeId: node._id as Id<"nodes">,
-                    taskStatus: node.taskStatus === "done" ? "todo" : "done",
-                  })
-                }
-                className="rounded-full border border-[#c9bda8] px-3 py-1 text-xs font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
-              >
-                {node.taskStatus === "done" ? "Mark todo" : "Mark done"}
-              </button>
-            ) : null}
-            <button
-              type="button"
-              onClick={() =>
-                void deleteNode({
-                  ownerKey,
-                  nodeId: node._id as Id<"nodes">,
-                })
-              }
-              className="rounded-full border border-[#e4c2bf] px-3 py-1 text-xs font-medium text-[#99504b] transition hover:border-[#c36d66] hover:text-[#7a2821]"
-            >
-              Delete
-            </button>
-          </div>
-        ) : null}
+    <div className="space-y-2">
+      <div style={{ marginLeft: `${depth * 20}px` }}>
+        <input
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onBlur={() => void handleSave()}
+          onKeyDown={(event) => void handleKeyDown(event)}
+          placeholder="Write a line…"
+          disabled={isLocked}
+          className="w-full border-0 border-b border-transparent bg-transparent px-0 py-1 text-[15px] leading-7 outline-none transition focus:border-[#d8cfbf] disabled:text-[#5c5348]"
+        />
       </div>
       {node.children.map((child) => (
         <OutlineNodeEditor
@@ -705,5 +643,58 @@ function OutlineNodeEditor({
         />
       ))}
     </div>
+  );
+}
+
+function InlineComposer({
+  ownerKey,
+  pageId,
+  parentNodeId,
+  afterNodeId,
+  createNode,
+}: {
+  ownerKey: string;
+  pageId: Id<"pages">;
+  parentNodeId: Id<"nodes"> | null | undefined;
+  afterNodeId?: Id<"nodes">;
+  createNode: CreateNodeMutation;
+}) {
+  const [draft, setDraft] = useState("");
+
+  const handleSubmit = async () => {
+    const parsed = parseNodeDraft(draft);
+    if (parsed.shouldDelete) {
+      return;
+    }
+
+    await createNode({
+      ownerKey,
+      pageId,
+      parentNodeId: parentNodeId ?? null,
+      afterNodeId,
+      text: parsed.text,
+      kind: parsed.kind,
+      taskStatus: parsed.taskStatus,
+    });
+    setDraft("");
+  };
+
+  const handleKeyDown = async (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+
+    event.preventDefault();
+    await handleSubmit();
+  };
+
+  return (
+    <input
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onKeyDown={(event) => void handleKeyDown(event)}
+      placeholder="New line…"
+      className="w-full border-0 border-b border-transparent bg-transparent px-0 py-1 text-[15px] leading-7 outline-none transition focus:border-[#d8cfbf]"
+    />
   );
 }
