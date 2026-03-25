@@ -1,13 +1,67 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
-import type { Doc } from "./_generated/dataModel";
+import { internalMutation, internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import { assertOwnerKey, isOwnerKeyValid } from "./lib/auth";
-import { buildUniquePageSlug, computeNodePosition, deleteNodeTree, enqueueNodeAiWork, listPageNodes, syncLinksForNode } from "./lib/workspace";
+import {
+  buildUniquePageSlug,
+  computeNodePosition,
+  deleteNodeTree,
+  enqueueNodeAiWork,
+  listPageNodes,
+  setNodeTreeArchivedState,
+  syncLinksForNode,
+} from "./lib/workspace";
 import { nodeKindValidator, nullableNodeIdValidator, priorityValidator, taskStatusValidator } from "./lib/validators";
 
 function getTimestamp() {
   return Date.now();
+}
+
+const nodeCreateInputValidator = v.object({
+  parentNodeId: v.optional(nullableNodeIdValidator),
+  afterNodeId: v.optional(nullableNodeIdValidator),
+  text: v.optional(v.string()),
+  kind: v.optional(nodeKindValidator),
+  taskStatus: v.optional(taskStatusValidator),
+});
+
+async function filterVisibleLinks(ctx: QueryCtx, links: Doc<"links">[]) {
+  const sourceNodeIds = [
+    ...new Set(
+      links
+        .map((link) => link.sourceNodeId)
+        .filter(Boolean) as Id<"nodes">[],
+    ),
+  ];
+  const sourcePageIds = [
+    ...new Set(
+      links
+        .map((link) => link.sourcePageId)
+        .filter(Boolean) as Id<"pages">[],
+    ),
+  ];
+
+  const sourceNodes = await Promise.all(sourceNodeIds.map((nodeId) => ctx.db.get(nodeId)));
+  const sourcePages = await Promise.all(sourcePageIds.map((pageId) => ctx.db.get(pageId)));
+  const visibleNodeIds = new Set(
+    sourceNodes.filter((node) => node && !node.archived).map((node) => node!._id),
+  );
+  const visiblePageIds = new Set(
+    sourcePages.filter((page) => page && !page.archived).map((page) => page!._id),
+  );
+
+  return links.filter((link) => {
+    if (link.sourceNodeId) {
+      return visibleNodeIds.has(link.sourceNodeId);
+    }
+
+    if (link.sourcePageId) {
+      return visiblePageIds.has(link.sourcePageId);
+    }
+
+    return true;
+  });
 }
 
 export const listPages = query({
@@ -56,7 +110,7 @@ export const getPageTree = query({
     return {
       page,
       nodes,
-      backlinks,
+      backlinks: await filterVisibleLinks(ctx, backlinks),
     };
   },
 });
@@ -72,22 +126,24 @@ export const getBacklinks = query({
 
     if (args.nodeId) {
       const nodeId = args.nodeId;
-      return await ctx.db
+      const links = await ctx.db
         .query("links")
         .withIndex("by_target_node", (query) =>
           query.eq("targetNodeId", nodeId),
         )
         .collect();
+      return await filterVisibleLinks(ctx, links);
     }
 
     if (args.pageId) {
       const pageId = args.pageId;
-      return await ctx.db
+      const links = await ctx.db
         .query("links")
         .withIndex("by_target_page", (query) =>
           query.eq("targetPageId", pageId),
         )
         .collect();
+      return await filterVisibleLinks(ctx, links);
     }
 
     return [];
@@ -308,6 +364,67 @@ export const createNode = mutation({
   },
 });
 
+export const createNodesBatch = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+    nodes: v.array(nodeCreateInputValidator),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const now = getTimestamp();
+    const createdNodes: Doc<"nodes">[] = [];
+    let lastCreatedId: Id<"nodes"> | null = null;
+    let lastParentNodeId: Id<"nodes"> | null = null;
+
+    for (const entry of args.nodes) {
+      const parentNodeId = entry.parentNodeId ?? null;
+      const afterNodeId =
+        entry.afterNodeId !== undefined
+          ? (entry.afterNodeId ?? null)
+          : lastParentNodeId === parentNodeId
+            ? lastCreatedId
+            : null;
+      const position = await computeNodePosition(
+        ctx.db,
+        args.pageId,
+        parentNodeId,
+        afterNodeId,
+      );
+
+      const nodeId = await ctx.db.insert("nodes", {
+        pageId: args.pageId,
+        parentNodeId,
+        position,
+        text: entry.text?.trim() || "",
+        kind: entry.kind ?? "note",
+        taskStatus: entry.kind === "task" ? (entry.taskStatus ?? "todo") : null,
+        priority: null,
+        dueAt: null,
+        archived: false,
+        sourceMeta: {
+          sourceType: "manual",
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const node = await ctx.db.get(nodeId);
+      if (!node) {
+        continue;
+      }
+
+      createdNodes.push(node);
+      lastCreatedId = nodeId;
+      lastParentNodeId = parentNodeId;
+      await syncLinksForNode(ctx.db, node);
+      await enqueueNodeAiWork(ctx, nodeId);
+    }
+
+    return createdNodes;
+  },
+});
+
 export const updateNode = mutation({
   args: {
     ownerKey: v.string(),
@@ -354,6 +471,153 @@ export const updateNode = mutation({
       await syncLinksForNode(ctx.db, refreshed);
       await enqueueNodeAiWork(ctx, refreshed._id);
     }
+  },
+});
+
+export const splitNode = mutation({
+  args: {
+    ownerKey: v.string(),
+    nodeId: v.id("nodes"),
+    headText: v.string(),
+    headKind: nodeKindValidator,
+    headTaskStatus: v.optional(taskStatusValidator),
+    tailText: v.string(),
+    tailKind: nodeKindValidator,
+    tailTaskStatus: v.optional(taskStatusValidator),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const node = await ctx.db.get(args.nodeId);
+    if (!node) {
+      throw new Error("Node not found.");
+    }
+
+    const now = getTimestamp();
+    await ctx.db.patch(args.nodeId, {
+      text: args.headText,
+      kind: args.headKind,
+      taskStatus: args.headKind === "task" ? (args.headTaskStatus ?? "todo") : null,
+      updatedAt: now,
+    });
+
+    const position = await computeNodePosition(
+      ctx.db,
+      node.pageId,
+      node.parentNodeId,
+      node._id,
+    );
+
+    const createdNodeId = await ctx.db.insert("nodes", {
+      pageId: node.pageId,
+      parentNodeId: node.parentNodeId,
+      position,
+      text: args.tailText,
+      kind: args.tailKind,
+      taskStatus: args.tailKind === "task" ? (args.tailTaskStatus ?? "todo") : null,
+      priority: null,
+      dueAt: null,
+      archived: false,
+      sourceMeta: {
+        sourceType: "manual",
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const updatedNode = await ctx.db.get(args.nodeId);
+    const createdNode = await ctx.db.get(createdNodeId);
+
+    if (updatedNode) {
+      await syncLinksForNode(ctx.db, updatedNode);
+      await enqueueNodeAiWork(ctx, updatedNode._id);
+    }
+
+    if (createdNode) {
+      await syncLinksForNode(ctx.db, createdNode);
+      await enqueueNodeAiWork(ctx, createdNode._id);
+    }
+
+    return {
+      updatedNode,
+      createdNode,
+    };
+  },
+});
+
+export const replaceNodeAndInsertSiblings = mutation({
+  args: {
+    ownerKey: v.string(),
+    nodeId: v.id("nodes"),
+    text: v.string(),
+    kind: nodeKindValidator,
+    taskStatus: v.optional(taskStatusValidator),
+    siblings: v.array(
+      v.object({
+        text: v.string(),
+        kind: nodeKindValidator,
+        taskStatus: v.optional(taskStatusValidator),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const node = await ctx.db.get(args.nodeId);
+    if (!node) {
+      throw new Error("Node not found.");
+    }
+
+    const now = getTimestamp();
+    await ctx.db.patch(args.nodeId, {
+      text: args.text.trim(),
+      kind: args.kind,
+      taskStatus: args.kind === "task" ? (args.taskStatus ?? "todo") : null,
+      updatedAt: now,
+    });
+
+    const createdNodes: Doc<"nodes">[] = [];
+    let afterNodeId: Id<"nodes"> | null = node._id;
+    for (const sibling of args.siblings) {
+      const position = await computeNodePosition(
+        ctx.db,
+        node.pageId,
+        node.parentNodeId,
+        afterNodeId,
+      );
+      const createdNodeId = await ctx.db.insert("nodes", {
+        pageId: node.pageId,
+        parentNodeId: node.parentNodeId,
+        position,
+        text: sibling.text.trim(),
+        kind: sibling.kind,
+        taskStatus: sibling.kind === "task" ? (sibling.taskStatus ?? "todo") : null,
+        priority: null,
+        dueAt: null,
+        archived: false,
+        sourceMeta: {
+          sourceType: "manual",
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+      afterNodeId = createdNodeId;
+      const createdNode = await ctx.db.get(createdNodeId);
+      if (createdNode) {
+        createdNodes.push(createdNode);
+        await syncLinksForNode(ctx.db, createdNode);
+        await enqueueNodeAiWork(ctx, createdNode._id);
+      }
+    }
+
+    const updatedNode = await ctx.db.get(args.nodeId);
+    if (updatedNode) {
+      await syncLinksForNode(ctx.db, updatedNode);
+      await enqueueNodeAiWork(ctx, updatedNode._id);
+    }
+
+    return {
+      updatedNode,
+      createdNodes,
+    };
   },
 });
 
@@ -432,6 +696,33 @@ export const archiveNode = mutation({
       archived: args.archived ?? true,
       updatedAt: getTimestamp(),
     });
+  },
+});
+
+export const setNodeTreeArchived = mutation({
+  args: {
+    ownerKey: v.string(),
+    nodeId: v.id("nodes"),
+    archived: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const descendants = await setNodeTreeArchivedState(
+      ctx.db,
+      args.nodeId,
+      args.archived,
+      getTimestamp(),
+    );
+
+    if (!args.archived) {
+      for (const node of descendants) {
+        await syncLinksForNode(ctx.db, {
+          ...node,
+          archived: false,
+        });
+        await enqueueNodeAiWork(ctx, node._id);
+      }
+    }
   },
 });
 

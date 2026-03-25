@@ -4,6 +4,7 @@ import clsx from "clsx";
 import { useAction, useMutation, useQuery } from "convex/react";
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -14,6 +15,20 @@ import {
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
+import {
+  WorkspaceHistoryProvider,
+  focusElementAtEnd,
+  getComposerEditorId,
+  getNodeEditorId,
+  getPageTitleEditorId,
+  type CreatedNodeSnapshot,
+  type HistoryEntry,
+  type NodePlacement,
+  type NodeValueSnapshot,
+  type TrackedEditorTarget,
+  useWorkspaceHistory,
+  useWorkspaceHistoryController,
+} from "@/components/workspaceHistory";
 
 const SKIP = "skip" as const;
 const SIDEBAR_SECTIONS = ["Models", "Tasks", "Templates", "Journal"] as const;
@@ -23,9 +38,15 @@ const OWNER_KEY_EVENT = "maleshflow-owner-key-change";
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
 type PageType = "default" | "model";
 type UpdateNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.updateNode>>;
-type CreateNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.createNode>>;
-type DeleteNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.deleteNode>>;
+type CreateNodesBatchMutation = ReturnType<typeof useMutation<typeof api.workspace.createNodesBatch>>;
 type MoveNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.moveNode>>;
+type SplitNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.splitNode>>;
+type ReplaceNodeAndInsertSiblingsMutation = ReturnType<
+  typeof useMutation<typeof api.workspace.replaceNodeAndInsertSiblings>
+>;
+type SetNodeTreeArchivedMutation = ReturnType<
+  typeof useMutation<typeof api.workspace.setNodeTreeArchived>
+>;
 
 type ModelChatDebug = {
   model: string;
@@ -180,6 +201,41 @@ function parseNodeDraft(draft: string) {
   };
 }
 
+function parseSplitSegmentDraft(
+  draft: string,
+  fallback: {
+    kind: "note" | "task";
+    taskStatus: "todo" | "in_progress" | "done" | "cancelled" | null;
+  },
+) {
+  const doneMatch = draft.match(/^\[x\]\s?(.*)$/i);
+  if (doneMatch) {
+    return {
+      text: doneMatch[1] ?? "",
+      kind: "task" as const,
+      taskStatus: "done" as const,
+    };
+  }
+
+  const todoMatch = draft.match(/^\[\s\]\s?(.*)$/);
+  if (todoMatch) {
+    return {
+      text: todoMatch[1] ?? "",
+      kind: "task" as const,
+      taskStatus: "todo" as const,
+    };
+  }
+
+  return {
+    text: draft,
+    kind: fallback.kind,
+    taskStatus:
+      fallback.kind === "task"
+        ? ((fallback.taskStatus ?? "todo") as "todo" | "in_progress" | "done" | "cancelled")
+        : null,
+  };
+}
+
 function autoResizeTextarea(element: HTMLTextAreaElement | null) {
   if (!element) {
     return;
@@ -195,6 +251,49 @@ function splitPastedLines(text: string) {
     .split("\n")
     .map((line) => line.trimEnd())
     .filter((line) => line.trim().length > 0);
+}
+
+function toNodeValueSnapshot(
+  value:
+    | Pick<Doc<"nodes">, "text" | "kind" | "taskStatus">
+    | {
+        text: string;
+        kind: "note" | "task";
+        taskStatus: "todo" | "in_progress" | "done" | "cancelled" | null;
+      },
+): NodeValueSnapshot {
+  return {
+    text: value.text,
+    kind: value.kind as "note" | "task",
+    taskStatus: (value.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
+  };
+}
+
+function buildNodePlacement(
+  pageId: Id<"pages">,
+  parentNodeId: Id<"nodes"> | null,
+  afterNodeId: Id<"nodes"> | null = null,
+): NodePlacement {
+  return {
+    pageId,
+    parentNodeId,
+    afterNodeId,
+  };
+}
+
+function toCreatedNodeSnapshot(
+  node: Doc<"nodes">,
+  afterNodeId: Id<"nodes"> | null,
+): CreatedNodeSnapshot {
+  return {
+    nodeId: node._id,
+    pageId: node.pageId,
+    parentNodeId: node.parentNodeId,
+    afterNodeId,
+    text: node.text,
+    kind: node.kind as "note" | "task",
+    taskStatus: (node.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
+  };
 }
 
 export default function WorkspaceApp() {
@@ -292,11 +391,31 @@ function ConfiguredWorkspace({
 
   const createPage = useMutation(api.workspace.createPage);
   const renamePage = useMutation(api.workspace.renamePage);
-  const createNode = useMutation(api.workspace.createNode);
+  const createNodesBatch = useMutation(api.workspace.createNodesBatch);
   const updateNode = useMutation(api.workspace.updateNode);
-  const deleteNode = useMutation(api.workspace.deleteNode);
   const moveNode = useMutation(api.workspace.moveNode);
+  const splitNode = useMutation(api.workspace.splitNode);
+  const replaceNodeAndInsertSiblings = useMutation(
+    api.workspace.replaceNodeAndInsertSiblings,
+  );
+  const setNodeTreeArchived = useMutation(api.workspace.setNodeTreeArchived);
   const rewriteModelSection = useAction(api.chat.rewriteModelSection);
+  const pageTitleInputRef = useRef<HTMLInputElement>(null);
+  const pageTitleDraftRef = useRef(pageTitleDraft);
+
+  const history = useWorkspaceHistoryController({
+    ownerKey,
+    selectedPageId,
+    setSelectedPageId,
+    renamePage,
+    updateNode,
+    moveNode,
+    setNodeTreeArchived,
+  });
+
+  useEffect(() => {
+    pageTitleDraftRef.current = pageTitleDraft;
+  }, [pageTitleDraft]);
 
   useEffect(() => {
     if (isOwnerKeyValid === false) {
@@ -322,6 +441,17 @@ function ConfiguredWorkspace({
 
   const selectedPage = pageTree?.page ?? null;
   const pageMeta = getPageMeta(selectedPage);
+  const pageTitleEditorId = selectedPage ? getPageTitleEditorId(selectedPage._id) : null;
+  const pageTitleTarget = useMemo(
+    () =>
+      selectedPage
+        ? ({
+            kind: "page_title",
+            pageId: selectedPage._id,
+          } satisfies TrackedEditorTarget)
+        : null,
+    [selectedPage],
+  );
   const tree = pageTree ? toTreeNodes(pageTree.nodes) : [];
   const nodeMap = new Map(
     (pageTree?.nodes ?? []).map((node) => [node._id as string, node]),
@@ -350,6 +480,32 @@ function ConfiguredWorkspace({
       pages?.filter((page) => getPageMeta(page).sidebarSection === section) ?? [],
   }));
 
+  useEffect(() => {
+    if (!pageTitleEditorId || !pageTitleTarget) {
+      return;
+    }
+
+    return history.registerEditor(
+      pageTitleEditorId,
+      pageTitleTarget,
+      selectedPage?.title ?? "",
+      {
+        getElement: () => pageTitleInputRef.current,
+        getValue: () => pageTitleDraftRef.current,
+        setValue: setPageTitleDraft,
+        focusAtEnd: () => focusElementAtEnd(pageTitleInputRef.current),
+      },
+    );
+  }, [history, pageTitleEditorId, pageTitleTarget, selectedPage?.title]);
+
+  useEffect(() => {
+    if (!pageTitleEditorId || !pageTitleTarget || !selectedPage) {
+      return;
+    }
+
+    history.syncCommittedValue(pageTitleEditorId, selectedPage.title, pageTitleTarget);
+  }, [history, pageTitleEditorId, pageTitleTarget, selectedPage]);
+
   const handleCreatePage = async (section: SidebarSection) => {
     setIsCreatingPage(section);
     try {
@@ -373,15 +529,35 @@ function ConfiguredWorkspace({
   };
 
   const handleRenamePage = async () => {
-    if (!selectedPage || pageTitleDraft.trim() === selectedPage.title.trim()) {
+    if (!selectedPage || !pageTitleEditorId || !pageTitleTarget) {
       return;
     }
 
-    await renamePage({
-      ownerKey,
-      pageId: selectedPage._id,
-      title: pageTitleDraft.trim() || "Untitled",
-    });
+    const nextTitle = pageTitleDraft.trim() || "Untitled";
+    if (nextTitle !== selectedPage.title) {
+      await renamePage({
+        ownerKey,
+        pageId: selectedPage._id,
+        title: nextTitle,
+      });
+    }
+
+    const beforeTitle = history.commitTrackedValue(
+      pageTitleEditorId,
+      pageTitleTarget,
+      nextTitle,
+    );
+    setPageTitleDraft(nextTitle);
+
+    if (beforeTitle !== nextTitle) {
+      history.pushUndoEntry({
+        type: "rename_page",
+        pageId: selectedPage._id,
+        beforeTitle,
+        afterTitle: nextTitle,
+        focusEditorId: pageTitleEditorId,
+      });
+    }
   };
 
   const handleRunModelChat = async (event: FormEvent<HTMLFormElement>) => {
@@ -417,7 +593,8 @@ function ConfiguredWorkspace({
   };
 
   return (
-    <main className="min-h-screen bg-[#f7f4ec] text-[#1b1916]">
+    <WorkspaceHistoryProvider value={history}>
+      <main className="min-h-screen bg-[#f7f4ec] text-[#1b1916]">
       <div className="mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)]">
         <aside className="border-b border-[#d8cfbf] bg-[#efe7d9] p-6 lg:border-b-0 lg:border-r">
           <div className="flex items-start justify-end gap-4">
@@ -481,15 +658,49 @@ function ConfiguredWorkspace({
           ) : (
             <div className="flex min-h-[calc(100vh-5rem)] flex-col border border-[#d8cfbf] bg-white">
               <div className="border-b border-[#ebe2d2] px-6 py-6 md:px-8">
-                <p className="text-xs uppercase tracking-[0.3em] text-[#8a6c2d]">
-                  {pageMeta.sidebarSection}
-                </p>
-                <input
-                  value={pageTitleDraft}
-                  onChange={(event) => setPageTitleDraft(event.target.value)}
-                  onBlur={() => void handleRenamePage()}
-                  className="mt-4 w-full border-0 bg-transparent p-0 text-4xl font-semibold tracking-tight outline-none"
-                />
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-xs uppercase tracking-[0.3em] text-[#8a6c2d]">
+                      {pageMeta.sidebarSection}
+                    </p>
+                    <input
+                      ref={pageTitleInputRef}
+                      value={pageTitleDraft}
+                      onChange={(event) => {
+                        setPageTitleDraft(event.target.value);
+                        if (pageTitleEditorId && pageTitleTarget) {
+                          history.updateDraftValue(
+                            pageTitleEditorId,
+                            pageTitleTarget,
+                            event.target.value,
+                          );
+                        }
+                      }}
+                      onBlur={() => void handleRenamePage()}
+                      className="mt-4 w-full border-0 bg-transparent p-0 text-4xl font-semibold tracking-tight outline-none"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => void history.undo()}
+                      disabled={!history.canUndo || history.isApplyingHistory}
+                      className="border border-[#d8cfbf] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Undo
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => void history.redo()}
+                      disabled={!history.canRedo || history.isApplyingHistory}
+                      className="border border-[#d8cfbf] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916] disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Redo
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <div className="flex-1 px-6 py-6 md:px-8">
@@ -501,10 +712,12 @@ function ConfiguredWorkspace({
                       ownerKey={ownerKey}
                       pageId={selectedPage._id}
                       nodeMap={nodeMap}
+                      createNodesBatch={createNodesBatch}
                       updateNode={updateNode}
-                      createNode={createNode}
-                      deleteNode={deleteNode}
                       moveNode={moveNode}
+                      splitNode={splitNode}
+                      replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                      setNodeTreeArchived={setNodeTreeArchived}
                     />
                     <ModelSection
                       title="Recent"
@@ -512,10 +725,12 @@ function ConfiguredWorkspace({
                       ownerKey={ownerKey}
                       pageId={selectedPage._id}
                       nodeMap={nodeMap}
+                      createNodesBatch={createNodesBatch}
                       updateNode={updateNode}
-                      createNode={createNode}
-                      deleteNode={deleteNode}
                       moveNode={moveNode}
+                      splitNode={splitNode}
+                      replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                      setNodeTreeArchived={setNodeTreeArchived}
                     />
                   </div>
                 ) : (
@@ -525,17 +740,19 @@ function ConfiguredWorkspace({
                       ownerKey={ownerKey}
                       pageId={selectedPage._id}
                       nodeMap={nodeMap}
+                      createNodesBatch={createNodesBatch}
                       updateNode={updateNode}
-                      createNode={createNode}
-                      deleteNode={deleteNode}
                       moveNode={moveNode}
+                      splitNode={splitNode}
+                      replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                      setNodeTreeArchived={setNodeTreeArchived}
                     />
                     <InlineComposer
                       ownerKey={ownerKey}
                       pageId={selectedPage._id}
                       parentNodeId={null}
                       afterNodeId={genericRoots[genericRoots.length - 1]?._id as Id<"nodes"> | undefined}
-                      createNode={createNode}
+                      createNodesBatch={createNodesBatch}
                     />
                   </div>
                 )}
@@ -606,7 +823,8 @@ function ConfiguredWorkspace({
           )}
         </section>
       </div>
-    </main>
+      </main>
+    </WorkspaceHistoryProvider>
   );
 }
 
@@ -616,20 +834,24 @@ function ModelSection({
   ownerKey,
   pageId,
   nodeMap,
+  createNodesBatch,
   updateNode,
-  createNode,
-  deleteNode,
   moveNode,
+  splitNode,
+  replaceNodeAndInsertSiblings,
+  setNodeTreeArchived,
 }: {
   title: string;
   sectionNode: TreeNode | null;
   ownerKey: string;
   pageId: Id<"pages">;
   nodeMap: Map<string, Doc<"nodes">>;
+  createNodesBatch: CreateNodesBatchMutation;
   updateNode: UpdateNodeMutation;
-  createNode: CreateNodeMutation;
-  deleteNode: DeleteNodeMutation;
   moveNode: MoveNodeMutation;
+  splitNode: SplitNodeMutation;
+  replaceNodeAndInsertSiblings: ReplaceNodeAndInsertSiblingsMutation;
+  setNodeTreeArchived: SetNodeTreeArchivedMutation;
 }) {
   const lastChild = sectionNode
     ? sectionNode.children[sectionNode.children.length - 1] ?? null
@@ -645,17 +867,19 @@ function ModelSection({
           ownerKey={ownerKey}
           pageId={pageId}
           nodeMap={nodeMap}
+          createNodesBatch={createNodesBatch}
           updateNode={updateNode}
-          createNode={createNode}
-          deleteNode={deleteNode}
           moveNode={moveNode}
+          splitNode={splitNode}
+          replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+          setNodeTreeArchived={setNodeTreeArchived}
         />
         <InlineComposer
           ownerKey={ownerKey}
           pageId={pageId}
           parentNodeId={(sectionNode?._id as Id<"nodes"> | undefined) ?? undefined}
           afterNodeId={(lastChild?._id as Id<"nodes"> | undefined) ?? undefined}
-          createNode={createNode}
+          createNodesBatch={createNodesBatch}
         />
       </div>
     </div>
@@ -667,10 +891,12 @@ function OutlineNodeList({
   ownerKey,
   pageId,
   nodeMap,
+  createNodesBatch,
   updateNode,
-  createNode,
-  deleteNode,
   moveNode,
+  splitNode,
+  replaceNodeAndInsertSiblings,
+  setNodeTreeArchived,
   depth = 0,
   parentNodeId = null,
 }: {
@@ -678,10 +904,12 @@ function OutlineNodeList({
   ownerKey: string;
   pageId: Id<"pages">;
   nodeMap: Map<string, Doc<"nodes">>;
+  createNodesBatch: CreateNodesBatchMutation;
   updateNode: UpdateNodeMutation;
-  createNode: CreateNodeMutation;
-  deleteNode: DeleteNodeMutation;
   moveNode: MoveNodeMutation;
+  splitNode: SplitNodeMutation;
+  replaceNodeAndInsertSiblings: ReplaceNodeAndInsertSiblingsMutation;
+  setNodeTreeArchived: SetNodeTreeArchivedMutation;
   depth?: number;
   parentNodeId?: Id<"nodes"> | null;
 }) {
@@ -696,10 +924,12 @@ function OutlineNodeList({
           pageId={pageId}
           parentNodeId={parentNodeId}
           nodeMap={nodeMap}
+          createNodesBatch={createNodesBatch}
           updateNode={updateNode}
-          createNode={createNode}
-          deleteNode={deleteNode}
           moveNode={moveNode}
+          splitNode={splitNode}
+          replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+          setNodeTreeArchived={setNodeTreeArchived}
           depth={depth}
         />
       ))}
@@ -714,10 +944,12 @@ function OutlineNodeEditor({
   pageId,
   parentNodeId,
   nodeMap,
+  createNodesBatch,
   updateNode,
-  createNode,
-  deleteNode,
   moveNode,
+  splitNode,
+  replaceNodeAndInsertSiblings,
+  setNodeTreeArchived,
   depth = 0,
 }: {
   node: TreeNode;
@@ -726,78 +958,164 @@ function OutlineNodeEditor({
   pageId: Id<"pages">;
   parentNodeId: Id<"nodes"> | null;
   nodeMap: Map<string, Doc<"nodes">>;
+  createNodesBatch: CreateNodesBatchMutation;
   updateNode: UpdateNodeMutation;
-  createNode: CreateNodeMutation;
-  deleteNode: DeleteNodeMutation;
   moveNode: MoveNodeMutation;
+  splitNode: SplitNodeMutation;
+  replaceNodeAndInsertSiblings: ReplaceNodeAndInsertSiblingsMutation;
+  setNodeTreeArchived: SetNodeTreeArchivedMutation;
   depth?: number;
 }) {
+  const history = useWorkspaceHistory();
   const [draft, setDraft] = useState(node.text);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const draftRef = useRef(draft);
 
   const nodeMeta = getNodeMeta(node);
   const isLocked = nodeMeta.locked === true;
+  const editorId = getNodeEditorId(node._id as Id<"nodes">);
+  const editorTarget = useMemo(
+    () =>
+      ({
+        kind: "node",
+        pageId,
+        nodeId: node._id as Id<"nodes">,
+      } satisfies TrackedEditorTarget),
+    [node._id, pageId],
+  );
+  const fallbackFocusEditorId =
+    previousSibling?._id
+      ? getNodeEditorId(previousSibling._id as Id<"nodes">)
+      : getComposerEditorId(pageId, parentNodeId);
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
 
   useEffect(() => {
     autoResizeTextarea(textareaRef.current);
   }, [draft]);
 
-  const applyParsedDraft = async (nextDraft: string) => {
+  useEffect(() => {
+    return history.registerEditor(editorId, editorTarget, node.text, {
+      getElement: () => textareaRef.current,
+      getValue: () => draftRef.current,
+      setValue: setDraft,
+      focusAtEnd: () => focusElementAtEnd(textareaRef.current),
+    });
+  }, [editorId, editorTarget, history, node.text]);
+
+  useEffect(() => {
+    history.syncCommittedValue(editorId, node.text, editorTarget);
+  }, [editorId, editorTarget, history, node.text]);
+
+  useEffect(() => {
+    return () => history.flushDraftCheckpoint(editorId);
+  }, [editorId, history]);
+
+  const buildUpdateEntry = (
+    beforeValue: string,
+    afterValue: NodeValueSnapshot,
+  ): HistoryEntry | null => {
+    const beforeParsed = parseNodeDraft(beforeValue);
+    if (beforeParsed.shouldDelete) {
+      return null;
+    }
+
+    const beforeSnapshot = toNodeValueSnapshot(beforeParsed);
+    if (
+      beforeSnapshot.text === afterValue.text &&
+      beforeSnapshot.kind === afterValue.kind &&
+      beforeSnapshot.taskStatus === afterValue.taskStatus
+    ) {
+      return null;
+    }
+
+    return {
+      type: "update_node",
+      pageId,
+      nodeId: node._id as Id<"nodes">,
+      before: beforeSnapshot,
+      after: afterValue,
+      focusEditorId: editorId,
+    };
+  };
+
+  const commitNodeText = async (
+    nextDraft: string,
+  ): Promise<{
+    deleted: boolean;
+    updateEntry: HistoryEntry | null;
+    parsed: NodeValueSnapshot | null;
+  }> => {
     if (isLocked) {
-      return { deleted: false };
+      return {
+        deleted: false,
+        updateEntry: null,
+        parsed: toNodeValueSnapshot({
+          text: node.text,
+          kind: node.kind as "note" | "task",
+          taskStatus: (node.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
+        }),
+      };
     }
 
     const parsed = parseNodeDraft(nextDraft);
     if (parsed.shouldDelete) {
-      await deleteNode({
+      await setNodeTreeArchived({
         ownerKey,
         nodeId: node._id as Id<"nodes">,
+        archived: true,
       });
-      return { deleted: true };
-    }
-
-    if (
-      parsed.text === node.text &&
-      parsed.kind === node.kind &&
-      parsed.taskStatus === node.taskStatus
-    ) {
-      return { deleted: false };
-    }
-
-    await updateNode({
-      ownerKey,
-      nodeId: node._id as Id<"nodes">,
-      text: parsed.text,
-      kind: parsed.kind,
-      taskStatus: parsed.taskStatus,
-    });
-
-    return { deleted: false };
-  };
-
-  const handleSave = async () => {
-    return await applyParsedDraft(draft);
-  };
-
-  const createSiblingNodesFromLines = async (lines: string[]) => {
-    let lastCreatedId = node._id as Id<"nodes">;
-
-    for (const line of lines) {
-      const parsed = parseNodeDraft(line);
-      if (parsed.shouldDelete) {
-        continue;
-      }
-
-      lastCreatedId = await createNode({
-        ownerKey,
+      history.resetTrackedValue(editorId, editorTarget);
+      history.pushUndoEntry({
+        type: "archive_node_tree",
         pageId,
-        parentNodeId,
-        afterNodeId: lastCreatedId,
+        nodeId: node._id as Id<"nodes">,
+        focusAfterUndoId: editorId,
+        focusAfterRedoId: fallbackFocusEditorId,
+      });
+      return {
+        deleted: true,
+        updateEntry: null,
+        parsed: null,
+      };
+    }
+
+    const nextSnapshot = toNodeValueSnapshot(parsed);
+    if (
+      parsed.text !== node.text ||
+      parsed.kind !== node.kind ||
+      parsed.taskStatus !== node.taskStatus
+    ) {
+      await updateNode({
+        ownerKey,
+        nodeId: node._id as Id<"nodes">,
         text: parsed.text,
         kind: parsed.kind,
         taskStatus: parsed.taskStatus,
       });
     }
+
+    const beforeValue = history.commitTrackedValue(
+      editorId,
+      editorTarget,
+      nextSnapshot.text,
+    );
+    setDraft(nextSnapshot.text);
+    return {
+      deleted: false,
+      updateEntry: buildUpdateEntry(beforeValue, nextSnapshot),
+      parsed: nextSnapshot,
+    };
+  };
+
+  const handleSave = async () => {
+    const result = await commitNodeText(draft);
+    if (result.updateEntry) {
+      history.pushUndoEntry(result.updateEntry);
+    }
+    return result;
   };
 
   const handlePaste = async (event: TextareaClipboardEvent<HTMLTextAreaElement>) => {
@@ -813,19 +1131,98 @@ function OutlineNodeEditor({
       return;
     }
 
-    setDraft(firstLine);
-    const result = await applyParsedDraft(firstLine);
-    if (!result.deleted && restLines.length > 0) {
-      await createSiblingNodesFromLines(restLines);
+    const firstParsed = parseNodeDraft(firstLine);
+    if (firstParsed.shouldDelete) {
+      return;
+    }
+
+    const siblingInputs = restLines
+      .map((line) => parseNodeDraft(line))
+      .filter((entry) => !entry.shouldDelete);
+    const result = (await replaceNodeAndInsertSiblings({
+      ownerKey,
+      nodeId: node._id as Id<"nodes">,
+      text: firstParsed.text,
+      kind: firstParsed.kind,
+      taskStatus: firstParsed.taskStatus,
+      siblings: siblingInputs.map((entry) => ({
+        text: entry.text,
+        kind: entry.kind,
+        taskStatus: entry.taskStatus,
+      })),
+    })) as {
+      updatedNode: Doc<"nodes"> | null;
+      createdNodes: Doc<"nodes">[];
+    };
+
+    const beforeValue = history.commitTrackedValue(
+      editorId,
+      editorTarget,
+      firstParsed.text,
+    );
+    setDraft(firstParsed.text);
+
+    const updateEntry = buildUpdateEntry(
+      beforeValue,
+      toNodeValueSnapshot(firstParsed),
+    );
+    const createdNodes = result.createdNodes.map((createdNode, index) =>
+      toCreatedNodeSnapshot(
+        createdNode,
+        index === 0
+          ? (node._id as Id<"nodes">)
+          : result.createdNodes[index - 1]!._id,
+      ),
+    );
+    const createEntry: HistoryEntry | null =
+      createdNodes.length > 0
+        ? {
+            type: "create_nodes",
+            pageId,
+            nodes: createdNodes,
+            focusAfterUndoId: editorId,
+            focusAfterRedoId: getNodeEditorId(
+              createdNodes[createdNodes.length - 1]!.nodeId,
+            ),
+          }
+        : null;
+
+    if (updateEntry && createEntry) {
+      history.pushUndoEntry({
+        type: "compound",
+        pageId,
+        entries: [updateEntry, createEntry],
+        focusAfterUndoId: editorId,
+        focusAfterRedoId: createEntry.focusAfterRedoId,
+      });
+      return;
+    }
+
+    if (updateEntry) {
+      history.pushUndoEntry(updateEntry);
+      return;
+    }
+
+    if (createEntry) {
+      history.pushUndoEntry(createEntry);
     }
   };
 
   const handleKeyDown = async (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Backspace" && draft.length === 0 && !isLocked) {
       event.preventDefault();
-      await deleteNode({
+      await setNodeTreeArchived({
         ownerKey,
         nodeId: node._id as Id<"nodes">,
+        archived: true,
+      });
+      history.resetTrackedValue(editorId, editorTarget);
+      history.pushUndoEntry({
+        type: "archive_node_tree",
+        pageId,
+        nodeId: node._id as Id<"nodes">,
+        focusAfterUndoId: editorId,
+        focusAfterRedoId: fallbackFocusEditorId,
       });
       return;
     }
@@ -836,8 +1233,20 @@ function OutlineNodeEditor({
       }
 
       event.preventDefault();
-      const result = await handleSave();
-      if (result.deleted) {
+      const saveResult = await commitNodeText(draft);
+      const historyEntries: HistoryEntry[] = [];
+      if (saveResult.updateEntry) {
+        historyEntries.push(saveResult.updateEntry);
+      }
+
+      const beforePlacement = buildNodePlacement(
+        pageId,
+        parentNodeId,
+        (previousSibling?._id as Id<"nodes"> | undefined) ?? null,
+      );
+      let afterPlacement: NodePlacement | null = null;
+
+      if (saveResult.deleted) {
         return;
       }
 
@@ -851,6 +1260,11 @@ function OutlineNodeEditor({
           return;
         }
 
+        afterPlacement = buildNodePlacement(
+          pageId,
+          (parentNode.parentNodeId as Id<"nodes"> | null) ?? null,
+          parentNode._id as Id<"nodes">,
+        );
         await moveNode({
           ownerKey,
           nodeId: node._id as Id<"nodes">,
@@ -858,19 +1272,46 @@ function OutlineNodeEditor({
           parentNodeId: (parentNode.parentNodeId as Id<"nodes"> | null) ?? null,
           afterNodeId: parentNode._id as Id<"nodes">,
         });
-        return;
+      } else {
+        if (!previousSibling) {
+          return;
+        }
+
+        afterPlacement = buildNodePlacement(
+          pageId,
+          previousSibling._id as Id<"nodes">,
+          null,
+        );
+        await moveNode({
+          ownerKey,
+          nodeId: node._id as Id<"nodes">,
+          pageId,
+          parentNodeId: previousSibling._id as Id<"nodes">,
+        });
       }
 
-      if (!previousSibling) {
-        return;
+      if (afterPlacement) {
+        historyEntries.push({
+          type: "move_node",
+          pageId,
+          nodeId: node._id as Id<"nodes">,
+          beforePlacement,
+          afterPlacement,
+          focusEditorId: editorId,
+        });
       }
 
-      await moveNode({
-        ownerKey,
-        nodeId: node._id as Id<"nodes">,
-        pageId,
-        parentNodeId: previousSibling._id as Id<"nodes">,
-      });
+      if (historyEntries.length === 1) {
+        history.pushUndoEntry(historyEntries[0]!);
+      } else if (historyEntries.length > 1) {
+        history.pushUndoEntry({
+          type: "compound",
+          pageId,
+          entries: historyEntries,
+          focusAfterUndoId: editorId,
+          focusAfterRedoId: editorId,
+        });
+      }
       return;
     }
 
@@ -886,44 +1327,123 @@ function OutlineNodeEditor({
     if (cursorStart < rawValue.length || cursorStart !== cursorEnd) {
       const headDraft = rawValue.slice(0, cursorStart);
       const tailDraft = rawValue.slice(cursorEnd);
-
-      setDraft(headDraft);
-      const result = await applyParsedDraft(headDraft);
-      if (result.deleted) {
-        return;
-      }
-
-      const tailParsed = parseNodeDraft(tailDraft);
-      await createNode({
+      const segmentFallback = {
+        kind: node.kind as "note" | "task",
+        taskStatus: (node.taskStatus ?? null) as
+          | "todo"
+          | "in_progress"
+          | "done"
+          | "cancelled"
+          | null,
+      };
+      const normalizedHead = parseSplitSegmentDraft(headDraft, segmentFallback);
+      const normalizedTail = parseSplitSegmentDraft(tailDraft, segmentFallback);
+      const result = (await splitNode({
         ownerKey,
-        pageId,
-        parentNodeId,
-        afterNodeId: node._id as Id<"nodes">,
-        text: tailParsed.shouldDelete ? "" : tailParsed.text,
-        kind: tailParsed.shouldDelete ? "note" : tailParsed.kind,
-        taskStatus: tailParsed.shouldDelete ? undefined : tailParsed.taskStatus,
-      });
+        nodeId: node._id as Id<"nodes">,
+        headText: normalizedHead.text,
+        headKind: normalizedHead.kind,
+        headTaskStatus: normalizedHead.taskStatus ?? undefined,
+        tailText: normalizedTail.text,
+        tailKind: normalizedTail.kind,
+        tailTaskStatus: normalizedTail.taskStatus ?? undefined,
+      })) as {
+        updatedNode: Doc<"nodes"> | null;
+        createdNode: Doc<"nodes"> | null;
+      };
+      const beforeValue = history.commitTrackedValue(
+        editorId,
+        editorTarget,
+        normalizedHead.text,
+      );
+      setDraft(normalizedHead.text);
+      const updateEntry = buildUpdateEntry(beforeValue, toNodeValueSnapshot(normalizedHead));
+      const createEntry =
+        result.createdNode
+          ? ({
+              type: "create_nodes",
+              pageId,
+              nodes: [
+                toCreatedNodeSnapshot(
+                  result.createdNode,
+                  node._id as Id<"nodes">,
+                ),
+              ],
+              focusAfterUndoId: editorId,
+              focusAfterRedoId: getNodeEditorId(result.createdNode._id),
+            } satisfies HistoryEntry)
+          : null;
+
+      if (updateEntry && createEntry) {
+        history.pushUndoEntry({
+          type: "compound",
+          pageId,
+          entries: [updateEntry, createEntry],
+          focusAfterUndoId: editorId,
+          focusAfterRedoId: createEntry.focusAfterRedoId,
+        });
+      } else if (updateEntry) {
+        history.pushUndoEntry(updateEntry);
+      } else if (createEntry) {
+        history.pushUndoEntry(createEntry);
+      }
       return;
     }
 
-    const result = await handleSave();
+    const result = await commitNodeText(draft);
     if (result.deleted) {
       return;
     }
 
-    const parsed = parseNodeDraft(draft);
-    if (parsed.shouldDelete) {
+    const createdNodes = (await createNodesBatch({
+      ownerKey,
+      pageId,
+      nodes: [
+        {
+          parentNodeId,
+          afterNodeId: node._id as Id<"nodes">,
+          text: "",
+          kind: "note",
+          taskStatus: null,
+        },
+      ],
+    })) as Doc<"nodes">[];
+
+    const createEntry: HistoryEntry | null =
+      createdNodes[0]
+        ? {
+            type: "create_nodes",
+            pageId,
+            nodes: [
+              toCreatedNodeSnapshot(
+                createdNodes[0],
+                node._id as Id<"nodes">,
+              ),
+            ],
+            focusAfterUndoId: editorId,
+            focusAfterRedoId: getNodeEditorId(createdNodes[0]._id),
+          }
+        : null;
+
+    if (result.updateEntry && createEntry) {
+      history.pushUndoEntry({
+        type: "compound",
+        pageId,
+        entries: [result.updateEntry, createEntry],
+        focusAfterUndoId: editorId,
+        focusAfterRedoId: createEntry.focusAfterRedoId,
+      });
       return;
     }
 
-    await createNode({
-      ownerKey,
-      pageId,
-      parentNodeId,
-      afterNodeId: node._id as Id<"nodes">,
-      text: "",
-      kind: "note",
-    });
+    if (result.updateEntry) {
+      history.pushUndoEntry(result.updateEntry);
+      return;
+    }
+
+    if (createEntry) {
+      history.pushUndoEntry(createEntry);
+    }
   };
 
   return (
@@ -932,7 +1452,10 @@ function OutlineNodeEditor({
         <textarea
           ref={textareaRef}
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            history.updateDraftValue(editorId, editorTarget, event.target.value);
+          }}
           onBlur={() => void handleSave()}
           onPaste={(event) => void handlePaste(event)}
           onKeyDown={(event) => void handleKeyDown(event)}
@@ -948,10 +1471,12 @@ function OutlineNodeEditor({
         pageId={pageId}
         parentNodeId={node._id as Id<"nodes">}
         nodeMap={nodeMap}
+        createNodesBatch={createNodesBatch}
         updateNode={updateNode}
-        createNode={createNode}
-        deleteNode={deleteNode}
         moveNode={moveNode}
+        splitNode={splitNode}
+        replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+        setNodeTreeArchived={setNodeTreeArchived}
         depth={depth + 1}
       />
     </div>
@@ -963,46 +1488,103 @@ function InlineComposer({
   pageId,
   parentNodeId,
   afterNodeId,
-  createNode,
+  createNodesBatch,
 }: {
   ownerKey: string;
   pageId: Id<"pages">;
   parentNodeId: Id<"nodes"> | null | undefined;
   afterNodeId?: Id<"nodes">;
-  createNode: CreateNodeMutation;
+  createNodesBatch: CreateNodesBatchMutation;
 }) {
+  const history = useWorkspaceHistory();
   const [draft, setDraft] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const draftRef = useRef(draft);
+  const editorId = getComposerEditorId(pageId, parentNodeId ?? null);
+  const editorTarget = useMemo(
+    () =>
+      ({
+        kind: "composer",
+        pageId,
+        parentNodeId: parentNodeId ?? null,
+      } satisfies TrackedEditorTarget),
+    [pageId, parentNodeId],
+  );
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
 
   useEffect(() => {
     autoResizeTextarea(textareaRef.current);
   }, [draft]);
 
-  const handleSubmit = async () => {
-    const lines = splitPastedLines(draft);
+  useEffect(() => {
+    return history.registerEditor(editorId, editorTarget, "", {
+      getElement: () => textareaRef.current,
+      getValue: () => draftRef.current,
+      setValue: setDraft,
+      focusAtEnd: () => focusElementAtEnd(textareaRef.current),
+    });
+  }, [editorId, editorTarget, history]);
+
+  useEffect(() => {
+    return () => history.flushDraftCheckpoint(editorId);
+  }, [editorId, history]);
+
+  const submitLines = async (value: string) => {
+    const lines = splitPastedLines(value);
     if (lines.length === 0) {
       return;
     }
 
-    let lastCreatedId = afterNodeId;
-    for (const line of lines) {
-      const parsed = parseNodeDraft(line);
-      if (parsed.shouldDelete) {
-        continue;
-      }
-
-      lastCreatedId = await createNode({
-        ownerKey,
-        pageId,
-        parentNodeId: parentNodeId ?? null,
-        afterNodeId: lastCreatedId,
-        text: parsed.text,
-        kind: parsed.kind,
-        taskStatus: parsed.taskStatus,
+    let nextAfterNodeId: Id<"nodes"> | null | undefined = afterNodeId ?? null;
+    const batch = lines
+      .map((line) => parseNodeDraft(line))
+      .filter((entry) => !entry.shouldDelete)
+      .map((entry) => {
+        const nextEntry = {
+          parentNodeId: parentNodeId ?? null,
+          afterNodeId: nextAfterNodeId,
+          text: entry.text,
+          kind: entry.kind,
+          taskStatus: entry.taskStatus,
+        };
+        nextAfterNodeId = undefined;
+        return nextEntry;
       });
+
+    if (batch.length === 0) {
+      return;
     }
 
+    const createdNodes = (await createNodesBatch({
+      ownerKey,
+      pageId,
+      nodes: batch,
+    })) as Doc<"nodes">[];
+
+    const createdSnapshots = createdNodes.map((createdNode, index) =>
+      toCreatedNodeSnapshot(
+        createdNode,
+        index === 0
+          ? (afterNodeId ?? null)
+          : createdNodes[index - 1]!._id,
+      ),
+    );
+
+    history.resetTrackedValue(editorId, editorTarget, "");
     setDraft("");
+    history.pushUndoEntry({
+      type: "create_nodes",
+      pageId,
+      nodes: createdSnapshots,
+      focusAfterUndoId: editorId,
+      focusAfterRedoId:
+        createdSnapshots.length > 0
+          ? getNodeEditorId(createdSnapshots[createdSnapshots.length - 1]!.nodeId)
+          : editorId,
+    });
   };
 
   const handleKeyDown = async (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
@@ -1011,7 +1593,7 @@ function InlineComposer({
     }
 
     event.preventDefault();
-    await handleSubmit();
+    await submitLines(draft);
   };
 
   const handlePaste = async (event: TextareaClipboardEvent<HTMLTextAreaElement>) => {
@@ -1022,31 +1604,18 @@ function InlineComposer({
     }
 
     event.preventDefault();
-    let lastCreatedId = afterNodeId;
-    for (const line of lines) {
-      const parsed = parseNodeDraft(line);
-      if (parsed.shouldDelete) {
-        continue;
-      }
-
-      lastCreatedId = await createNode({
-        ownerKey,
-        pageId,
-        parentNodeId: parentNodeId ?? null,
-        afterNodeId: lastCreatedId,
-        text: parsed.text,
-        kind: parsed.kind,
-        taskStatus: parsed.taskStatus,
-      });
-    }
-    setDraft("");
+    await submitLines(pastedText);
   };
 
   return (
     <textarea
       ref={textareaRef}
       value={draft}
-      onChange={(event) => setDraft(event.target.value)}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        history.updateDraftValue(editorId, editorTarget, event.target.value);
+      }}
+      onBlur={() => history.flushDraftCheckpoint(editorId)}
       onPaste={(event) => void handlePaste(event)}
       onKeyDown={(event) => void handleKeyDown(event)}
       placeholder="New line…"

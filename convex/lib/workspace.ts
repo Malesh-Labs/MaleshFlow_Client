@@ -230,8 +230,26 @@ export async function deleteNodeTree(
   }
 }
 
-async function collectNodeTree(
+export async function setNodeTreeArchivedState(
   db: DatabaseWriter,
+  nodeId: Id<"nodes">,
+  archived: boolean,
+  updatedAt = Date.now(),
+) {
+  const descendants = await collectNodeTree(db, nodeId);
+
+  for (const node of descendants) {
+    await db.patch(node._id, {
+      archived,
+      updatedAt,
+    });
+  }
+
+  return descendants;
+}
+
+export async function collectNodeTree(
+  db: DatabaseReader,
   rootNodeId: Id<"nodes">,
 ): Promise<Array<Doc<"nodes">>> {
   const root = await db.get(rootNodeId);
