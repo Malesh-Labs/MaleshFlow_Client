@@ -31,7 +31,13 @@ import {
 } from "@/components/workspaceHistory";
 
 const SKIP = "skip" as const;
-const SIDEBAR_SECTIONS = ["Models", "Tasks", "Templates", "Journal"] as const;
+const SIDEBAR_SECTIONS = [
+  "Models",
+  "Tasks",
+  "Templates",
+  "Journal",
+  "Scratchpads",
+] as const;
 const OWNER_KEY_STORAGE_KEY = "maleshflow-owner-key";
 const OWNER_KEY_EVENT = "maleshflow-owner-key-change";
 
@@ -607,9 +613,12 @@ function ConfiguredWorkspace({
             </button>
           </div>
 
-          <div className="mt-10 space-y-8">
+          <div className="mt-10 space-y-6">
             {groupedPages.map(({ section, pages: sectionPages }) => (
-              <section key={section}>
+              <section
+                key={section}
+                className="border-t border-[#ddd2c0] pt-6 first:border-t-0 first:pt-0"
+              >
                 <h2 className="text-sm font-semibold uppercase tracking-[0.22em] text-[#7a6e5f]">
                   {section}
                 </h2>
@@ -657,7 +666,7 @@ function ConfiguredWorkspace({
             </div>
           ) : (
             <div className="flex min-h-[calc(100vh-5rem)] flex-col border border-[#d8cfbf] bg-white">
-              <div className="border-b border-[#ebe2d2] px-6 py-6 md:px-8">
+              <div className="px-6 py-6 md:px-8">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <p className="text-xs uppercase tracking-[0.3em] text-[#8a6c2d]">
@@ -701,37 +710,42 @@ function ConfiguredWorkspace({
                     </button>
                   </div>
                 </div>
+                <div className="mt-6 h-px bg-[#ebe2d2]" />
               </div>
 
               <div className="flex-1 px-6 py-6 md:px-8">
                 {pageMeta.pageType === "model" ? (
-                  <div className="space-y-8">
-                    <ModelSection
-                      title="Model"
-                      sectionNode={modelSection}
-                      ownerKey={ownerKey}
-                      pageId={selectedPage._id}
-                      nodeMap={nodeMap}
-                      createNodesBatch={createNodesBatch}
-                      updateNode={updateNode}
-                      moveNode={moveNode}
-                      splitNode={splitNode}
-                      replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
-                      setNodeTreeArchived={setNodeTreeArchived}
-                    />
-                    <ModelSection
-                      title="Recent"
-                      sectionNode={recentExamplesSection}
-                      ownerKey={ownerKey}
-                      pageId={selectedPage._id}
-                      nodeMap={nodeMap}
-                      createNodesBatch={createNodesBatch}
-                      updateNode={updateNode}
-                      moveNode={moveNode}
-                      splitNode={splitNode}
-                      replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
-                      setNodeTreeArchived={setNodeTreeArchived}
-                    />
+                  <div className="divide-y divide-[#ebe2d2]">
+                    <div className="pb-8">
+                      <ModelSection
+                        title="Model"
+                        sectionNode={modelSection}
+                        ownerKey={ownerKey}
+                        pageId={selectedPage._id}
+                        nodeMap={nodeMap}
+                        createNodesBatch={createNodesBatch}
+                        updateNode={updateNode}
+                        moveNode={moveNode}
+                        splitNode={splitNode}
+                        replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                        setNodeTreeArchived={setNodeTreeArchived}
+                      />
+                    </div>
+                    <div className="pt-8">
+                      <ModelSection
+                        title="Recent"
+                        sectionNode={recentExamplesSection}
+                        ownerKey={ownerKey}
+                        pageId={selectedPage._id}
+                        nodeMap={nodeMap}
+                        createNodesBatch={createNodesBatch}
+                        updateNode={updateNode}
+                        moveNode={moveNode}
+                        splitNode={splitNode}
+                        replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                        setNodeTreeArchived={setNodeTreeArchived}
+                      />
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-2">

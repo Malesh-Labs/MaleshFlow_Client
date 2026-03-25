@@ -196,6 +196,7 @@ export const createPage = mutation({
         v.literal("Tasks"),
         v.literal("Templates"),
         v.literal("Journal"),
+        v.literal("Scratchpads"),
       ),
     ),
     pageType: v.optional(
