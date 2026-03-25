@@ -14,10 +14,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MaleshFlow",
+  title: "Malesh Flow",
   description: "A personal AI outliner for notes, todos, chat actions, and Markdown import/export.",
   icons: {
-    icon: "/convex.svg",
+    icon: "/icon.png",
   },
 };
 
