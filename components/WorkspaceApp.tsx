@@ -794,6 +794,15 @@ function OutlineNodeEditor({
   };
 
   const handleKeyDown = async (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Backspace" && draft.length === 0 && !isLocked) {
+      event.preventDefault();
+      await deleteNode({
+        ownerKey,
+        nodeId: node._id as Id<"nodes">,
+      });
+      return;
+    }
+
     if (event.key === "Tab") {
       if (isLocked) {
         return;
