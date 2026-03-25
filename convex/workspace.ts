@@ -512,6 +512,48 @@ export const getWorkspaceContext = internalQuery({
   },
 });
 
+export const getModelPageContext = internalQuery({
+  args: {
+    pageId: v.id("pages"),
+  },
+  handler: async (ctx, args) => {
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived) {
+      return null;
+    }
+
+    const nodes = await listPageNodes(ctx.db, args.pageId);
+    const rootNodes = [...nodes]
+      .filter((node) => node.parentNodeId === null)
+      .sort((left, right) => left.position - right.position);
+
+    const getSectionNode = (slot: "model" | "recentExamples") =>
+      rootNodes.find((node) => {
+        const sourceMeta =
+          node.sourceMeta && typeof node.sourceMeta === "object"
+            ? (node.sourceMeta as Record<string, unknown>)
+            : null;
+        return sourceMeta?.sectionSlot === slot;
+      }) ?? null;
+
+    const modelSection = getSectionNode("model");
+    const recentExamplesSection = getSectionNode("recentExamples");
+
+    const getSectionChildren = (sectionNodeId: Doc<"nodes">["_id"] | null) =>
+      nodes
+        .filter((node) => node.parentNodeId === sectionNodeId)
+        .sort((left, right) => left.position - right.position);
+
+    return {
+      page,
+      modelSection,
+      recentExamplesSection,
+      modelLines: getSectionChildren(modelSection?._id ?? null),
+      recentExampleLines: getSectionChildren(recentExamplesSection?._id ?? null),
+    };
+  },
+});
+
 export const getSearchableNodes = internalQuery({
   args: {
     pageId: v.optional(v.id("pages")),

@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { assertOwnerKey } from "./lib/auth";
 import {
   buildUniquePageSlug,
@@ -144,6 +144,95 @@ export const storeAssistantPlan = internalMutation({
       status: "pending_approval",
       createdAt: now,
     });
+  },
+});
+
+export const storeAssistantMessage = internalMutation({
+  args: {
+    threadId: v.id("chatThreads"),
+    text: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    await ctx.db.patch(args.threadId, {
+      updatedAt: now,
+    });
+    return await ctx.db.insert("chatMessages", {
+      threadId: args.threadId,
+      role: "assistant",
+      text: args.text,
+      status: "ready",
+      createdAt: now,
+    });
+  },
+});
+
+export const replaceModelSection = internalMutation({
+  args: {
+    pageId: v.id("pages"),
+    sectionNodeId: v.id("nodes"),
+    lines: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const normalizedLines = args.lines
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    const existingChildren = await ctx.db
+      .query("nodes")
+      .withIndex("by_page_parent_position", (query) =>
+        query.eq("pageId", args.pageId).eq("parentNodeId", args.sectionNodeId),
+      )
+      .collect();
+
+    for (const child of existingChildren) {
+      await deleteNodeTree(ctx.db, child._id);
+    }
+
+    let lastNodeId: Id<"nodes"> | null = null;
+    let insertedCount = 0;
+
+    for (const line of normalizedLines) {
+      const nodeId: Id<"nodes"> = await ctx.db.insert("nodes", {
+        pageId: args.pageId,
+        parentNodeId: args.sectionNodeId,
+        position: await computeNodePosition(
+          ctx.db,
+          args.pageId,
+          args.sectionNodeId,
+          lastNodeId,
+        ),
+        text: line,
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
+        archived: false,
+        sourceMeta: {
+          sourceType: "chat",
+          generatedFrom: "model_chat",
+        },
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+
+      lastNodeId = nodeId;
+      insertedCount += 1;
+
+      const inserted = (await ctx.db.get(nodeId)) as Doc<"nodes"> | null;
+      if (inserted) {
+        await syncLinksForNode(ctx.db, inserted);
+        await enqueueNodeAiWork(ctx, inserted._id);
+      }
+    }
+
+    await ctx.db.patch(args.sectionNodeId, {
+      updatedAt: Date.now(),
+    });
+
+    return {
+      insertedCount,
+    };
   },
 });
 

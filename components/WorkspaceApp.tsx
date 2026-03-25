@@ -261,7 +261,7 @@ function ConfiguredWorkspace({
   const createNode = useMutation(api.workspace.createNode);
   const updateNode = useMutation(api.workspace.updateNode);
   const deleteNode = useMutation(api.workspace.deleteNode);
-  const runChatPlanner = useAction(api.chat.runChatPlanner);
+  const rewriteModelSection = useAction(api.chat.rewriteModelSection);
 
   useEffect(() => {
     if (isOwnerKeyValid === false) {
@@ -347,16 +347,15 @@ function ConfiguredWorkspace({
     setIsSendingChat(true);
     setChatStatus("");
     try {
-      const result = await runChatPlanner({
+      const result = await rewriteModelSection({
         ownerKey,
         pageId: selectedPageId,
         prompt: modelChatInput.trim(),
       });
-      const preview = (result.plan.preview ?? []).slice(0, 2).join(" ");
-      setChatStatus(preview || result.plan.summary);
+      setChatStatus(result.summary);
       setModelChatInput("");
     } catch {
-      setChatStatus("Could not run the model chat right now.");
+      setChatStatus("Could not update the model right now.");
     } finally {
       setIsSendingChat(false);
     }
