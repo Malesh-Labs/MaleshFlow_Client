@@ -312,8 +312,11 @@ export const rewriteModelSection = action({
             .map((line) => line.trim())
             .filter((line) => line.length > 0);
         }
-      } catch {
-        summary = "OpenAI could not rewrite the model section, so it was left unchanged.";
+      } catch (error) {
+        summary =
+          error instanceof Error
+            ? `OpenAI rewrite failed: ${error.message}`
+            : "OpenAI could not rewrite the model section, so it was left unchanged.";
       }
     }
 

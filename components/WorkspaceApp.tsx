@@ -354,8 +354,12 @@ function ConfiguredWorkspace({
       });
       setChatStatus(result.summary);
       setModelChatInput("");
-    } catch {
-      setChatStatus("Could not update the model right now.");
+    } catch (error) {
+      setChatStatus(
+        error instanceof Error
+          ? error.message
+          : "Could not update the model right now.",
+      );
     } finally {
       setIsSendingChat(false);
     }
@@ -450,7 +454,7 @@ function ConfiguredWorkspace({
                       deleteNode={deleteNode}
                     />
                     <ModelSection
-                      title="Recent Examples"
+                      title="Recent"
                       sectionNode={recentExamplesSection}
                       ownerKey={ownerKey}
                       pageId={selectedPage._id}
@@ -489,7 +493,7 @@ function ConfiguredWorkspace({
                     <input
                       value={modelChatInput}
                       onChange={(event) => setModelChatInput(event.target.value)}
-                      placeholder=""
+                      placeholder="Ask AI..."
                       className="w-full border-0 border-b border-[#d8cfbf] bg-transparent px-0 py-2 text-sm outline-none"
                     />
                     <div className="flex items-center justify-between gap-4">

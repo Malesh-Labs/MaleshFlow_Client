@@ -211,7 +211,7 @@ export const createPage = mutation({
         pageId,
         parentNodeId: null,
         position: 2048,
-        text: "Recent Examples",
+        text: "Recent",
         kind: "note",
         taskStatus: null,
         priority: null,
