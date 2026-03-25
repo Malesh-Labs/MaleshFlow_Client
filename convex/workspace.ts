@@ -125,6 +125,17 @@ export const createPage = mutation({
     ownerKey: v.string(),
     title: v.string(),
     afterPageId: v.optional(v.id("pages")),
+    sidebarSection: v.optional(
+      v.union(
+        v.literal("Models"),
+        v.literal("Tasks"),
+        v.literal("Templates"),
+        v.literal("Journal"),
+      ),
+    ),
+    pageType: v.optional(
+      v.union(v.literal("default"), v.literal("model")),
+    ),
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
@@ -152,7 +163,7 @@ export const createPage = mutation({
           : (before + after) / 2;
 
     const slug = await buildUniquePageSlug(ctx.db, args.title);
-    return await ctx.db.insert("pages", {
+    const pageId = await ctx.db.insert("pages", {
       title: args.title.trim() || "Untitled",
       slug,
       icon: null,
@@ -160,10 +171,54 @@ export const createPage = mutation({
       position,
       sourceMeta: {
         sourceType: "manual",
+        sidebarSection: args.sidebarSection ?? "Tasks",
+        pageType: args.pageType ?? "default",
       },
       createdAt: now,
       updatedAt: now,
     });
+
+    if (args.pageType === "model") {
+      await ctx.db.insert("nodes", {
+        pageId,
+        parentNodeId: null,
+        position: 1024,
+        text: "Model",
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
+        archived: false,
+        sourceMeta: {
+          sourceType: "system",
+          sectionSlot: "model",
+          locked: true,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await ctx.db.insert("nodes", {
+        pageId,
+        parentNodeId: null,
+        position: 2048,
+        text: "Recent Examples",
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
+        archived: false,
+        sourceMeta: {
+          sourceType: "system",
+          sectionSlot: "recentExamples",
+          locked: true,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    return pageId;
   },
 });
 
