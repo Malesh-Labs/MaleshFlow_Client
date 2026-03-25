@@ -4,11 +4,12 @@ import clsx from "clsx";
 import { useAction, useMutation, useQuery } from "convex/react";
 import {
   useEffect,
+  useRef,
   useState,
   useSyncExternalStore,
-  type ClipboardEvent,
   type FormEvent,
-  type KeyboardEvent,
+  type KeyboardEvent as TextareaKeyboardEvent,
+  type ClipboardEvent as TextareaClipboardEvent,
 } from "react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
@@ -179,6 +180,15 @@ function parseNodeDraft(draft: string) {
   };
 }
 
+function autoResizeTextarea(element: HTMLTextAreaElement | null) {
+  if (!element) {
+    return;
+  }
+
+  element.style.height = "0px";
+  element.style.height = `${element.scrollHeight}px`;
+}
+
 function splitPastedLines(text: string) {
   return text
     .replace(/\r\n/g, "\n")
@@ -319,6 +329,13 @@ function ConfiguredWorkspace({
 
   const modelSection = findModelSection(tree, "model");
   const recentExamplesSection = findModelSection(tree, "recentExamples");
+  const visibleModelChatDebug = modelChatDebug ?? {
+    model: "gpt-5-mini",
+    systemPrompt: "",
+    userPrompt: "",
+    response: null,
+    error: null,
+  };
   const genericRoots =
     pageMeta.pageType === "model"
       ? collectChildren(
@@ -544,40 +561,45 @@ function ConfiguredWorkspace({
                       </button>
                     </div>
                   </form>
-                  {modelChatDebug ? (
-                    <div className="mt-4 space-y-3 border-t border-[#ebe2d2] pt-4 text-xs text-[#5c5348]">
-                      <div>
-                        <p className="font-semibold uppercase tracking-[0.18em] text-[#8a6c2d]">
-                          OpenAI Request
-                        </p>
-                        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap border border-[#ebe2d2] bg-[#fcfbf8] p-3 leading-6">
+                  <div className="mt-4 space-y-4 border-t border-[#ebe2d2] pt-4 text-xs text-[#5c5348]">
+                    <p className="font-semibold uppercase tracking-[0.22em] text-[#8a6c2d]">
+                      AI Debug
+                    </p>
+                    <div>
+                      <p className="font-semibold uppercase tracking-[0.18em] text-[#8a6c2d]">
+                        OpenAI Request
+                      </p>
+                      <pre className="mt-2 max-h-[320px] overflow-auto whitespace-pre-wrap border border-[#ebe2d2] bg-[#fcfbf8] p-4 font-mono text-[13px] leading-6">
 {JSON.stringify(
   {
-    model: modelChatDebug.model,
-    systemPrompt: modelChatDebug.systemPrompt,
-    userPrompt: modelChatDebug.userPrompt,
+    model: visibleModelChatDebug.model,
+    systemPrompt:
+      visibleModelChatDebug.systemPrompt || "(send a message to populate this)",
+    userPrompt:
+      visibleModelChatDebug.userPrompt || "(send a message to populate this)",
   },
   null,
   2,
 )}
-                        </pre>
-                      </div>
-                      <div>
-                        <p className="font-semibold uppercase tracking-[0.18em] text-[#8a6c2d]">
-                          OpenAI Response
-                        </p>
-                        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap border border-[#ebe2d2] bg-[#fcfbf8] p-3 leading-6">
+                      </pre>
+                    </div>
+                    <div>
+                      <p className="font-semibold uppercase tracking-[0.18em] text-[#8a6c2d]">
+                        OpenAI Response
+                      </p>
+                      <pre className="mt-2 max-h-[320px] overflow-auto whitespace-pre-wrap border border-[#ebe2d2] bg-[#fcfbf8] p-4 font-mono text-[13px] leading-6">
 {JSON.stringify(
-  modelChatDebug.error
-    ? { error: modelChatDebug.error }
-    : modelChatDebug.response,
+  visibleModelChatDebug.error
+    ? { error: visibleModelChatDebug.error }
+    : visibleModelChatDebug.response ?? {
+        status: "No response yet",
+      },
   null,
   2,
 )}
-                        </pre>
-                      </div>
+                      </pre>
                     </div>
-                  ) : null}
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -711,9 +733,14 @@ function OutlineNodeEditor({
   depth?: number;
 }) {
   const [draft, setDraft] = useState(node.text);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const nodeMeta = getNodeMeta(node);
   const isLocked = nodeMeta.locked === true;
+
+  useEffect(() => {
+    autoResizeTextarea(textareaRef.current);
+  }, [draft]);
 
   const applyParsedDraft = async (nextDraft: string) => {
     if (isLocked) {
@@ -773,7 +800,7 @@ function OutlineNodeEditor({
     }
   };
 
-  const handlePaste = async (event: ClipboardEvent<HTMLInputElement>) => {
+  const handlePaste = async (event: TextareaClipboardEvent<HTMLTextAreaElement>) => {
     const pastedText = event.clipboardData.getData("text");
     const lines = splitPastedLines(pastedText);
     if (lines.length <= 1 || isLocked) {
@@ -793,7 +820,7 @@ function OutlineNodeEditor({
     }
   };
 
-  const handleKeyDown = async (event: KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = async (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === "Backspace" && draft.length === 0 && !isLocked) {
       event.preventDefault();
       await deleteNode({
@@ -852,6 +879,33 @@ function OutlineNodeEditor({
     }
 
     event.preventDefault();
+    const rawValue = event.currentTarget.value;
+    const cursorStart = event.currentTarget.selectionStart ?? rawValue.length;
+    const cursorEnd = event.currentTarget.selectionEnd ?? cursorStart;
+
+    if (cursorStart < rawValue.length || cursorStart !== cursorEnd) {
+      const headDraft = rawValue.slice(0, cursorStart);
+      const tailDraft = rawValue.slice(cursorEnd);
+
+      setDraft(headDraft);
+      const result = await applyParsedDraft(headDraft);
+      if (result.deleted) {
+        return;
+      }
+
+      const tailParsed = parseNodeDraft(tailDraft);
+      await createNode({
+        ownerKey,
+        pageId,
+        parentNodeId,
+        afterNodeId: node._id as Id<"nodes">,
+        text: tailParsed.shouldDelete ? "" : tailParsed.text,
+        kind: tailParsed.shouldDelete ? "note" : tailParsed.kind,
+        taskStatus: tailParsed.shouldDelete ? undefined : tailParsed.taskStatus,
+      });
+      return;
+    }
+
     const result = await handleSave();
     if (result.deleted) {
       return;
@@ -875,7 +929,8 @@ function OutlineNodeEditor({
   return (
     <div className="space-y-2">
       <div style={{ marginLeft: `${depth * 20}px` }}>
-        <input
+        <textarea
+          ref={textareaRef}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onBlur={() => void handleSave()}
@@ -883,7 +938,8 @@ function OutlineNodeEditor({
           onKeyDown={(event) => void handleKeyDown(event)}
           placeholder="Write a line…"
           disabled={isLocked}
-          className="w-full border-0 border-b border-transparent bg-transparent px-0 py-1 text-[15px] leading-7 outline-none transition focus:border-[#d8cfbf] disabled:text-[#5c5348]"
+          rows={1}
+          className="w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-1 text-[15px] leading-7 outline-none transition focus:border-[#d8cfbf] disabled:text-[#5c5348]"
         />
       </div>
       <OutlineNodeList
@@ -916,6 +972,11 @@ function InlineComposer({
   createNode: CreateNodeMutation;
 }) {
   const [draft, setDraft] = useState("");
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    autoResizeTextarea(textareaRef.current);
+  }, [draft]);
 
   const handleSubmit = async () => {
     const lines = splitPastedLines(draft);
@@ -944,7 +1005,7 @@ function InlineComposer({
     setDraft("");
   };
 
-  const handleKeyDown = async (event: KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = async (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key !== "Enter") {
       return;
     }
@@ -953,7 +1014,7 @@ function InlineComposer({
     await handleSubmit();
   };
 
-  const handlePaste = async (event: ClipboardEvent<HTMLInputElement>) => {
+  const handlePaste = async (event: TextareaClipboardEvent<HTMLTextAreaElement>) => {
     const pastedText = event.clipboardData.getData("text");
     const lines = splitPastedLines(pastedText);
     if (lines.length <= 1) {
@@ -982,13 +1043,15 @@ function InlineComposer({
   };
 
   return (
-    <input
+    <textarea
+      ref={textareaRef}
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
       onPaste={(event) => void handlePaste(event)}
       onKeyDown={(event) => void handleKeyDown(event)}
       placeholder="New line…"
-      className="w-full border-0 border-b border-transparent bg-transparent px-0 py-1 text-[15px] leading-7 outline-none transition focus:border-[#d8cfbf]"
+      rows={1}
+      className="w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-1 text-[15px] leading-7 outline-none transition focus:border-[#d8cfbf]"
     />
   );
 }
