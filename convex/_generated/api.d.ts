@@ -8,7 +8,16 @@
  * @module
  */
 
-import type * as myFunctions from "../myFunctions.js";
+import type * as ai from "../ai.js";
+import type * as aiData from "../aiData.js";
+import type * as chat from "../chat.js";
+import type * as chatData from "../chatData.js";
+import type * as importExport from "../importExport.js";
+import type * as importExportData from "../importExportData.js";
+import type * as lib_auth from "../lib/auth.js";
+import type * as lib_validators from "../lib/validators.js";
+import type * as lib_workspace from "../lib/workspace.js";
+import type * as workspace from "../workspace.js";
 
 import type {
   ApiFromModules,
@@ -17,7 +26,16 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  myFunctions: typeof myFunctions;
+  ai: typeof ai;
+  aiData: typeof aiData;
+  chat: typeof chat;
+  chatData: typeof chatData;
+  importExport: typeof importExport;
+  importExportData: typeof importExportData;
+  "lib/auth": typeof lib_auth;
+  "lib/validators": typeof lib_validators;
+  "lib/workspace": typeof lib_workspace;
+  workspace: typeof workspace;
 }>;
 
 /**
