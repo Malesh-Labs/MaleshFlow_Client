@@ -3,6 +3,7 @@
 import clsx from "clsx";
 import { useAction, useMutation, useQuery } from "convex/react";
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -15,6 +16,10 @@ import {
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
+import {
+  buildNodeSelectionIds,
+  filterPagesForCommandPalette,
+} from "@/lib/domain/workspaceUi";
 import {
   WorkspaceHistoryProvider,
   focusElementAtEnd,
@@ -38,11 +43,13 @@ const SIDEBAR_SECTIONS = [
   "Journal",
   "Scratchpads",
 ] as const;
+const ARCHIVE_SECTION_LABEL = "Archive";
 const OWNER_KEY_STORAGE_KEY = "maleshflow-owner-key";
 const OWNER_KEY_EVENT = "maleshflow-owner-key-change";
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
 type PageType = "default" | "model";
+type PageDoc = Doc<"pages">;
 type UpdateNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.updateNode>>;
 type CreateNodesBatchMutation = ReturnType<typeof useMutation<typeof api.workspace.createNodesBatch>>;
 type MoveNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.moveNode>>;
@@ -150,6 +157,10 @@ function getPageMeta(page: Doc<"pages"> | null | undefined) {
   return { sidebarSection, pageType };
 }
 
+function flattenTreeNodes(nodes: TreeNode[]): TreeNode[] {
+  return nodes.flatMap((node) => [node, ...flattenTreeNodes(node.children)]);
+}
+
 function getNodeMeta(node: Doc<"nodes"> | TreeNode | null | undefined) {
   if (!node || typeof node.sourceMeta !== "object" || !node.sourceMeta) {
     return {};
@@ -204,6 +215,55 @@ function parseNodeDraft(draft: string) {
     text: trimmed,
     kind: "note" as const,
     taskStatus: null,
+  };
+}
+
+function parseNodeDraftWithFallback(
+  draft: string,
+  fallback: {
+    kind: "note" | "task";
+    taskStatus: "todo" | "in_progress" | "done" | "cancelled" | null;
+  },
+) {
+  const trimmed = draft.trim();
+  if (trimmed.length === 0) {
+    return { shouldDelete: true as const };
+  }
+
+  const doneMatch = trimmed.match(/^\[x\]\s*(.*)$/i);
+  if (doneMatch) {
+    const text = doneMatch[1]?.trim() ?? "";
+    return text.length === 0
+      ? { shouldDelete: true as const }
+      : {
+          shouldDelete: false as const,
+          text,
+          kind: "task" as const,
+          taskStatus: "done" as const,
+        };
+  }
+
+  const todoMatch = trimmed.match(/^\[\s\]\s*(.*)$/);
+  if (todoMatch) {
+    const text = todoMatch[1]?.trim() ?? "";
+    return text.length === 0
+      ? { shouldDelete: true as const }
+      : {
+          shouldDelete: false as const,
+          text,
+          kind: "task" as const,
+          taskStatus: "todo" as const,
+        };
+  }
+
+  return {
+    shouldDelete: false as const,
+    text: trimmed,
+    kind: fallback.kind,
+    taskStatus:
+      fallback.kind === "task"
+        ? ((fallback.taskStatus ?? "todo") as "todo" | "in_progress" | "done" | "cancelled")
+        : null,
   };
 }
 
@@ -379,6 +439,14 @@ function ConfiguredWorkspace({
   const [modelChatDebug, setModelChatDebug] = useState<ModelChatDebug | null>(null);
   const [isCreatingPage, setIsCreatingPage] = useState<SidebarSection | null>(null);
   const [isSendingChat, setIsSendingChat] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteQuery, setPaletteQuery] = useState("");
+  const [paletteHighlightIndex, setPaletteHighlightIndex] = useState(0);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+  const [dragSelection, setDragSelection] = useState<{
+    anchorNodeId: string;
+    currentNodeId: string;
+  } | null>(null);
 
   const isOwnerKeyValid = useQuery(
     api.workspace.validateOwnerKey,
@@ -386,7 +454,7 @@ function ConfiguredWorkspace({
   );
   const pages = useQuery(
     api.workspace.listPages,
-    ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
+    ownerKey && isOwnerKeyValid ? { ownerKey, includeArchived: true } : SKIP,
   );
   const pageTree = useQuery(
     api.workspace.getPageTree,
@@ -397,6 +465,7 @@ function ConfiguredWorkspace({
 
   const createPage = useMutation(api.workspace.createPage);
   const renamePage = useMutation(api.workspace.renamePage);
+  const archivePage = useMutation(api.workspace.archivePage);
   const createNodesBatch = useMutation(api.workspace.createNodesBatch);
   const updateNode = useMutation(api.workspace.updateNode);
   const moveNode = useMutation(api.workspace.moveNode);
@@ -408,6 +477,12 @@ function ConfiguredWorkspace({
   const rewriteModelSection = useAction(api.chat.rewriteModelSection);
   const pageTitleInputRef = useRef<HTMLInputElement>(null);
   const pageTitleDraftRef = useRef(pageTitleDraft);
+  const paletteInputRef = useRef<HTMLInputElement>(null);
+
+  const clearNodeSelection = useCallback(() => {
+    setSelectedNodeIds(new Set());
+    setDragSelection(null);
+  }, []);
 
   const history = useWorkspaceHistoryController({
     ownerKey,
@@ -417,36 +492,12 @@ function ConfiguredWorkspace({
     updateNode,
     moveNode,
     setNodeTreeArchived,
+    isDisabled: pageTree?.page?.archived ?? false,
   });
-
-  useEffect(() => {
-    pageTitleDraftRef.current = pageTitleDraft;
-  }, [pageTitleDraft]);
-
-  useEffect(() => {
-    if (isOwnerKeyValid === false) {
-      setOwnerKey("");
-    }
-  }, [isOwnerKeyValid, setOwnerKey]);
-
-  useEffect(() => {
-    if (!pages || pages.length === 0) {
-      return;
-    }
-
-    if (!selectedPageId || !pages.some((page) => page._id === selectedPageId)) {
-      setSelectedPageId(pages[0]!._id);
-    }
-  }, [pages, selectedPageId]);
-
-  useEffect(() => {
-    setPageTitleDraft(pageTree?.page?.title ?? "");
-    setChatStatus("");
-    setModelChatDebug(null);
-  }, [pageTree?.page?._id, pageTree?.page?.title]);
 
   const selectedPage = pageTree?.page ?? null;
   const pageMeta = getPageMeta(selectedPage);
+  const isPageArchived = selectedPage?.archived ?? false;
   const pageTitleEditorId = selectedPage ? getPageTitleEditorId(selectedPage._id) : null;
   const pageTitleTarget = useMemo(
     () =>
@@ -479,12 +530,136 @@ function ConfiguredWorkspace({
           new Set([modelSection?._id, recentExamplesSection?._id].filter(Boolean) as string[]),
         )
       : tree;
+  const modelVisibleRoots = [modelSection, recentExamplesSection].filter(
+    (node): node is TreeNode => Boolean(node),
+  );
+  const visibleRows =
+    pageMeta.pageType === "model"
+      ? flattenTreeNodes([...modelVisibleRoots, ...genericRoots])
+      : flattenTreeNodes(genericRoots);
+  const visibleNodeOrder = visibleRows.map((node) => node._id);
 
   const groupedPages = SIDEBAR_SECTIONS.map((section) => ({
     section,
     pages:
-      pages?.filter((page) => getPageMeta(page).sidebarSection === section) ?? [],
+      pages?.filter(
+        (page) => !page.archived && getPageMeta(page).sidebarSection === section,
+      ) ?? [],
   }));
+  const archivedPages = pages?.filter((page) => page.archived) ?? [];
+  const paletteResults = filterPagesForCommandPalette(
+    pages ?? [],
+    paletteQuery,
+    14,
+  );
+
+  useEffect(() => {
+    pageTitleDraftRef.current = pageTitleDraft;
+  }, [pageTitleDraft]);
+
+  useEffect(() => {
+    if (isOwnerKeyValid === false) {
+      setOwnerKey("");
+    }
+  }, [isOwnerKeyValid, setOwnerKey]);
+
+  useEffect(() => {
+    if (!pages || pages.length === 0) {
+      return;
+    }
+
+    if (!selectedPageId || !pages.some((page) => page._id === selectedPageId)) {
+      setSelectedPageId(pages[0]!._id);
+    }
+  }, [pages, selectedPageId]);
+
+  useEffect(() => {
+    setPageTitleDraft(pageTree?.page?.title ?? "");
+    setChatStatus("");
+    setModelChatDebug(null);
+    clearNodeSelection();
+  }, [clearNodeSelection, pageTree?.page?._id, pageTree?.page?.title]);
+
+  useEffect(() => {
+    if (!dragSelection) {
+      return;
+    }
+
+    setSelectedNodeIds(
+      buildNodeSelectionIds(
+        visibleNodeOrder,
+        dragSelection.anchorNodeId,
+        dragSelection.currentNodeId,
+      ),
+    );
+  }, [dragSelection, visibleNodeOrder]);
+
+  useEffect(() => {
+    const handleMouseUp = () => {
+      setDragSelection(null);
+    };
+
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => window.removeEventListener("mouseup", handleMouseUp);
+  }, []);
+
+  useEffect(() => {
+    if (!paletteOpen) {
+      return;
+    }
+
+    setPaletteHighlightIndex(0);
+    window.setTimeout(() => paletteInputRef.current?.focus(), 0);
+  }, [paletteOpen]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteQuery("");
+        setPaletteOpen(true);
+        return;
+      }
+
+      if (event.key === "Escape") {
+        if (paletteOpen) {
+          event.preventDefault();
+          setPaletteOpen(false);
+          setPaletteQuery("");
+          return;
+        }
+
+        if (selectedNodeIds.size > 0) {
+          setSelectedNodeIds(new Set());
+          setDragSelection(null);
+        }
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [paletteOpen, selectedNodeIds.size]);
+
+  useEffect(() => {
+    if (selectedNodeIds.size === 0) {
+      return;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (
+        event.target instanceof HTMLElement &&
+        (event.target.closest("[data-node-shell]") ||
+          event.target.closest("[data-selection-gutter='true']"))
+      ) {
+        return;
+      }
+
+      clearNodeSelection();
+    };
+
+    window.addEventListener("mousedown", handlePointerDown);
+    return () => window.removeEventListener("mousedown", handlePointerDown);
+  }, [clearNodeSelection, selectedNodeIds]);
 
   useEffect(() => {
     if (!pageTitleEditorId || !pageTitleTarget) {
@@ -566,9 +741,25 @@ function ConfiguredWorkspace({
     }
   };
 
+  const handleSelectPage = useCallback((pageId: Id<"pages">) => {
+    setSelectedPageId(pageId);
+    setPaletteOpen(false);
+    setPaletteQuery("");
+    setPaletteHighlightIndex(0);
+    clearNodeSelection();
+  }, [clearNodeSelection]);
+
+  const handleArchivePage = async (page: PageDoc, archived: boolean) => {
+    await archivePage({
+      ownerKey,
+      pageId: page._id,
+      archived,
+    });
+  };
+
   const handleRunModelChat = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!selectedPageId || modelChatInput.trim().length === 0) {
+    if (!selectedPageId || modelChatInput.trim().length === 0 || isPageArchived) {
       return;
     }
 
@@ -598,12 +789,67 @@ function ConfiguredWorkspace({
     }
   };
 
+  const handlePaletteKeyDown = (event: TextareaKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setPaletteHighlightIndex((current) =>
+        paletteResults.length === 0 ? 0 : Math.min(current + 1, paletteResults.length - 1),
+      );
+      return;
+    }
+
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setPaletteHighlightIndex((current) =>
+        paletteResults.length === 0 ? 0 : Math.max(current - 1, 0),
+      );
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const highlighted = paletteResults[paletteHighlightIndex];
+      if (highlighted) {
+        handleSelectPage(highlighted._id);
+      }
+    }
+  };
+
+  const beginNodeSelection = (nodeId: string) => {
+    setDragSelection({
+      anchorNodeId: nodeId,
+      currentNodeId: nodeId,
+    });
+    setSelectedNodeIds(new Set([nodeId]));
+  };
+
+  const extendNodeSelection = (nodeId: string) => {
+    setDragSelection((current) =>
+      current
+        ? {
+            ...current,
+            currentNodeId: nodeId,
+          }
+        : current,
+    );
+  };
+
   return (
     <WorkspaceHistoryProvider value={history}>
       <main className="min-h-screen bg-[#f7f4ec] text-[#1b1916]">
       <div className="mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)]">
         <aside className="border-b border-[#d8cfbf] bg-[#efe7d9] p-6 lg:border-b-0 lg:border-r">
           <div className="flex items-start justify-end gap-4">
+            <button
+              type="button"
+              onClick={() => {
+                setPaletteQuery("");
+                setPaletteOpen(true);
+              }}
+              className="border border-[#c9bda8] px-3 py-1 text-xs font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
+            >
+              Search
+            </button>
             <button
               type="button"
               onClick={() => setOwnerKey("")}
@@ -627,7 +873,7 @@ function ConfiguredWorkspace({
                     <button
                       key={page._id}
                       type="button"
-                      onClick={() => setSelectedPageId(page._id)}
+                      onClick={() => handleSelectPage(page._id)}
                       className={clsx(
                         "block w-full border-l-2 px-3 py-2 text-left text-sm transition",
                         selectedPageId === page._id
@@ -649,6 +895,37 @@ function ConfiguredWorkspace({
                 </button>
               </section>
             ))}
+            <section className="border-t border-[#ddd2c0] pt-6">
+              <h2 className="text-sm font-semibold uppercase tracking-[0.22em] text-[#7a6e5f]">
+                {ARCHIVE_SECTION_LABEL}
+              </h2>
+              <div className="mt-3 space-y-2">
+                {archivedPages.length === 0 ? (
+                  <p className="px-3 py-2 text-sm text-[#7a6e5f]">
+                    No archived pages
+                  </p>
+                ) : (
+                  archivedPages.map((page) => (
+                    <button
+                      key={page._id}
+                      type="button"
+                      onClick={() => handleSelectPage(page._id)}
+                      className={clsx(
+                        "block w-full border-l-2 px-3 py-2 text-left text-sm transition",
+                        selectedPageId === page._id
+                          ? "border-[#1f4a45] bg-[#f8f3ea] text-[#1f4a45]"
+                          : "border-transparent text-[#433d35] hover:border-[#bcae96] hover:bg-[#f8f3ea]",
+                      )}
+                    >
+                      <span>{page.title}</span>
+                      <span className="ml-2 text-[11px] uppercase tracking-[0.18em] text-[#8a6c2d]">
+                        Archived
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </section>
           </div>
         </aside>
 
@@ -669,9 +946,14 @@ function ConfiguredWorkspace({
               <div className="px-6 py-6 md:px-8">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
-                    <p className="text-xs uppercase tracking-[0.3em] text-[#8a6c2d]">
-                      {pageMeta.sidebarSection}
-                    </p>
+                    <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.3em] text-[#8a6c2d]">
+                      <span>{pageMeta.sidebarSection}</span>
+                      {isPageArchived ? (
+                        <span className="rounded-full border border-[#d8cfbf] px-2 py-1 text-[10px] tracking-[0.2em] text-[#7a6e5f]">
+                          Archived
+                        </span>
+                      ) : null}
+                    </div>
                     <input
                       ref={pageTitleInputRef}
                       value={pageTitleDraft}
@@ -686,7 +968,8 @@ function ConfiguredWorkspace({
                         }
                       }}
                       onBlur={() => void handleRenamePage()}
-                      className="mt-4 w-full border-0 bg-transparent p-0 text-4xl font-semibold tracking-tight outline-none"
+                      disabled={isPageArchived}
+                      className="mt-4 w-full border-0 bg-transparent p-0 text-4xl font-semibold tracking-tight outline-none disabled:text-[#5c5348]"
                     />
                   </div>
                   <div className="flex items-center gap-2 pt-1">
@@ -694,7 +977,7 @@ function ConfiguredWorkspace({
                       type="button"
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => void history.undo()}
-                      disabled={!history.canUndo || history.isApplyingHistory}
+                      disabled={!history.canUndo || history.isApplyingHistory || isPageArchived}
                       className="border border-[#d8cfbf] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916] disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       Undo
@@ -703,17 +986,34 @@ function ConfiguredWorkspace({
                       type="button"
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => void history.redo()}
-                      disabled={!history.canRedo || history.isApplyingHistory}
+                      disabled={!history.canRedo || history.isApplyingHistory || isPageArchived}
                       className="border border-[#d8cfbf] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916] disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       Redo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => selectedPage && void handleArchivePage(selectedPage, !isPageArchived)}
+                      className="border border-[#d8cfbf] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
+                    >
+                      {isPageArchived ? "Restore" : "Archive"}
                     </button>
                   </div>
                 </div>
                 <div className="mt-6 h-px bg-[#ebe2d2]" />
               </div>
 
-              <div className="flex-1 px-6 py-6 md:px-8">
+              <div
+                className="flex-1 px-6 py-6 md:px-8"
+                onMouseDownCapture={(event) => {
+                  if (
+                    selectedNodeIds.size > 0 &&
+                    !(event.target instanceof HTMLElement && event.target.closest("[data-selection-gutter='true']"))
+                  ) {
+                    clearNodeSelection();
+                  }
+                }}
+              >
                 {pageMeta.pageType === "model" ? (
                   <div className="divide-y divide-[#ebe2d2]">
                     <div className="pb-8">
@@ -729,6 +1029,11 @@ function ConfiguredWorkspace({
                         splitNode={splitNode}
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                         setNodeTreeArchived={setNodeTreeArchived}
+                        isPageReadOnly={isPageArchived}
+                        selectedNodeIds={selectedNodeIds}
+                        onSelectionStart={beginNodeSelection}
+                        onSelectionExtend={extendNodeSelection}
+                        depthOffset={1}
                       />
                     </div>
                     <div className="pt-8">
@@ -744,11 +1049,16 @@ function ConfiguredWorkspace({
                         splitNode={splitNode}
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                         setNodeTreeArchived={setNodeTreeArchived}
+                        isPageReadOnly={isPageArchived}
+                        selectedNodeIds={selectedNodeIds}
+                        onSelectionStart={beginNodeSelection}
+                        onSelectionExtend={extendNodeSelection}
+                        depthOffset={1}
                       />
                     </div>
                   </div>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-1">
                     <OutlineNodeList
                       nodes={genericRoots}
                       ownerKey={ownerKey}
@@ -760,6 +1070,10 @@ function ConfiguredWorkspace({
                       splitNode={splitNode}
                       replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
+                      isPageReadOnly={isPageArchived}
+                      selectedNodeIds={selectedNodeIds}
+                      onSelectionStart={beginNodeSelection}
+                      onSelectionExtend={extendNodeSelection}
                     />
                     <InlineComposer
                       ownerKey={ownerKey}
@@ -767,6 +1081,8 @@ function ConfiguredWorkspace({
                       parentNodeId={null}
                       afterNodeId={genericRoots[genericRoots.length - 1]?._id as Id<"nodes"> | undefined}
                       createNodesBatch={createNodesBatch}
+                      readOnly={isPageArchived}
+                      depth={0}
                     />
                   </div>
                 )}
@@ -779,13 +1095,16 @@ function ConfiguredWorkspace({
                       value={modelChatInput}
                       onChange={(event) => setModelChatInput(event.target.value)}
                       placeholder="Ask AI..."
-                      className="w-full border-0 border-b border-[#d8cfbf] bg-transparent px-0 py-2 text-sm outline-none"
+                      disabled={isPageArchived}
+                      className="w-full border-0 border-b border-[#d8cfbf] bg-transparent px-0 py-2 text-sm outline-none disabled:text-[#5c5348]"
                     />
                     <div className="flex items-center justify-between gap-4">
-                      <p className="text-sm text-[#6a6257]">{chatStatus}</p>
+                      <p className="text-sm text-[#6a6257]">
+                        {isPageArchived ? "Archived pages are read-only." : chatStatus}
+                      </p>
                       <button
                         type="submit"
-                        disabled={isSendingChat || modelChatInput.trim().length === 0}
+                        disabled={isSendingChat || modelChatInput.trim().length === 0 || isPageArchived}
                         className="border border-[#1f4a45] px-4 py-2 text-sm font-semibold text-[#1f4a45] transition hover:bg-[#1f4a45] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {isSendingChat ? "Thinking…" : "Send"}
@@ -837,6 +1156,73 @@ function ConfiguredWorkspace({
           )}
         </section>
       </div>
+      {paletteOpen ? (
+        <div
+          className="fixed inset-0 z-50 bg-[#1b1916]/20 p-4 sm:p-8"
+          onClick={() => {
+            setPaletteOpen(false);
+            setPaletteQuery("");
+          }}
+        >
+          <div
+            className="mx-auto mt-16 w-full max-w-2xl border border-[#d8cfbf] bg-[#fcfbf8] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="border-b border-[#ebe2d2] px-5 py-4">
+              <input
+                ref={paletteInputRef}
+                value={paletteQuery}
+                onChange={(event) => {
+                  setPaletteQuery(event.target.value);
+                  setPaletteHighlightIndex(0);
+                }}
+                onKeyDown={handlePaletteKeyDown}
+                placeholder="Search pages..."
+                className="w-full border-0 bg-transparent p-0 text-lg outline-none"
+              />
+            </div>
+            <div className="max-h-[420px] overflow-y-auto py-2">
+              {paletteResults.length === 0 ? (
+                <p className="px-5 py-4 text-sm text-[#6a6257]">No matching pages.</p>
+              ) : (
+                paletteResults.map((page, index) => {
+                  const pageInfo = getPageMeta(page);
+                  return (
+                    <button
+                      key={page._id}
+                      type="button"
+                      onMouseEnter={() => setPaletteHighlightIndex(index)}
+                      onClick={() => handleSelectPage(page._id)}
+                      className={clsx(
+                        "flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition",
+                        index === paletteHighlightIndex
+                          ? "bg-[#efe7d9]"
+                          : "hover:bg-[#f4eee3]",
+                      )}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-[#1b1916]">
+                          {page.title}
+                        </span>
+                        <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[#7a6e5f]">
+                          {pageInfo.sidebarSection}
+                        </span>
+                      </span>
+                      <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[#8a6c2d]">
+                        {page.archived ? (
+                          <span className="rounded-full border border-[#d8cfbf] px-2 py-1 text-[#7a6e5f]">
+                            Archived
+                          </span>
+                        ) : null}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
       </main>
     </WorkspaceHistoryProvider>
   );
@@ -854,6 +1240,11 @@ function ModelSection({
   splitNode,
   replaceNodeAndInsertSiblings,
   setNodeTreeArchived,
+  isPageReadOnly,
+  selectedNodeIds,
+  onSelectionStart,
+  onSelectionExtend,
+  depthOffset = 0,
 }: {
   title: string;
   sectionNode: TreeNode | null;
@@ -866,6 +1257,11 @@ function ModelSection({
   splitNode: SplitNodeMutation;
   replaceNodeAndInsertSiblings: ReplaceNodeAndInsertSiblingsMutation;
   setNodeTreeArchived: SetNodeTreeArchivedMutation;
+  isPageReadOnly: boolean;
+  selectedNodeIds: Set<string>;
+  onSelectionStart: (nodeId: string) => void;
+  onSelectionExtend: (nodeId: string) => void;
+  depthOffset?: number;
 }) {
   const lastChild = sectionNode
     ? sectionNode.children[sectionNode.children.length - 1] ?? null
@@ -875,7 +1271,7 @@ function ModelSection({
     <div>
       <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
       <div className="mt-2 border-b border-[#d8cfbf]" />
-      <div className="mt-4 space-y-2">
+      <div className="mt-4 space-y-1">
         <OutlineNodeList
           nodes={sectionNode?.children ?? []}
           ownerKey={ownerKey}
@@ -887,6 +1283,11 @@ function ModelSection({
           splitNode={splitNode}
           replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
           setNodeTreeArchived={setNodeTreeArchived}
+          depth={depthOffset}
+          isPageReadOnly={isPageReadOnly}
+          selectedNodeIds={selectedNodeIds}
+          onSelectionStart={onSelectionStart}
+          onSelectionExtend={onSelectionExtend}
         />
         <InlineComposer
           ownerKey={ownerKey}
@@ -894,6 +1295,8 @@ function ModelSection({
           parentNodeId={(sectionNode?._id as Id<"nodes"> | undefined) ?? undefined}
           afterNodeId={(lastChild?._id as Id<"nodes"> | undefined) ?? undefined}
           createNodesBatch={createNodesBatch}
+          readOnly={isPageReadOnly}
+          depth={depthOffset}
         />
       </div>
     </div>
@@ -913,6 +1316,10 @@ function OutlineNodeList({
   setNodeTreeArchived,
   depth = 0,
   parentNodeId = null,
+  isPageReadOnly,
+  selectedNodeIds,
+  onSelectionStart,
+  onSelectionExtend,
 }: {
   nodes: TreeNode[];
   ownerKey: string;
@@ -926,6 +1333,10 @@ function OutlineNodeList({
   setNodeTreeArchived: SetNodeTreeArchivedMutation;
   depth?: number;
   parentNodeId?: Id<"nodes"> | null;
+  isPageReadOnly: boolean;
+  selectedNodeIds: Set<string>;
+  onSelectionStart: (nodeId: string) => void;
+  onSelectionExtend: (nodeId: string) => void;
 }) {
   return (
     <>
@@ -945,6 +1356,11 @@ function OutlineNodeList({
           replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
           setNodeTreeArchived={setNodeTreeArchived}
           depth={depth}
+          isPageReadOnly={isPageReadOnly}
+          isSelected={selectedNodeIds.has(node._id)}
+          selectedNodeIds={selectedNodeIds}
+          onSelectionStart={onSelectionStart}
+          onSelectionExtend={onSelectionExtend}
         />
       ))}
     </>
@@ -965,6 +1381,11 @@ function OutlineNodeEditor({
   replaceNodeAndInsertSiblings,
   setNodeTreeArchived,
   depth = 0,
+  isPageReadOnly,
+  isSelected,
+  selectedNodeIds,
+  onSelectionStart,
+  onSelectionExtend,
 }: {
   node: TreeNode;
   previousSibling: TreeNode | null;
@@ -979,6 +1400,11 @@ function OutlineNodeEditor({
   replaceNodeAndInsertSiblings: ReplaceNodeAndInsertSiblingsMutation;
   setNodeTreeArchived: SetNodeTreeArchivedMutation;
   depth?: number;
+  isPageReadOnly: boolean;
+  isSelected: boolean;
+  selectedNodeIds: Set<string>;
+  onSelectionStart: (nodeId: string) => void;
+  onSelectionExtend: (nodeId: string) => void;
 }) {
   const history = useWorkspaceHistory();
   const [draft, setDraft] = useState(node.text);
@@ -987,6 +1413,7 @@ function OutlineNodeEditor({
 
   const nodeMeta = getNodeMeta(node);
   const isLocked = nodeMeta.locked === true;
+  const isDisabled = isLocked || isPageReadOnly;
   const editorId = getNodeEditorId(node._id as Id<"nodes">);
   const editorTarget = useMemo(
     () =>
@@ -1031,7 +1458,10 @@ function OutlineNodeEditor({
     beforeValue: string,
     afterValue: NodeValueSnapshot,
   ): HistoryEntry | null => {
-    const beforeParsed = parseNodeDraft(beforeValue);
+    const beforeParsed = parseNodeDraftWithFallback(beforeValue, {
+      kind: node.kind as "note" | "task",
+      taskStatus: (node.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
+    });
     if (beforeParsed.shouldDelete) {
       return null;
     }
@@ -1062,7 +1492,7 @@ function OutlineNodeEditor({
     updateEntry: HistoryEntry | null;
     parsed: NodeValueSnapshot | null;
   }> => {
-    if (isLocked) {
+    if (isDisabled) {
       return {
         deleted: false,
         updateEntry: null,
@@ -1074,7 +1504,10 @@ function OutlineNodeEditor({
       };
     }
 
-    const parsed = parseNodeDraft(nextDraft);
+    const parsed = parseNodeDraftWithFallback(nextDraft, {
+      kind: node.kind as "note" | "task",
+      taskStatus: (node.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
+    });
     if (parsed.shouldDelete) {
       await setNodeTreeArchived({
         ownerKey,
@@ -1132,10 +1565,67 @@ function OutlineNodeEditor({
     return result;
   };
 
+  const handleToggleTask = async () => {
+    if (node.kind !== "task" || isDisabled) {
+      return;
+    }
+
+    const saveResult = await commitNodeText(draft);
+    if (saveResult.deleted || !saveResult.parsed) {
+      return;
+    }
+
+    const beforeSnapshot: NodeValueSnapshot = {
+      text: saveResult.parsed.text,
+      kind: "task",
+      taskStatus: (node.taskStatus ?? "todo") as NodeValueSnapshot["taskStatus"],
+    };
+    const afterSnapshot: NodeValueSnapshot = {
+      text: saveResult.parsed.text,
+      kind: "task",
+      taskStatus: node.taskStatus === "done" ? "todo" : "done",
+    };
+
+    await updateNode({
+      ownerKey,
+      nodeId: node._id as Id<"nodes">,
+      text: afterSnapshot.text,
+      kind: afterSnapshot.kind,
+      taskStatus: afterSnapshot.taskStatus,
+    });
+    history.commitTrackedValue(
+      editorId,
+      editorTarget,
+      afterSnapshot.text,
+    );
+    setDraft(afterSnapshot.text);
+    const toggleEntry: HistoryEntry = {
+      type: "update_node",
+      pageId,
+      nodeId: node._id as Id<"nodes">,
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      focusEditorId: editorId,
+    };
+
+    if (saveResult.updateEntry) {
+      history.pushUndoEntry({
+        type: "compound",
+        pageId,
+        entries: [saveResult.updateEntry, toggleEntry],
+        focusAfterUndoId: editorId,
+        focusAfterRedoId: editorId,
+      });
+      return;
+    }
+
+    history.pushUndoEntry(toggleEntry);
+  };
+
   const handlePaste = async (event: TextareaClipboardEvent<HTMLTextAreaElement>) => {
     const pastedText = event.clipboardData.getData("text");
     const lines = splitPastedLines(pastedText);
-    if (lines.length <= 1 || isLocked) {
+    if (lines.length <= 1 || isDisabled) {
       return;
     }
 
@@ -1145,7 +1635,10 @@ function OutlineNodeEditor({
       return;
     }
 
-    const firstParsed = parseNodeDraft(firstLine);
+    const firstParsed = parseNodeDraftWithFallback(firstLine, {
+      kind: node.kind as "note" | "task",
+      taskStatus: (node.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
+    });
     if (firstParsed.shouldDelete) {
       return;
     }
@@ -1223,7 +1716,7 @@ function OutlineNodeEditor({
   };
 
   const handleKeyDown = async (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "Backspace" && draft.length === 0 && !isLocked) {
+    if (event.key === "Backspace" && draft.length === 0 && !isDisabled) {
       event.preventDefault();
       await setNodeTreeArchived({
         ownerKey,
@@ -1242,7 +1735,7 @@ function OutlineNodeEditor({
     }
 
     if (event.key === "Tab") {
-      if (isLocked) {
+      if (isDisabled) {
         return;
       }
 
@@ -1329,7 +1822,7 @@ function OutlineNodeEditor({
       return;
     }
 
-    if (event.key !== "Enter" || isLocked) {
+    if (event.key !== "Enter" || isDisabled) {
       return;
     }
 
@@ -1461,23 +1954,69 @@ function OutlineNodeEditor({
   };
 
   return (
-    <div className="space-y-2">
-      <div style={{ marginLeft: `${depth * 20}px` }}>
-        <textarea
-          ref={textareaRef}
-          value={draft}
-          onChange={(event) => {
-            setDraft(event.target.value);
-            history.updateDraftValue(editorId, editorTarget, event.target.value);
-          }}
-          onBlur={() => void handleSave()}
-          onPaste={(event) => void handlePaste(event)}
-          onKeyDown={(event) => void handleKeyDown(event)}
-          placeholder="Write a line…"
-          disabled={isLocked}
-          rows={1}
-          className="w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-1 text-[15px] leading-7 outline-none transition focus:border-[#d8cfbf] disabled:text-[#5c5348]"
-        />
+    <div className="space-y-1">
+      <div
+        data-node-shell
+        data-node-id={node._id}
+        className={clsx("rounded-sm transition", isSelected ? "bg-[#efe7d9]" : "")}
+        style={{ marginLeft: `${depth * 18}px` }}
+      >
+        <div className="flex items-start gap-2">
+          <button
+            type="button"
+            data-selection-gutter="true"
+            aria-label="Select line"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              onSelectionStart(node._id);
+            }}
+            onMouseEnter={() => onSelectionExtend(node._id)}
+            className="mt-1 h-5 w-3 flex-none cursor-default border-r border-transparent text-transparent"
+          >
+            |
+          </button>
+          <div className="flex h-6 w-5 flex-none items-center justify-center text-[#8a6c2d]">
+            {isLocked ? null : node.kind === "task" ? (
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => void handleToggleTask()}
+                disabled={isDisabled}
+                className={clsx(
+                  "flex h-4 w-4 items-center justify-center border text-[10px] transition",
+                  node.taskStatus === "done"
+                    ? "border-[#1f4a45] bg-[#1f4a45] text-white"
+                    : "border-[#bcae96] bg-white text-transparent hover:border-[#8a6c2d]",
+                  isDisabled ? "cursor-not-allowed opacity-70" : "",
+                )}
+              >
+                x
+              </button>
+            ) : (
+              <span className="text-base leading-none text-[#8a6c2d]">•</span>
+            )}
+          </div>
+          <div className="min-w-0 flex-1">
+            <textarea
+              ref={textareaRef}
+              value={draft}
+              onChange={(event) => {
+                setDraft(event.target.value);
+                history.updateDraftValue(editorId, editorTarget, event.target.value);
+              }}
+              onBlur={() => void handleSave()}
+              onPaste={(event) => void handlePaste(event)}
+              onKeyDown={(event) => void handleKeyDown(event)}
+              placeholder="Write a line…"
+              disabled={isDisabled}
+              rows={1}
+              className={clsx(
+                "w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-0.5 text-[15px] leading-6 outline-none transition focus:border-[#d8cfbf] disabled:text-[#5c5348]",
+                node.taskStatus === "done" ? "text-[#7a6e5f] line-through" : "",
+              )}
+            />
+          </div>
+        </div>
       </div>
       <OutlineNodeList
         nodes={node.children}
@@ -1492,6 +2031,10 @@ function OutlineNodeEditor({
         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
         setNodeTreeArchived={setNodeTreeArchived}
         depth={depth + 1}
+        isPageReadOnly={isPageReadOnly}
+        selectedNodeIds={selectedNodeIds}
+        onSelectionStart={onSelectionStart}
+        onSelectionExtend={onSelectionExtend}
       />
     </div>
   );
@@ -1503,12 +2046,16 @@ function InlineComposer({
   parentNodeId,
   afterNodeId,
   createNodesBatch,
+  readOnly = false,
+  depth = 0,
 }: {
   ownerKey: string;
   pageId: Id<"pages">;
   parentNodeId: Id<"nodes"> | null | undefined;
   afterNodeId?: Id<"nodes">;
   createNodesBatch: CreateNodesBatchMutation;
+  readOnly?: boolean;
+  depth?: number;
 }) {
   const history = useWorkspaceHistory();
   const [draft, setDraft] = useState("");
@@ -1547,6 +2094,10 @@ function InlineComposer({
   }, [editorId, history]);
 
   const submitLines = async (value: string) => {
+    if (readOnly) {
+      return;
+    }
+
     const lines = splitPastedLines(value);
     if (lines.length === 0) {
       return;
@@ -1602,6 +2153,10 @@ function InlineComposer({
   };
 
   const handleKeyDown = async (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
+    if (readOnly) {
+      return;
+    }
+
     if (event.key !== "Enter") {
       return;
     }
@@ -1611,6 +2166,10 @@ function InlineComposer({
   };
 
   const handlePaste = async (event: TextareaClipboardEvent<HTMLTextAreaElement>) => {
+    if (readOnly) {
+      return;
+    }
+
     const pastedText = event.clipboardData.getData("text");
     const lines = splitPastedLines(pastedText);
     if (lines.length <= 1) {
@@ -1622,19 +2181,22 @@ function InlineComposer({
   };
 
   return (
-    <textarea
-      ref={textareaRef}
-      value={draft}
-      onChange={(event) => {
-        setDraft(event.target.value);
-        history.updateDraftValue(editorId, editorTarget, event.target.value);
-      }}
-      onBlur={() => history.flushDraftCheckpoint(editorId)}
-      onPaste={(event) => void handlePaste(event)}
-      onKeyDown={(event) => void handleKeyDown(event)}
-      placeholder="New line…"
-      rows={1}
-      className="w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-1 text-[15px] leading-7 outline-none transition focus:border-[#d8cfbf]"
-    />
+    <div style={{ marginLeft: `${depth * 18 + 26}px` }}>
+      <textarea
+        ref={textareaRef}
+        value={draft}
+        onChange={(event) => {
+          setDraft(event.target.value);
+          history.updateDraftValue(editorId, editorTarget, event.target.value);
+        }}
+        onBlur={() => history.flushDraftCheckpoint(editorId)}
+        onPaste={(event) => void handlePaste(event)}
+        onKeyDown={(event) => void handleKeyDown(event)}
+        placeholder="New line…"
+        disabled={readOnly}
+        rows={1}
+        className="w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-0.5 text-[15px] leading-6 outline-none transition focus:border-[#d8cfbf] disabled:text-[#5c5348]"
+      />
+    </div>
   );
 }

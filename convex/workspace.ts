@@ -67,9 +67,29 @@ async function filterVisibleLinks(ctx: QueryCtx, links: Doc<"links">[]) {
 export const listPages = query({
   args: {
     ownerKey: v.string(),
+    includeArchived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
+    if (args.includeArchived) {
+      const [activePages, archivedPages] = await Promise.all([
+        ctx.db
+          .query("pages")
+          .withIndex("by_archived_position", (query) =>
+            query.eq("archived", false),
+          )
+          .collect(),
+        ctx.db
+          .query("pages")
+          .withIndex("by_archived_position", (query) =>
+            query.eq("archived", true),
+          )
+          .collect(),
+      ]);
+
+      return [...activePages, ...archivedPages];
+    }
+
     return await ctx.db
       .query("pages")
       .withIndex("by_archived_position", (query) =>
@@ -97,7 +117,7 @@ export const getPageTree = query({
     assertOwnerKey(args.ownerKey);
 
     const page = await ctx.db.get(args.pageId);
-    if (!page || page.archived) {
+    if (!page) {
       return null;
     }
 
@@ -112,6 +132,26 @@ export const getPageTree = query({
       nodes,
       backlinks: await filterVisibleLinks(ctx, backlinks),
     };
+  },
+});
+
+export const archivePage = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+    archived: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const page = await ctx.db.get(args.pageId);
+    if (!page) {
+      throw new Error("Page not found.");
+    }
+
+    await ctx.db.patch(args.pageId, {
+      archived: args.archived,
+      updatedAt: getTimestamp(),
+    });
   },
 });
 

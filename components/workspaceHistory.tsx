@@ -143,6 +143,7 @@ type UseWorkspaceHistoryArgs = {
   updateNode: UpdateNodeFn;
   moveNode: MoveNodeFn;
   setNodeTreeArchived: SetNodeTreeArchivedFn;
+  isDisabled?: boolean;
   draftCheckpointDelayMs?: number;
 };
 
@@ -257,6 +258,7 @@ export function useWorkspaceHistoryController({
   updateNode,
   moveNode,
   setNodeTreeArchived,
+  isDisabled = false,
   draftCheckpointDelayMs = 750,
 }: UseWorkspaceHistoryArgs) {
   const [historyState, setHistoryState] = useState({ undoCount: 0, redoCount: 0 });
@@ -638,7 +640,7 @@ export function useWorkspaceHistoryController({
 
   const runHistoryAction = useCallback(
     async (direction: "undo" | "redo") => {
-      if (isApplyingHistory) {
+      if (isApplyingHistory || isDisabled) {
         return;
       }
 
@@ -660,7 +662,7 @@ export function useWorkspaceHistoryController({
         setIsApplyingHistory(false);
       }
     },
-    [applyHistoryEntry, flushActiveEditorDraft, isApplyingHistory, refreshHistoryState],
+    [applyHistoryEntry, flushActiveEditorDraft, isApplyingHistory, isDisabled, refreshHistoryState],
   );
 
   useEffect(() => {
@@ -677,6 +679,10 @@ export function useWorkspaceHistoryController({
         return;
       }
 
+      if (isDisabled) {
+        return;
+      }
+
       const trackedEditorId = getTrackedEditorIdFromTarget(event.target);
       if (!trackedEditorId && isTextEntryElement(event.target)) {
         return;
@@ -688,7 +694,7 @@ export function useWorkspaceHistoryController({
 
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [runHistoryAction]);
+  }, [isDisabled, runHistoryAction]);
 
   const value = useMemo(
     () => ({
