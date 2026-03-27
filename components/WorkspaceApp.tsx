@@ -1954,7 +1954,7 @@ function OutlineNodeEditor({
   };
 
   return (
-    <div className="space-y-1">
+    <div className="space-y-0.5">
       <div
         data-node-shell
         data-node-id={node._id}
