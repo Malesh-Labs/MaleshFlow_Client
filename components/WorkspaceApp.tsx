@@ -943,7 +943,7 @@ function ConfiguredWorkspace({
             </div>
           ) : (
             <div className="flex min-h-[calc(100vh-5rem)] flex-col border border-[#d8cfbf] bg-white">
-              <div className="px-6 py-6 md:px-8">
+              <div className="px-10 py-6 md:px-14">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.3em] text-[#8a6c2d]">
@@ -1004,7 +1004,7 @@ function ConfiguredWorkspace({
               </div>
 
               <div
-                className="flex-1 px-6 py-6 md:px-8"
+                className="flex-1 px-10 py-6 md:px-14"
                 onMouseDownCapture={(event) => {
                   if (
                     selectedNodeIds.size > 0 &&
@@ -1089,7 +1089,7 @@ function ConfiguredWorkspace({
               </div>
 
               {pageMeta.pageType === "model" ? (
-                <div className="border-t border-[#ebe2d2] px-6 py-5 md:px-8">
+                <div className="border-t border-[#ebe2d2] px-10 py-5 md:px-14">
                   <form onSubmit={(event) => void handleRunModelChat(event)} className="space-y-3">
                     <input
                       value={modelChatInput}
