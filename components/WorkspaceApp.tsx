@@ -10,6 +10,7 @@ import {
   useState,
   useSyncExternalStore,
   type FormEvent,
+  type ReactNode,
   type KeyboardEvent as TextareaKeyboardEvent,
   type ClipboardEvent as TextareaClipboardEvent,
 } from "react";
@@ -48,7 +49,7 @@ const OWNER_KEY_STORAGE_KEY = "maleshflow-owner-key";
 const OWNER_KEY_EVENT = "maleshflow-owner-key-change";
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
-type PageType = "default" | "model";
+type PageType = "default" | "model" | "journal";
 type PageDoc = Doc<"pages">;
 type UpdateNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.updateNode>>;
 type CreateNodesBatchMutation = ReturnType<typeof useMutation<typeof api.workspace.createNodesBatch>>;
@@ -73,6 +74,12 @@ type ModelChatDebug = {
     | null;
   error: string | null;
 };
+
+type SectionSlot =
+  | "model"
+  | "recentExamples"
+  | "journalThoughts"
+  | "journalFeedback";
 
 type TreeNode = OutlineTreeNode<{
   _id: string;
@@ -152,7 +159,12 @@ function getPageMeta(page: Doc<"pages"> | null | undefined) {
   const sidebarSection = SIDEBAR_SECTIONS.includes(sourceMeta.sidebarSection as SidebarSection)
     ? (sourceMeta.sidebarSection as SidebarSection)
     : "Tasks";
-  const pageType: PageType = sourceMeta.pageType === "model" ? "model" : "default";
+  const pageType: PageType =
+    sourceMeta.pageType === "model"
+      ? "model"
+      : sourceMeta.pageType === "journal"
+        ? "journal"
+        : "default";
 
   return { sidebarSection, pageType };
 }
@@ -169,8 +181,15 @@ function getNodeMeta(node: Doc<"nodes"> | TreeNode | null | undefined) {
   return node.sourceMeta as Record<string, unknown>;
 }
 
-function findModelSection(nodes: TreeNode[], slot: "model" | "recentExamples") {
+function findSectionNode(nodes: TreeNode[], slot: SectionSlot) {
   return nodes.find((node) => getNodeMeta(node).sectionSlot === slot) ?? null;
+}
+
+function formatLocalDateTitle(date = new Date()) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function collectChildren(nodes: TreeNode[], excludedIds: Set<string>) {
@@ -437,8 +456,10 @@ function ConfiguredWorkspace({
   const [modelChatInput, setModelChatInput] = useState("");
   const [chatStatus, setChatStatus] = useState("");
   const [modelChatDebug, setModelChatDebug] = useState<ModelChatDebug | null>(null);
+  const [journalFeedbackStatus, setJournalFeedbackStatus] = useState("");
   const [isCreatingPage, setIsCreatingPage] = useState<SidebarSection | null>(null);
   const [isSendingChat, setIsSendingChat] = useState(false);
+  const [isGeneratingJournalFeedback, setIsGeneratingJournalFeedback] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteHighlightIndex, setPaletteHighlightIndex] = useState(0);
@@ -475,6 +496,7 @@ function ConfiguredWorkspace({
   );
   const setNodeTreeArchived = useMutation(api.workspace.setNodeTreeArchived);
   const rewriteModelSection = useAction(api.chat.rewriteModelSection);
+  const generateJournalFeedback = useAction(api.chat.generateJournalFeedback);
   const pageTitleInputRef = useRef<HTMLInputElement>(null);
   const pageTitleDraftRef = useRef(pageTitleDraft);
   const paletteInputRef = useRef<HTMLInputElement>(null);
@@ -514,8 +536,10 @@ function ConfiguredWorkspace({
     (pageTree?.nodes ?? []).map((node) => [node._id as string, node]),
   );
 
-  const modelSection = findModelSection(tree, "model");
-  const recentExamplesSection = findModelSection(tree, "recentExamples");
+  const modelSection = findSectionNode(tree, "model");
+  const recentExamplesSection = findSectionNode(tree, "recentExamples");
+  const journalThoughtsSection = findSectionNode(tree, "journalThoughts");
+  const journalFeedbackSection = findSectionNode(tree, "journalFeedback");
   const visibleModelChatDebug = modelChatDebug ?? {
     model: "gpt-5-mini",
     systemPrompt: "",
@@ -529,14 +553,26 @@ function ConfiguredWorkspace({
           tree,
           new Set([modelSection?._id, recentExamplesSection?._id].filter(Boolean) as string[]),
         )
+      : pageMeta.pageType === "journal"
+        ? collectChildren(
+            tree,
+            new Set(
+              [journalThoughtsSection?._id, journalFeedbackSection?._id].filter(Boolean) as string[],
+            ),
+          )
       : tree;
   const modelVisibleRoots = [modelSection, recentExamplesSection].filter(
+    (node): node is TreeNode => Boolean(node),
+  );
+  const journalVisibleRoots = [journalThoughtsSection, journalFeedbackSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
   const visibleRows =
     pageMeta.pageType === "model"
       ? flattenTreeNodes([...modelVisibleRoots, ...genericRoots])
-      : flattenTreeNodes(genericRoots);
+      : pageMeta.pageType === "journal"
+        ? flattenTreeNodes([...journalVisibleRoots, ...genericRoots])
+        : flattenTreeNodes(genericRoots);
   const visibleNodeOrder = visibleRows.map((node) => node._id);
 
   const groupedPages = SIDEBAR_SECTIONS.map((section) => ({
@@ -576,6 +612,7 @@ function ConfiguredWorkspace({
   useEffect(() => {
     setPageTitleDraft(pageTree?.page?.title ?? "");
     setChatStatus("");
+    setJournalFeedbackStatus("");
     setModelChatDebug(null);
     clearNodeSelection();
   }, [clearNodeSelection, pageTree?.page?._id, pageTree?.page?.title]);
@@ -690,12 +727,17 @@ function ConfiguredWorkspace({
   const handleCreatePage = async (section: SidebarSection) => {
     setIsCreatingPage(section);
     try {
-      const pageType: PageType = section === "Models" ? "model" : "default";
+      const pageType: PageType =
+        section === "Models"
+          ? "model"
+          : section === "Journal"
+            ? "journal"
+            : "default";
       const title =
         section === "Models"
           ? "Untitled Model"
           : section === "Journal"
-            ? "New Journal Page"
+            ? formatLocalDateTitle()
             : `Untitled ${section.slice(0, -1)}`;
       const pageId = await createPage({
         ownerKey,
@@ -755,6 +797,33 @@ function ConfiguredWorkspace({
       pageId: page._id,
       archived,
     });
+  };
+
+  const handleGenerateJournalFeedback = async () => {
+    if (!selectedPageId || isPageArchived) {
+      return;
+    }
+
+    setIsGeneratingJournalFeedback(true);
+    setJournalFeedbackStatus("");
+    try {
+      const result = (await generateJournalFeedback({
+        ownerKey,
+        pageId: selectedPageId,
+      })) as {
+        summary: string;
+        feedbackLines: string[];
+      };
+      setJournalFeedbackStatus(result.summary);
+    } catch (error) {
+      setJournalFeedbackStatus(
+        error instanceof Error
+          ? error.message
+          : "Could not generate journal feedback right now.",
+      );
+    } finally {
+      setIsGeneratingJournalFeedback(false);
+    }
   };
 
   const handleRunModelChat = async (event: FormEvent<HTMLFormElement>) => {
@@ -1017,7 +1086,7 @@ function ConfiguredWorkspace({
                 {pageMeta.pageType === "model" ? (
                   <div className="divide-y divide-[#ebe2d2]">
                     <div className="pb-8">
-                      <ModelSection
+                      <PageSection
                         title="Model"
                         sectionNode={modelSection}
                         ownerKey={ownerKey}
@@ -1037,7 +1106,7 @@ function ConfiguredWorkspace({
                       />
                     </div>
                     <div className="pt-8">
-                      <ModelSection
+                      <PageSection
                         title="Recent"
                         sectionNode={recentExamplesSection}
                         ownerKey={ownerKey}
@@ -1054,6 +1123,60 @@ function ConfiguredWorkspace({
                         onSelectionStart={beginNodeSelection}
                         onSelectionExtend={extendNodeSelection}
                         depthOffset={1}
+                      />
+                    </div>
+                  </div>
+                ) : pageMeta.pageType === "journal" ? (
+                  <div className="divide-y divide-[#ebe2d2]">
+                    <div className="pb-8">
+                      <PageSection
+                        title="Thoughts/Stuff"
+                        sectionNode={journalThoughtsSection}
+                        ownerKey={ownerKey}
+                        pageId={selectedPage._id}
+                        nodeMap={nodeMap}
+                        createNodesBatch={createNodesBatch}
+                        updateNode={updateNode}
+                        moveNode={moveNode}
+                        splitNode={splitNode}
+                        replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                        setNodeTreeArchived={setNodeTreeArchived}
+                        isPageReadOnly={isPageArchived}
+                        selectedNodeIds={selectedNodeIds}
+                        onSelectionStart={beginNodeSelection}
+                        onSelectionExtend={extendNodeSelection}
+                        depthOffset={1}
+                      />
+                    </div>
+                    <div className="pt-8">
+                      <PageSection
+                        title="Feedback"
+                        sectionNode={journalFeedbackSection}
+                        ownerKey={ownerKey}
+                        pageId={selectedPage._id}
+                        nodeMap={nodeMap}
+                        createNodesBatch={createNodesBatch}
+                        updateNode={updateNode}
+                        moveNode={moveNode}
+                        splitNode={splitNode}
+                        replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                        setNodeTreeArchived={setNodeTreeArchived}
+                        isPageReadOnly={isPageArchived}
+                        selectedNodeIds={selectedNodeIds}
+                        onSelectionStart={beginNodeSelection}
+                        onSelectionExtend={extendNodeSelection}
+                        depthOffset={1}
+                        statusMessage={journalFeedbackStatus}
+                        action={
+                          <button
+                            type="button"
+                            onClick={() => void handleGenerateJournalFeedback()}
+                            disabled={isGeneratingJournalFeedback || isPageArchived}
+                            className="border border-[#1f4a45] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#1f4a45] transition hover:bg-[#1f4a45] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {isGeneratingJournalFeedback ? "Generating…" : "Generate Feedback"}
+                          </button>
+                        }
                       />
                     </div>
                   </div>
@@ -1228,7 +1351,7 @@ function ConfiguredWorkspace({
   );
 }
 
-function ModelSection({
+function PageSection({
   title,
   sectionNode,
   ownerKey,
@@ -1245,6 +1368,8 @@ function ModelSection({
   onSelectionStart,
   onSelectionExtend,
   depthOffset = 0,
+  action = null,
+  statusMessage = "",
 }: {
   title: string;
   sectionNode: TreeNode | null;
@@ -1262,6 +1387,8 @@ function ModelSection({
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
   depthOffset?: number;
+  action?: ReactNode;
+  statusMessage?: string;
 }) {
   const lastChild = sectionNode
     ? sectionNode.children[sectionNode.children.length - 1] ?? null
@@ -1269,7 +1396,13 @@ function ModelSection({
 
   return (
     <div>
-      <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
+        {action}
+      </div>
+      {statusMessage ? (
+        <p className="mt-2 text-sm text-[#6a6257]">{statusMessage}</p>
+      ) : null}
       <div className="mt-2 border-b border-[#d8cfbf]" />
       <div className="mt-4 space-y-1">
         <OutlineNodeList

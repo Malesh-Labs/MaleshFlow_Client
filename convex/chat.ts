@@ -26,6 +26,11 @@ const modelRewriteSchema = z.object({
   modelLines: z.array(z.string()).min(1).max(24),
 });
 
+const journalFeedbackSchema = z.object({
+  summary: z.string(),
+  feedbackLines: z.array(z.string()).min(1).max(24),
+});
+
 type ModelRewriteDebug = {
   model: string;
   systemPrompt: string;
@@ -50,11 +55,13 @@ const storeAssistantPlanRef = internal.chatData.storeAssistantPlan as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const storeAssistantMessageRef = internal.chatData.storeAssistantMessage as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const replaceModelSectionRef = internal.chatData.replaceModelSection as any;
+const replaceSectionLinesRef = internal.chatData.replaceSectionLines as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const getWorkspaceContextRef = internal.workspace.getWorkspaceContext as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const getModelPageContextRef = internal.workspace.getModelPageContext as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const getJournalPageContextRef = internal.workspace.getJournalPageContext as any;
 
 function getOpenAIClient() {
   if (!process.env.OPENAI_API_KEY) {
@@ -353,10 +360,11 @@ export const rewriteModelSection = action({
     }
 
     if (shouldApplyModelLines && modelLines.length > 0) {
-      await ctx.runMutation(replaceModelSectionRef, {
+      await ctx.runMutation(replaceSectionLinesRef, {
         pageId: args.pageId,
         sectionNodeId: modelContext.modelSection._id,
         lines: modelLines,
+        generatedFrom: "model_chat",
       });
     }
 
@@ -375,5 +383,108 @@ export const rewriteModelSection = action({
       modelLines,
       debug,
     };
+  },
+});
+
+export const generateJournalFeedback = action({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+  },
+  handler: async (ctx, args): Promise<{
+    summary: string;
+    feedbackLines: string[];
+  }> => {
+    assertOwnerKey(args.ownerKey);
+
+    const journalContext = await ctx.runQuery(getJournalPageContextRef, {
+      pageId: args.pageId,
+    });
+    if (!journalContext?.thoughtsSection || !journalContext.feedbackSection) {
+      throw new Error("Journal sections were not found for this page.");
+    }
+
+    const thoughtLines = journalContext.thoughtLines.map(
+      (node: { text: string }) => node.text.trim(),
+    ).filter((line: string) => line.length > 0);
+
+    if (thoughtLines.length === 0) {
+      return {
+        summary: "Add some thoughts first, then generate feedback.",
+        feedbackLines: [],
+      };
+    }
+
+    const client = getOpenAIClient();
+    if (!client) {
+      return {
+        summary: "OpenAI is not configured, so the Feedback section was left unchanged.",
+        feedbackLines: [],
+      };
+    }
+
+    try {
+      const response = await client.responses.parse({
+        model: process.env.OPENAI_CHAT_MODEL ?? "gpt-5-mini",
+        input: [
+          {
+            role: "system",
+            content:
+              "You generate the Feedback section for a personal journal. Read the Thoughts/Stuff section and return concise plain-text feedback lines that summarize patterns, add perspective, and offer grounded guidance. Be supportive, practical, and non-judgmental. No bullets, no numbering, no markdown headings, no checkbox syntax.",
+          },
+          {
+            role: "user",
+            content: [
+              `Journal date/title: ${journalContext.page.title}`,
+              "",
+              "Thoughts/Stuff:",
+              thoughtLines.map((line: string) => `- ${line}`).join("\n"),
+            ].join("\n"),
+          },
+        ],
+        text: {
+          format: zodTextFormat(journalFeedbackSchema, "journal_feedback"),
+        },
+      });
+
+      const parsed = response.output_parsed;
+      if (!parsed) {
+        return {
+          summary: "OpenAI returned no feedback, so the Feedback section was left unchanged.",
+          feedbackLines: [],
+        };
+      }
+
+      const feedbackLines = parsed.feedbackLines
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+
+      if (feedbackLines.length === 0) {
+        return {
+          summary: parsed.summary,
+          feedbackLines: [],
+        };
+      }
+
+      await ctx.runMutation(replaceSectionLinesRef, {
+        pageId: args.pageId,
+        sectionNodeId: journalContext.feedbackSection._id,
+        lines: feedbackLines,
+        generatedFrom: "journal_feedback",
+      });
+
+      return {
+        summary: parsed.summary,
+        feedbackLines,
+      };
+    } catch (error) {
+      return {
+        summary:
+          error instanceof Error
+            ? `OpenAI feedback failed: ${error.message}`
+            : "OpenAI could not generate feedback, so the Feedback section was left unchanged.",
+        feedbackLines: [],
+      };
+    }
   },
 });

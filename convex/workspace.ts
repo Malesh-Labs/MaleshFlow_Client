@@ -240,7 +240,7 @@ export const createPage = mutation({
       ),
     ),
     pageType: v.optional(
-      v.union(v.literal("default"), v.literal("model")),
+      v.union(v.literal("default"), v.literal("model"), v.literal("journal")),
     ),
   },
   handler: async (ctx, args) => {
@@ -317,6 +317,46 @@ export const createPage = mutation({
         sourceMeta: {
           sourceType: "system",
           sectionSlot: "recentExamples",
+          locked: true,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    if (args.pageType === "journal") {
+      await ctx.db.insert("nodes", {
+        pageId,
+        parentNodeId: null,
+        position: 1024,
+        text: "Thoughts/Stuff",
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
+        archived: false,
+        sourceMeta: {
+          sourceType: "system",
+          sectionSlot: "journalThoughts",
+          locked: true,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await ctx.db.insert("nodes", {
+        pageId,
+        parentNodeId: null,
+        position: 2048,
+        text: "Feedback",
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
+        archived: false,
+        sourceMeta: {
+          sourceType: "system",
+          sectionSlot: "journalFeedback",
           locked: true,
         },
         createdAt: now,
@@ -883,6 +923,48 @@ export const getModelPageContext = internalQuery({
       recentExamplesSection,
       modelLines: getSectionChildren(modelSection?._id ?? null),
       recentExampleLines: getSectionChildren(recentExamplesSection?._id ?? null),
+    };
+  },
+});
+
+export const getJournalPageContext = internalQuery({
+  args: {
+    pageId: v.id("pages"),
+  },
+  handler: async (ctx, args) => {
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived) {
+      return null;
+    }
+
+    const nodes = await listPageNodes(ctx.db, args.pageId);
+    const rootNodes = [...nodes]
+      .filter((node) => node.parentNodeId === null)
+      .sort((left, right) => left.position - right.position);
+
+    const getSectionNode = (slot: "journalThoughts" | "journalFeedback") =>
+      rootNodes.find((node) => {
+        const sourceMeta =
+          node.sourceMeta && typeof node.sourceMeta === "object"
+            ? (node.sourceMeta as Record<string, unknown>)
+            : null;
+        return sourceMeta?.sectionSlot === slot;
+      }) ?? null;
+
+    const thoughtsSection = getSectionNode("journalThoughts");
+    const feedbackSection = getSectionNode("journalFeedback");
+
+    const getSectionChildren = (sectionNodeId: Doc<"nodes">["_id"] | null) =>
+      nodes
+        .filter((node) => node.parentNodeId === sectionNodeId)
+        .sort((left, right) => left.position - right.position);
+
+    return {
+      page,
+      thoughtsSection,
+      feedbackSection,
+      thoughtLines: getSectionChildren(thoughtsSection?._id ?? null),
+      feedbackLines: getSectionChildren(feedbackSection?._id ?? null),
     };
   },
 });

@@ -167,11 +167,12 @@ export const storeAssistantMessage = internalMutation({
   },
 });
 
-export const replaceModelSection = internalMutation({
+export const replaceSectionLines = internalMutation({
   args: {
     pageId: v.id("pages"),
     sectionNodeId: v.id("nodes"),
     lines: v.array(v.string()),
+    generatedFrom: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const normalizedLines = args.lines
@@ -210,7 +211,7 @@ export const replaceModelSection = internalMutation({
         archived: false,
         sourceMeta: {
           sourceType: "chat",
-          generatedFrom: "model_chat",
+          generatedFrom: args.generatedFrom ?? "chat_section",
         },
         createdAt: Date.now(),
         updatedAt: Date.now(),
