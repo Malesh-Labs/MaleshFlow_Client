@@ -381,6 +381,16 @@ export const extractTaskMetadata = internalAction({
       return;
     }
 
+    if (context.node.kind === "task") {
+      await ctx.runMutation(applyTaskMetadataRef, {
+        nodeId: context.node._id,
+        kind: "task",
+        taskStatus: context.node.taskStatus ?? "todo",
+        priority: context.node.priority ?? null,
+      });
+      return;
+    }
+
     const client = getOpenAIClient();
     if (!client) {
       const heuristic = inferTaskMetadataHeuristically(
