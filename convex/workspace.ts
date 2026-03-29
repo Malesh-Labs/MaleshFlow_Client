@@ -893,6 +893,7 @@ export const updateNode = mutation({
     nodeId: v.id("nodes"),
     text: v.optional(v.string()),
     kind: v.optional(nodeKindValidator),
+    lockKind: v.optional(v.boolean()),
     taskStatus: v.optional(taskStatusValidator),
     priority: v.optional(priorityValidator),
     dueAt: v.optional(v.union(v.number(), v.null())),
@@ -925,6 +926,15 @@ export const updateNode = mutation({
 
     if (args.dueAt !== undefined) {
       patch.dueAt = args.dueAt;
+    }
+
+    if (args.lockKind !== undefined) {
+      const sourceMeta =
+        node.sourceMeta && typeof node.sourceMeta === "object"
+          ? { ...(node.sourceMeta as Record<string, unknown>) }
+          : {};
+      sourceMeta.taskKindLocked = args.lockKind;
+      patch.sourceMeta = sourceMeta;
     }
 
     await ctx.db.patch(args.nodeId, patch);

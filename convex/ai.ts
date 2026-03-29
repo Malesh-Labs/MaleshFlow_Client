@@ -398,6 +398,15 @@ export const extractTaskMetadata = internalAction({
       return;
     }
 
+    const sourceMeta =
+      context.node.sourceMeta && typeof context.node.sourceMeta === "object"
+        ? (context.node.sourceMeta as Record<string, unknown>)
+        : {};
+
+    if (sourceMeta.taskKindLocked === true) {
+      return;
+    }
+
     if (context.node.kind === "task") {
       await ctx.runMutation(applyTaskMetadataRef, {
         nodeId: context.node._id,
