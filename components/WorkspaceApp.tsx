@@ -253,6 +253,15 @@ function getPageTypeLabelForSection(sidebarSection: SidebarSection) {
   }
 }
 
+function getPageTypeDisplayLabel(page: Doc<"pages"> | null | undefined) {
+  if (!page) {
+    return "Page";
+  }
+
+  const baseLabel = getPageTypeLabel(page);
+  return page.archived ? `${baseLabel} (archived)` : baseLabel;
+}
+
 function isTextEntryElement(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) {
     return false;
@@ -476,7 +485,7 @@ function buildLinkPreviewSegments(
         archived: page?.archived ?? false,
         resolved: Boolean(page),
         linkKind: "page",
-        pageTypeLabel: page ? getPageTypeLabel(page) : null,
+        pageTypeLabel: page ? getPageTypeDisplayLabel(page) : null,
       });
     } else {
       const targetNode = nodeTargetsById.get(match.link.targetNodeRef);
@@ -908,6 +917,7 @@ function ConfiguredWorkspace({
   const sidebarNodeMap = new Map(
     (sidebarTree?.nodes ?? []).map((node) => [node._id as string, node]),
   );
+  const sidebarLinkedPageIds = new Set((sidebarTree?.linkedPageIds ?? []).map((pageId) => pageId as string));
 
   const modelSection = findSectionNode(tree, "model");
   const recentExamplesSection = findSectionNode(tree, "recentExamples");
@@ -941,6 +951,9 @@ function ConfiguredWorkspace({
         : flattenTreeNodes(genericRoots);
   const sidebarVisibleRows = flattenTreeNodes(sidebarNodes);
   const visibleNodeOrder = [...sidebarVisibleRows, ...pageVisibleRows].map((node) => node._id);
+  const uncategorizedPages =
+    (pages ?? []).filter((page) => !page.archived && !sidebarLinkedPageIds.has(page._id as string));
+  const archivedPages = (pages ?? []).filter((page) => page.archived);
   const pagesByTitle = useMemo(() => {
     const next = new Map<string, PageDoc>();
     for (const page of pages ?? []) {
@@ -1965,6 +1978,70 @@ function ConfiguredWorkspace({
                     />
                   </div>
                 )}
+
+                <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
+                    Uncategorized
+                  </p>
+                  {uncategorizedPages.length === 0 ? (
+                    <p className="mt-3 text-sm text-[var(--workspace-text-faint)]">
+                      Every active page is referenced in the sidebar.
+                    </p>
+                  ) : (
+                    <div className="mt-3 space-y-1">
+                      {uncategorizedPages.map((page) => (
+                        <button
+                          key={page._id}
+                          type="button"
+                          onClick={() => handleSelectPage(page._id)}
+                          className={clsx(
+                            "block w-full px-2 py-1.5 text-left text-sm transition",
+                            selectedPageId === page._id
+                              ? "bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
+                              : "text-[var(--workspace-text-strong)] hover:bg-[var(--workspace-surface-accent)]",
+                          )}
+                        >
+                          <span>{page.title}</span>
+                          <span className="ml-2 text-[10px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]">
+                            {getPageTypeDisplayLabel(page)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5 opacity-75">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
+                    Archive
+                  </p>
+                  {archivedPages.length === 0 ? (
+                    <p className="mt-3 text-sm text-[var(--workspace-text-faint)]">
+                      No archived pages.
+                    </p>
+                  ) : (
+                    <div className="mt-3 space-y-1">
+                      {archivedPages.map((page) => (
+                        <button
+                          key={page._id}
+                          type="button"
+                          onClick={() => handleSelectPage(page._id)}
+                          className={clsx(
+                            "block w-full px-2 py-1.5 text-left text-sm transition",
+                            selectedPageId === page._id
+                              ? "bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
+                              : "text-[var(--workspace-text-faint)] hover:bg-[var(--workspace-surface-accent)] hover:text-[var(--workspace-text)]",
+                          )}
+                        >
+                          <span>{page.title}</span>
+                          <span className="ml-2 text-[10px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]">
+                            {getPageTypeDisplayLabel(page)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="mt-6 border-t border-[var(--workspace-border-soft)] pt-4">
@@ -2029,7 +2106,7 @@ function ConfiguredWorkspace({
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.3em] text-[var(--workspace-accent)]">
-                      <span>{getPageTypeLabel(selectedPage)}</span>
+                      <span>{getPageTypeDisplayLabel(selectedPage)}</span>
                       {isPageArchived ? (
                         <span className="rounded-full border border-[var(--workspace-border)] px-2 py-1 text-[10px] tracking-[0.2em] text-[var(--workspace-text-faint)]">
                           Archived
@@ -2465,7 +2542,7 @@ function ConfiguredWorkspace({
                           {page.title}
                         </span>
                         <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                          {getPageTypeLabel(page)}
+                          {getPageTypeDisplayLabel(page)}
                         </span>
                       </span>
                       <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
@@ -2508,7 +2585,7 @@ function ConfiguredWorkspace({
                         </span>
                         <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
                           {result.page?.title ?? "Unknown page"}
-                          {result.page ? ` • ${getPageTypeLabel(result.page)}` : ""}
+                          {result.page ? ` • ${getPageTypeDisplayLabel(result.page)}` : ""}
                         </span>
                       </span>
                       <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
@@ -2546,7 +2623,7 @@ function ConfiguredWorkspace({
                         </span>
                         <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
                           {result.page?.title ?? "Unknown page"}
-                          {result.page ? ` • ${getPageTypeLabel(result.page)}` : ""}
+                          {result.page ? ` • ${getPageTypeDisplayLabel(result.page)}` : ""}
                         </span>
                       </span>
                       <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
@@ -2592,7 +2669,7 @@ function ConfiguredWorkspace({
                               </span>
                               <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
                                 {result.page?.title ?? "Unknown page"}
-                                {result.page ? ` • ${getPageTypeLabel(result.page)}` : ""}
+                                {result.page ? ` • ${getPageTypeDisplayLabel(result.page)}` : ""}
                               </span>
                               {result.content && result.content.trim() !== result.node.text.trim() ? (
                                 <span className="mt-2 block whitespace-pre-wrap text-xs leading-6 text-[var(--workspace-text-subtle)]">

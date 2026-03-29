@@ -151,9 +151,20 @@ export const getSidebarTree = query({
     }
 
     const nodes = await listPageNodes(ctx.db, sidebarPage._id);
+    const links = await ctx.db
+      .query("links")
+      .withIndex("by_source_page", (query) => query.eq("sourcePageId", sidebarPage._id))
+      .collect();
     return {
       page: sidebarPage,
       nodes,
+      linkedPageIds: [
+        ...new Set(
+          links
+            .map((link) => link.targetPageId)
+            .filter((pageId): pageId is Id<"pages"> => pageId !== null),
+        ),
+      ],
     };
   },
 });
