@@ -6,17 +6,20 @@ import {
   Component,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type ErrorInfo,
   type FormEvent,
+  type RefObject,
   type ReactNode,
   type KeyboardEvent as TextareaKeyboardEvent,
   type ClipboardEvent as TextareaClipboardEvent,
   type DragEvent as ReactDragEvent,
 } from "react";
+import { createPortal } from "react-dom";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
@@ -594,6 +597,86 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
     }));
 
   return [...pageSuggestions, ...nodeSuggestions];
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function useFloatingMenuPosition(
+  anchorRef: RefObject<HTMLElement | null>,
+  isOpen: boolean,
+) {
+  const [position, setPosition] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    maxHeight: number;
+  } | null>(null);
+
+  const updatePosition = useCallback(() => {
+    if (!isOpen || typeof window === "undefined" || !anchorRef.current) {
+      setPosition(null);
+      return;
+    }
+
+    const rect = anchorRef.current.getBoundingClientRect();
+    const viewportPadding = 16;
+    const width = Math.min(
+      460,
+      Math.max(280, Math.min(rect.width, window.innerWidth - viewportPadding * 2)),
+    );
+    const left = clamp(
+      rect.left,
+      viewportPadding,
+      window.innerWidth - width - viewportPadding,
+    );
+    const spaceBelow = window.innerHeight - rect.bottom - viewportPadding;
+    const spaceAbove = rect.top - viewportPadding;
+    const placeAbove = spaceBelow < 220 && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(
+      160,
+      Math.min(360, (placeAbove ? spaceAbove : spaceBelow) - 8),
+    );
+    const top = placeAbove
+      ? Math.max(viewportPadding, rect.top - maxHeight - 8)
+      : Math.min(window.innerHeight - viewportPadding, rect.bottom + 8);
+
+    setPosition({
+      left,
+      top,
+      width,
+      maxHeight,
+    });
+  }, [anchorRef, isOpen]);
+
+  useLayoutEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      updatePosition();
+    });
+
+    const handleScroll = () => updatePosition();
+    const handleResize = () => updatePosition();
+
+    window.addEventListener("resize", handleResize);
+    window.addEventListener("scroll", handleScroll, true);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", handleResize);
+      window.removeEventListener("scroll", handleScroll, true);
+    };
+  }, [isOpen, updatePosition]);
+
+  return isOpen ? position : null;
 }
 
 function buildLinkPreviewSegments(
@@ -3260,20 +3343,36 @@ function LinkAutocompleteMenu({
   highlightIndex,
   onHover,
   onSelect,
+  anchorRef,
 }: {
   suggestions: LinkSuggestion[];
   highlightIndex: number;
   onHover: (index: number) => void;
   onSelect: (suggestion: LinkSuggestion) => void;
+  anchorRef: RefObject<HTMLElement | null>;
 }) {
-  return (
-    <div className="mt-2 w-full max-w-xl border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_16px_40px_-28px_rgba(53,41,24,0.55)]">
+  const position = useFloatingMenuPosition(anchorRef, true);
+
+  if (!position || typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div
+      className="fixed z-[140] border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_24px_64px_-32px_rgba(0,0,0,0.6)]"
+      style={{
+        left: position.left,
+        top: position.top,
+        width: position.width,
+        maxHeight: position.maxHeight,
+      }}
+    >
       {suggestions.length === 0 ? (
         <p className="px-3 py-2 text-sm text-[var(--workspace-text-subtle)]">
           No matching pages or nodes.
         </p>
       ) : (
-        <div className="py-1">
+        <div className="overflow-y-auto py-1" style={{ maxHeight: position.maxHeight }}>
           {suggestions.map((suggestion, index) => (
             <button
               key={suggestion.key}
@@ -3300,7 +3399,8 @@ function LinkAutocompleteMenu({
           ))}
         </div>
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -4588,6 +4688,7 @@ function OutlineNodeEditor({
             ) : null}
             {isFocused && activeLinkToken ? (
               <LinkAutocompleteMenu
+                anchorRef={textareaRef}
                 suggestions={linkSuggestions}
                 highlightIndex={activeLinkHighlightIndex}
                 onHover={setLinkHighlightIndex}
@@ -4924,6 +5025,7 @@ function InlineComposer({
       />
       {isFocused && activeLinkToken ? (
         <LinkAutocompleteMenu
+          anchorRef={textareaRef}
           suggestions={linkSuggestions}
           highlightIndex={activeLinkHighlightIndex}
           onHover={setLinkHighlightIndex}
