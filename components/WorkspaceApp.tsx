@@ -1310,6 +1310,20 @@ function ConfiguredWorkspace({
     }
     return next;
   }, [pages]);
+  const pagesById = useMemo(
+    () => new Map((pages ?? []).map((page) => [page._id as string, page])),
+    [pages],
+  );
+  const workspaceNodeMap = useMemo(() => {
+    const next = new Map<string, Doc<"nodes">>();
+    for (const node of sidebarTree?.nodes ?? []) {
+      next.set(node._id as string, node);
+    }
+    for (const node of activePageTree?.nodes ?? []) {
+      next.set(node._id as string, node);
+    }
+    return next;
+  }, [activePageTree?.nodes, sidebarTree?.nodes]);
   const paletteResults = filterPagesForCommandPalette(
     pages ?? [],
     paletteQuery,
@@ -1693,6 +1707,59 @@ function ConfiguredWorkspace({
     [history, moveNode, ownerKey, selectSingleNode, selectedNodeIds, sidebarNodes, tree],
   );
 
+  const toggleHighlightedNodeKind = useCallback(async () => {
+    if (selectedNodeIds.size !== 1) {
+      return;
+    }
+
+    const nodeId = [...selectedNodeIds][0];
+    if (!nodeId) {
+      return;
+    }
+
+    const node = workspaceNodeMap.get(nodeId);
+    if (!node || getNodeMeta(node).locked === true) {
+      return;
+    }
+
+    const page = pagesById.get(node.pageId as string);
+    if (page?.archived) {
+      return;
+    }
+
+    const beforeSnapshot = toNodeValueSnapshot(node);
+    const afterSnapshot: NodeValueSnapshot =
+      node.kind === "task"
+        ? {
+            text: node.text,
+            kind: "note",
+            taskStatus: null,
+          }
+        : {
+            text: node.text,
+            kind: "task",
+            taskStatus: "todo",
+          };
+
+    await updateNode({
+      ownerKey,
+      nodeId: node._id,
+      text: afterSnapshot.text,
+      kind: afterSnapshot.kind,
+      taskStatus: afterSnapshot.taskStatus,
+    });
+
+    history.pushUndoEntry({
+      type: "update_node",
+      pageId: node.pageId as Id<"pages">,
+      nodeId: node._id as Id<"nodes">,
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      focusEditorId: getNodeEditorId(node._id as Id<"nodes">),
+    });
+    selectSingleNode(nodeId);
+  }, [history, ownerKey, pagesById, selectSingleNode, selectedNodeIds, updateNode, workspaceNodeMap]);
+
   const openInsertedComposer = useCallback(
     (pageId: Id<"pages">, parentNodeId: Id<"nodes"> | null, afterNodeId: Id<"nodes">) => {
       setPendingInsertedComposer((current) => ({
@@ -1934,6 +2001,18 @@ function ConfiguredWorkspace({
         return;
       }
 
+      if (
+        isModifier &&
+        event.shiftKey &&
+        normalizedKey === "c" &&
+        selectedNodeIds.size > 0 &&
+        !isTextEntryElement(event.target)
+      ) {
+        event.preventDefault();
+        void toggleHighlightedNodeKind();
+        return;
+      }
+
       if (isModifier && normalizedKey === "k") {
         event.preventDefault();
         openPalette("pages");
@@ -2034,6 +2113,7 @@ function ConfiguredWorkspace({
     selectNodeRange,
     selectSingleNode,
     selectedNodeIds,
+    toggleHighlightedNodeKind,
     visibleNodeOrder,
   ]);
 
@@ -4348,6 +4428,67 @@ function OutlineNodeEditor({
     history.pushUndoEntry(toggleEntry);
   };
 
+  const handleToggleNodeKind = async () => {
+    if (isDisabled) {
+      return;
+    }
+
+    const saveResult = await commitNodeText(draft);
+    if (saveResult.deleted || !saveResult.parsed) {
+      return;
+    }
+
+    const beforeSnapshot = saveResult.parsed;
+    const afterSnapshot: NodeValueSnapshot =
+      beforeSnapshot.kind === "task"
+        ? {
+            text: beforeSnapshot.text,
+            kind: "note",
+            taskStatus: null,
+          }
+        : {
+            text: beforeSnapshot.text,
+            kind: "task",
+            taskStatus: "todo",
+          };
+
+    await updateNode({
+      ownerKey,
+      nodeId: node._id as Id<"nodes">,
+      text: afterSnapshot.text,
+      kind: afterSnapshot.kind,
+      taskStatus: afterSnapshot.taskStatus,
+    });
+    history.commitTrackedValue(
+      editorId,
+      editorTarget,
+      afterSnapshot.text,
+    );
+    setDraft(afterSnapshot.text);
+
+    const toggleEntry: HistoryEntry = {
+      type: "update_node",
+      pageId,
+      nodeId: node._id as Id<"nodes">,
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      focusEditorId: editorId,
+    };
+
+    if (saveResult.updateEntry) {
+      history.pushUndoEntry({
+        type: "compound",
+        pageId,
+        entries: [saveResult.updateEntry, toggleEntry],
+        focusAfterUndoId: editorId,
+        focusAfterRedoId: editorId,
+      });
+      return;
+    }
+
+    history.pushUndoEntry(toggleEntry);
+  };
+
   const handlePaste = async (event: TextareaClipboardEvent<HTMLTextAreaElement>) => {
     const pastedText = event.clipboardData.getData("text");
     const lines = splitPastedLines(pastedText);
@@ -4443,6 +4584,7 @@ function OutlineNodeEditor({
 
   const handleKeyDown = async (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
     const isModifier = event.metaKey || event.ctrlKey;
+    const normalizedKey = event.key.toLowerCase();
 
     if (activeLinkToken && linkSuggestions.length > 0) {
       if (event.key === "ArrowDown") {
@@ -4468,6 +4610,12 @@ function OutlineNodeEditor({
         }
         return;
       }
+    }
+
+    if (isModifier && event.shiftKey && normalizedKey === "c") {
+      event.preventDefault();
+      await handleToggleNodeKind();
+      return;
     }
 
     if (isModifier && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
@@ -4872,8 +5020,15 @@ function OutlineNodeEditor({
               <button
                 type="button"
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => void handleToggleTask()}
+                onClick={(event) => {
+                  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+                    void handleToggleNodeKind();
+                    return;
+                  }
+                  void handleToggleTask();
+                }}
                 disabled={isDisabled}
+                title="Click to toggle task status. Hold a modifier key to convert to a note."
                 className={clsx(
                   "flex h-4 w-4 items-center justify-center border text-[10px] transition",
                   node.taskStatus === "done"
@@ -4885,7 +5040,19 @@ function OutlineNodeEditor({
                 x
               </button>
             ) : (
-              <span className="text-base leading-none text-[var(--workspace-accent)]">•</span>
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => void handleToggleNodeKind()}
+                disabled={isDisabled}
+                title="Convert this note into a task."
+                className={clsx(
+                  "flex h-4 w-4 items-center justify-center text-base leading-none transition hover:text-[var(--workspace-brand)]",
+                  isDisabled ? "cursor-not-allowed opacity-60" : "",
+                )}
+              >
+                •
+              </button>
             )}
           </div>
           <div className="relative flex min-h-8 min-w-0 flex-1 items-center">
