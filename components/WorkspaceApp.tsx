@@ -3201,6 +3201,7 @@ function PageSection({
           nodes={sectionNode?.children ?? []}
           ownerKey={ownerKey}
           pageId={pageId}
+          parentNodeId={(sectionNode?._id as Id<"nodes"> | null) ?? null}
           nodeMap={nodeMap}
           createNodesBatch={createNodesBatch}
           updateNode={updateNode}
