@@ -60,6 +60,11 @@ const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
 type PageType = "default" | "model" | "journal";
 type PageDoc = Doc<"pages">;
+type PageTreeResult = {
+  page: PageDoc;
+  nodes: Doc<"nodes">[];
+  backlinks: Doc<"links">[];
+};
 type PaletteMode = "pages" | "find" | "nodes" | "chat";
 const PALETTE_MODE_ORDER: PaletteMode[] = ["pages", "find", "nodes", "chat"];
 type NodeSearchResult = {
@@ -1012,6 +1017,7 @@ function ConfiguredWorkspace({
     null,
   );
   const [isKnowledgeChatLoading, setIsKnowledgeChatLoading] = useState(false);
+  const [lastResolvedPageTree, setLastResolvedPageTree] = useState<PageTreeResult | null>(null);
   const [activeDraggedNodeId, setActiveDraggedNodeId] = useState<string | null>(null);
   const [activeDraggedNodePayload, setActiveDraggedNodePayload] = useState<DraggedNodePayload | null>(null);
   const [pendingRevealNodeId, setPendingRevealNodeId] = useState<string | null>(null);
@@ -1097,6 +1103,14 @@ function ConfiguredWorkspace({
     setPaletteOpen(true);
   }, []);
 
+  const isSidebarQueryLoading =
+    Boolean(ownerKey) && isOwnerKeyValid === true && typeof sidebarTree === "undefined";
+  const isMainPaneLoading =
+    (Boolean(ownerKey) && isOwnerKeyValid === true && typeof pages === "undefined") ||
+    (selectedPageId !== null && typeof pageTree === "undefined");
+  const activePageTree =
+    pageTree ?? (selectedPageId !== null && isMainPaneLoading ? lastResolvedPageTree : null);
+
   const history = useWorkspaceHistoryController({
     ownerKey,
     selectedPageId,
@@ -1106,10 +1120,10 @@ function ConfiguredWorkspace({
     updateNode,
     moveNode,
     setNodeTreeArchived,
-    isDisabled: pageTree?.page?.archived ?? false,
+    isDisabled: activePageTree?.page?.archived ?? false,
   });
 
-  const selectedPage = pageTree?.page ?? null;
+  const selectedPage = activePageTree?.page ?? null;
   const pageMeta = getPageMeta(selectedPage);
   const isPageArchived = selectedPage?.archived ?? false;
   const pageTitleEditorId = selectedPage ? getPageTitleEditorId(selectedPage._id) : null;
@@ -1123,20 +1137,15 @@ function ConfiguredWorkspace({
         : null,
     [selectedPage],
   );
-  const tree = pageTree ? toTreeNodes(pageTree.nodes) : [];
+  const tree = activePageTree ? toTreeNodes(activePageTree.nodes) : [];
   const nodeMap = new Map(
-    (pageTree?.nodes ?? []).map((node) => [node._id as string, node]),
+    (activePageTree?.nodes ?? []).map((node) => [node._id as string, node]),
   );
   const sidebarNodes = sidebarTree ? toTreeNodes(sidebarTree.nodes) : [];
   const sidebarNodeMap = new Map(
     (sidebarTree?.nodes ?? []).map((node) => [node._id as string, node]),
   );
   const sidebarLinkedPageIds = new Set((sidebarTree?.linkedPageIds ?? []).map((pageId) => pageId as string));
-  const isSidebarQueryLoading =
-    Boolean(ownerKey) && isOwnerKeyValid === true && typeof sidebarTree === "undefined";
-  const isMainPaneLoading =
-    (Boolean(ownerKey) && isOwnerKeyValid === true && typeof pages === "undefined") ||
-    (selectedPageId !== null && typeof pageTree === "undefined");
 
   const modelSection = findSectionNode(tree, "model");
   const recentExamplesSection = findSectionNode(tree, "recentExamples");
@@ -1262,6 +1271,17 @@ function ConfiguredWorkspace({
   }, [isOwnerKeyValid, setOwnerKey]);
 
   useEffect(() => {
+    if (pageTree?.page) {
+      setLastResolvedPageTree(pageTree);
+      return;
+    }
+
+    if (selectedPageId === null) {
+      setLastResolvedPageTree(null);
+    }
+  }, [pageTree, selectedPageId]);
+
+  useEffect(() => {
     if (!ownerKey || !isOwnerKeyValid) {
       hasRequestedSidebarPage.current = false;
       setSidebarBootstrapError("");
@@ -1381,12 +1401,12 @@ function ConfiguredWorkspace({
   }, [selectedPageId]);
 
   useEffect(() => {
-    setPageTitleDraft(pageTree?.page?.title ?? "");
+    setPageTitleDraft(activePageTree?.page?.title ?? "");
     setChatStatus("");
     setJournalFeedbackStatus("");
     clearNodeSelection();
     setPendingInsertedComposer(null);
-  }, [clearNodeSelection, pageTree?.page?._id, pageTree?.page?.title]);
+  }, [activePageTree?.page?._id, activePageTree?.page?.title, clearNodeSelection]);
 
   const handleRetrySidebarSetup = useCallback(async () => {
     if (!ownerKey) {
@@ -2472,7 +2492,7 @@ function ConfiguredWorkspace({
         </aside>
 
         <section className="p-6 md:p-10">
-          {isMainPaneLoading ? (
+          {isMainPaneLoading && !selectedPage ? (
             <div className="grid min-h-[60vh] place-items-center border border-dashed border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface)_70%,transparent)] p-8 text-center">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--workspace-accent)]">
@@ -2495,7 +2515,11 @@ function ConfiguredWorkspace({
               </div>
             </div>
           ) : (
-            <div className="flex min-h-[calc(100vh-5rem)] flex-col border border-[var(--workspace-border)] bg-[var(--workspace-surface)]">
+            <div className="relative">
+              <div
+                key={selectedPage._id}
+                className="workspace-pane-fade flex min-h-[calc(100vh-5rem)] flex-col border border-[var(--workspace-border)] bg-[var(--workspace-surface)]"
+              >
               <div className="px-10 py-6 md:px-14">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
@@ -2803,6 +2827,19 @@ function ConfiguredWorkspace({
                   ) : null}
                 </div>
               </div>
+              </div>
+              {isMainPaneLoading ? (
+                <div className="workspace-pane-fade pointer-events-auto absolute inset-0 z-20 grid place-items-center bg-[color-mix(in_srgb,var(--workspace-bg)_74%,transparent)] backdrop-blur-[2px]">
+                  <div className="border border-[var(--workspace-border)] bg-[var(--workspace-surface)] px-6 py-4 text-center shadow-[0_20px_50px_-35px_rgba(0,0,0,0.45)]">
+                    <p className="text-xs uppercase tracking-[0.3em] text-[var(--workspace-accent)]">
+                      Loading
+                    </p>
+                    <p className="mt-2 text-lg font-medium text-[var(--workspace-text)]">
+                      Opening page…
+                    </p>
+                  </div>
+                </div>
+              ) : null}
             </div>
           )}
         </section>
