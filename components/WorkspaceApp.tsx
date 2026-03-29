@@ -416,15 +416,15 @@ export default function WorkspaceApp() {
 
   if (!convexConfigured) {
     return (
-      <main className="grid min-h-screen place-items-center bg-[#f7f4ec] p-6 text-[#1b1916]">
-        <div className="w-full max-w-xl rounded-[2rem] border border-[#d8cfbf] bg-white p-8 shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]">
-          <p className="text-xs uppercase tracking-[0.3em] text-[#8a6c2d]">
+      <main className="grid min-h-screen place-items-center bg-[var(--workspace-bg)] p-6 text-[var(--workspace-text)]">
+        <div className="w-full max-w-xl rounded-[2rem] border border-[var(--workspace-border)] bg-[var(--workspace-surface)] p-8 shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]">
+          <p className="text-xs uppercase tracking-[0.3em] text-[var(--workspace-accent)]">
             Configuration Needed
           </p>
           <h1 className="mt-4 text-4xl font-semibold tracking-tight">
             Connect Convex to load the workspace
           </h1>
-          <p className="mt-4 max-w-lg text-sm leading-7 text-[#6a6257]">
+          <p className="mt-4 max-w-lg text-sm leading-7 text-[var(--workspace-text-subtle)]">
             Set `NEXT_PUBLIC_CONVEX_URL` for the Next.js app and connect the
             matching Convex deployment before using the editor.
           </p>
@@ -435,12 +435,12 @@ export default function WorkspaceApp() {
 
   if (!ownerKey) {
     return (
-      <main className="grid min-h-screen place-items-center bg-[#f7f4ec] p-6 text-[#1b1916]">
-        <div className="w-full max-w-md border border-[#d8cfbf] bg-white p-8 shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]">
-          <p className="text-xs uppercase tracking-[0.3em] text-[#8a6c2d]">
+      <main className="grid min-h-screen place-items-center bg-[var(--workspace-bg)] p-6 text-[var(--workspace-text)]">
+        <div className="w-full max-w-md border border-[var(--workspace-border)] bg-[var(--workspace-surface)] p-8 shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]">
+          <p className="text-xs uppercase tracking-[0.3em] text-[var(--workspace-accent)]">
             Owner Access
           </p>
-          <p className="mt-3 text-sm leading-6 text-[#6a6257]">
+          <p className="mt-3 text-sm leading-6 text-[var(--workspace-text-subtle)]">
             Enter the owner access token to unlock the workspace.
           </p>
           <form
@@ -455,11 +455,11 @@ export default function WorkspaceApp() {
               value={draftOwnerKey}
               onChange={(event) => setDraftOwnerKey(event.target.value)}
               placeholder="Owner access token"
-              className="w-full border border-[#d8cfbf] bg-[#fcfbf8] px-4 py-3 text-sm outline-none transition focus:border-[#8a6c2d]"
+              className="w-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-4 py-3 text-sm outline-none transition focus:border-[var(--workspace-accent)]"
             />
             <button
               type="submit"
-              className="w-full bg-[#1f4a45] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#163733]"
+              className="w-full bg-[var(--workspace-brand)] px-4 py-3 text-sm font-semibold text-[var(--workspace-inverse-text)] transition hover:bg-[var(--workspace-brand-hover)]"
             >
               Unlock Workspace
             </button>
@@ -1133,16 +1133,16 @@ function ConfiguredWorkspace({
 
   return (
     <WorkspaceHistoryProvider value={history}>
-      <main className="min-h-screen bg-[#f7f4ec] text-[#1b1916]">
+      <main className="min-h-screen bg-[var(--workspace-bg)] text-[var(--workspace-text)]">
       <div className="mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)]">
-        <aside className="border-b border-[#d8cfbf] bg-[#efe7d9] p-6 lg:border-b-0 lg:border-r">
-              <div className="flex items-start justify-end gap-4">
+        <aside className="flex flex-col border-b border-[var(--workspace-border)] bg-[var(--workspace-sidebar-bg)] p-6 lg:border-b-0 lg:border-r">
+          <div className="flex items-start justify-end gap-4">
                 <button
                   type="button"
                   onClick={() => {
                     openPalette("pages");
               }}
-              className="border border-[#c9bda8] px-3 py-1 text-xs font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
+              className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
             >
               Pages
             </button>
@@ -1151,7 +1151,7 @@ function ConfiguredWorkspace({
                   onClick={() => {
                     openPalette("nodes");
                   }}
-              className="border border-[#c9bda8] px-3 py-1 text-xs font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
+              className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
                 >
                   Semantic
                 </button>
@@ -1160,32 +1160,25 @@ function ConfiguredWorkspace({
                   onClick={() => {
                     openPalette("chat");
                   }}
-                  className="border border-[#c9bda8] px-3 py-1 text-xs font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
+                  className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
                 >
                   Ask
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setOwnerKey("")}
-                  className="border border-[#c9bda8] px-3 py-1 text-xs font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
-                >
-              Lock
-            </button>
           </div>
 
-          <div className="mt-10 space-y-6">
+          <div className="mt-10 flex-1 space-y-6">
             {groupedPages.map(({ section, pages: sectionPages }) => (
               <section
                 key={section}
-                className="border-t border-[#ddd2c0] pt-6 first:border-t-0 first:pt-0"
+                className="border-t border-[var(--workspace-border-soft)] pt-6 first:border-t-0 first:pt-0"
               >
                 <button
                   type="button"
                   onClick={() => toggleSidebarSection(section)}
-                  className="flex w-full items-center justify-between text-left text-sm font-semibold uppercase tracking-[0.22em] text-[#7a6e5f]"
+                  className="flex w-full items-center justify-between text-left text-sm font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]"
                 >
                   <span>{section}</span>
-                  <span className="text-xs text-[#8a6c2d]">
+                  <span className="text-xs text-[var(--workspace-accent)]">
                     {collapsedSidebarSections.has(section) ? "+" : "-"}
                   </span>
                 </button>
@@ -1200,8 +1193,8 @@ function ConfiguredWorkspace({
                           className={clsx(
                             "block w-full border-l-2 px-3 py-2 text-left text-sm transition",
                             selectedPageId === page._id
-                              ? "border-[#1f4a45] bg-[#f8f3ea] text-[#1f4a45]"
-                              : "border-transparent text-[#433d35] hover:border-[#bcae96] hover:bg-[#f8f3ea]",
+                              ? "border-[var(--workspace-brand)] bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
+                              : "border-transparent text-[var(--workspace-text-strong)] hover:border-[var(--workspace-border-hover)] hover:bg-[var(--workspace-surface-accent)]",
                           )}
                         >
                           {page.title}
@@ -1212,7 +1205,7 @@ function ConfiguredWorkspace({
                       type="button"
                       onClick={() => void handleCreatePage(section)}
                       disabled={isCreatingPage === section}
-                      className="mt-3 w-full border border-dashed border-[#bcae96] px-3 py-2 text-left text-sm font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:bg-[#f8f3ea] disabled:cursor-wait disabled:opacity-60"
+                      className="mt-3 w-full border border-dashed border-[var(--workspace-border-hover)] px-3 py-2 text-left text-sm font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:bg-[var(--workspace-surface-accent)] disabled:cursor-wait disabled:opacity-60"
                     >
                       {isCreatingPage === section ? "Creating page…" : `New ${section.slice(0, -1)}`}
                     </button>
@@ -1220,21 +1213,21 @@ function ConfiguredWorkspace({
                 ) : null}
               </section>
             ))}
-            <section className="border-t border-[#ddd2c0] pt-6">
+            <section className="border-t border-[var(--workspace-border-soft)] pt-6">
               <button
                 type="button"
                 onClick={() => toggleSidebarSection(ARCHIVE_SECTION_LABEL)}
-                className="flex w-full items-center justify-between text-left text-sm font-semibold uppercase tracking-[0.22em] text-[#7a6e5f]"
+                className="flex w-full items-center justify-between text-left text-sm font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]"
               >
                 <span>{ARCHIVE_SECTION_LABEL}</span>
-                <span className="text-xs text-[#8a6c2d]">
+                <span className="text-xs text-[var(--workspace-accent)]">
                   {collapsedSidebarSections.has(ARCHIVE_SECTION_LABEL) ? "+" : "-"}
                 </span>
               </button>
               {!collapsedSidebarSections.has(ARCHIVE_SECTION_LABEL) ? (
                 <div className="mt-3 space-y-2">
                   {archivedPages.length === 0 ? (
-                    <p className="px-3 py-2 text-sm text-[#7a6e5f]">
+                    <p className="px-3 py-2 text-sm text-[var(--workspace-text-faint)]">
                       No archived pages
                     </p>
                   ) : (
@@ -1246,12 +1239,12 @@ function ConfiguredWorkspace({
                         className={clsx(
                           "block w-full border-l-2 px-3 py-2 text-left text-sm transition",
                           selectedPageId === page._id
-                            ? "border-[#1f4a45] bg-[#f8f3ea] text-[#1f4a45]"
-                            : "border-transparent text-[#433d35] hover:border-[#bcae96] hover:bg-[#f8f3ea]",
+                            ? "border-[var(--workspace-brand)] bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
+                            : "border-transparent text-[var(--workspace-text-strong)] hover:border-[var(--workspace-border-hover)] hover:bg-[var(--workspace-surface-accent)]",
                         )}
                       >
                         <span>{page.title}</span>
-                        <span className="ml-2 text-[11px] uppercase tracking-[0.18em] text-[#8a6c2d]">
+                        <span className="ml-2 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
                           Archived
                         </span>
                       </button>
@@ -1261,13 +1254,22 @@ function ConfiguredWorkspace({
               ) : null}
             </section>
           </div>
+          <div className="mt-6 pt-4">
+            <button
+              type="button"
+              onClick={() => setOwnerKey("")}
+              className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+            >
+              Lock
+            </button>
+          </div>
         </aside>
 
         <section className="p-6 md:p-10">
           {!selectedPage ? (
-            <div className="grid min-h-[60vh] place-items-center border border-dashed border-[#d8cfbf] bg-white/70 p-8 text-center">
+            <div className="grid min-h-[60vh] place-items-center border border-dashed border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface)_70%,transparent)] p-8 text-center">
               <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-[#8a6c2d]">
+                <p className="text-xs uppercase tracking-[0.3em] text-[var(--workspace-accent)]">
                   Empty Workspace
                 </p>
                 <h2 className="mt-3 text-3xl font-semibold tracking-tight">
@@ -1276,14 +1278,14 @@ function ConfiguredWorkspace({
               </div>
             </div>
           ) : (
-            <div className="flex min-h-[calc(100vh-5rem)] flex-col border border-[#d8cfbf] bg-white">
+            <div className="flex min-h-[calc(100vh-5rem)] flex-col border border-[var(--workspace-border)] bg-[var(--workspace-surface)]">
               <div className="px-10 py-6 md:px-14">
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.3em] text-[#8a6c2d]">
+                    <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.3em] text-[var(--workspace-accent)]">
                       <span>{pageMeta.sidebarSection}</span>
                       {isPageArchived ? (
-                        <span className="rounded-full border border-[#d8cfbf] px-2 py-1 text-[10px] tracking-[0.2em] text-[#7a6e5f]">
+                        <span className="rounded-full border border-[var(--workspace-border)] px-2 py-1 text-[10px] tracking-[0.2em] text-[var(--workspace-text-faint)]">
                           Archived
                         </span>
                       ) : null}
@@ -1303,7 +1305,7 @@ function ConfiguredWorkspace({
                       }}
                       onBlur={() => void handleRenamePage()}
                       disabled={isPageArchived}
-                      className="mt-4 w-full border-0 bg-transparent p-0 text-4xl font-semibold tracking-tight outline-none disabled:text-[#5c5348]"
+                      className="mt-4 w-full border-0 bg-transparent p-0 text-4xl font-semibold tracking-tight outline-none disabled:text-[var(--workspace-text-muted)]"
                     />
                   </div>
                   <div className="flex items-center gap-2 pt-1">
@@ -1312,7 +1314,7 @@ function ConfiguredWorkspace({
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => void history.undo()}
                       disabled={!history.canUndo || history.isApplyingHistory || isPageArchived}
-                      className="border border-[#d8cfbf] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916] disabled:cursor-not-allowed disabled:opacity-40"
+                      className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       Undo
                     </button>
@@ -1321,14 +1323,14 @@ function ConfiguredWorkspace({
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => void history.redo()}
                       disabled={!history.canRedo || history.isApplyingHistory || isPageArchived}
-                      className="border border-[#d8cfbf] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916] disabled:cursor-not-allowed disabled:opacity-40"
+                      className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       Redo
                     </button>
                     <button
                       type="button"
                       onClick={() => selectedPage && void handleArchivePage(selectedPage, !isPageArchived)}
-                      className="border border-[#d8cfbf] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
+                      className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
                     >
                       {isPageArchived ? "Restore" : "Archive"}
                     </button>
@@ -1336,14 +1338,14 @@ function ConfiguredWorkspace({
                       <button
                         type="button"
                         onClick={() => selectedPage && void handleDeletePageForever(selectedPage)}
-                        className="border border-[#c95e4b] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#c95e4b] transition hover:bg-[#c95e4b] hover:text-white"
+                        className="border border-[var(--workspace-danger)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-danger)] transition hover:bg-[var(--workspace-danger)] hover:text-[var(--workspace-inverse-text)]"
                       >
                         Delete Forever
                       </button>
                     ) : null}
                   </div>
                 </div>
-                <div className="mt-6 h-px bg-[#ebe2d2]" />
+                <div className="mt-6 h-px bg-[var(--workspace-border-subtle)]" />
               </div>
 
               <div
@@ -1358,7 +1360,7 @@ function ConfiguredWorkspace({
                 }}
               >
                 {pageMeta.pageType === "model" ? (
-                  <div className="divide-y divide-[#ebe2d2]">
+                  <div className="divide-y divide-[var(--workspace-border-subtle)]">
                     <div className="pb-8">
                       <PageSection
                         title="Model"
@@ -1401,7 +1403,7 @@ function ConfiguredWorkspace({
                     </div>
                   </div>
                 ) : pageMeta.pageType === "journal" ? (
-                  <div className="divide-y divide-[#ebe2d2]">
+                  <div className="divide-y divide-[var(--workspace-border-subtle)]">
                     <div className="pb-8">
                       <PageSection
                         title="Thoughts/Stuff"
@@ -1446,7 +1448,7 @@ function ConfiguredWorkspace({
                             type="button"
                             onClick={() => void handleGenerateJournalFeedback()}
                             disabled={isGeneratingJournalFeedback || isPageArchived}
-                            className="border border-[#1f4a45] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#1f4a45] transition hover:bg-[#1f4a45] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                            className="border border-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)] disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {isGeneratingJournalFeedback ? "Generating…" : "Generate Feedback"}
                           </button>
@@ -1486,23 +1488,23 @@ function ConfiguredWorkspace({
               </div>
 
               {pageMeta.pageType === "model" ? (
-                <div className="border-t border-[#ebe2d2] px-10 py-5 md:px-14">
+                <div className="border-t border-[var(--workspace-border-subtle)] px-10 py-5 md:px-14">
                   <form onSubmit={(event) => void handleRunModelChat(event)} className="space-y-3">
                     <input
                       value={modelChatInput}
                       onChange={(event) => setModelChatInput(event.target.value)}
                       placeholder="Ask AI..."
                       disabled={isPageArchived}
-                      className="w-full border-0 border-b border-[#d8cfbf] bg-transparent px-0 py-2 text-sm outline-none disabled:text-[#5c5348]"
+                      className="w-full border-0 border-b border-[var(--workspace-border)] bg-transparent px-0 py-2 text-sm outline-none disabled:text-[var(--workspace-text-muted)]"
                     />
                     <div className="flex items-center justify-between gap-4">
-                      <p className="text-sm text-[#6a6257]">
+                      <p className="text-sm text-[var(--workspace-text-subtle)]">
                         {isPageArchived ? "Archived pages are read-only." : chatStatus}
                       </p>
                       <button
                         type="submit"
                         disabled={isSendingChat || modelChatInput.trim().length === 0 || isPageArchived}
-                        className="border border-[#1f4a45] px-4 py-2 text-sm font-semibold text-[#1f4a45] transition hover:bg-[#1f4a45] hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                        className="border border-[var(--workspace-brand)] px-4 py-2 text-sm font-semibold text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)] disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {isSendingChat ? "Thinking…" : "Send"}
                       </button>
@@ -1516,7 +1518,7 @@ function ConfiguredWorkspace({
       </div>
       {paletteOpen ? (
         <div
-          className="fixed inset-0 z-50 bg-[#1b1916]/20 p-4 sm:p-8"
+          className="fixed inset-0 z-50 bg-[var(--workspace-text)]/20 p-4 sm:p-8"
           onClick={() => {
             setPaletteOpen(false);
             setPaletteQuery("");
@@ -1527,10 +1529,10 @@ function ConfiguredWorkspace({
           }}
         >
           <div
-            className="mx-auto mt-16 w-full max-w-2xl border border-[#d8cfbf] bg-[#fcfbf8] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]"
+            className="mx-auto mt-16 w-full max-w-2xl border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="border-b border-[#ebe2d2] px-5 py-4">
+            <div className="border-b border-[var(--workspace-border-subtle)] px-5 py-4">
               <div className="mb-4 flex items-center gap-2">
                 <button
                   type="button"
@@ -1542,8 +1544,8 @@ function ConfiguredWorkspace({
                   className={clsx(
                     "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
                     paletteMode === "pages"
-                      ? "border-[#1f4a45] bg-[#1f4a45] text-white"
-                      : "border-[#d8cfbf] text-[#5c5348] hover:border-[#8a6c2d] hover:text-[#1b1916]",
+                      ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
+                      : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
                   )}
                 >
                   Pages
@@ -1561,8 +1563,8 @@ function ConfiguredWorkspace({
                   className={clsx(
                     "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
                     paletteMode === "nodes"
-                      ? "border-[#1f4a45] bg-[#1f4a45] text-white"
-                      : "border-[#d8cfbf] text-[#5c5348] hover:border-[#8a6c2d] hover:text-[#1b1916]",
+                      ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
+                      : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
                   )}
                 >
                   Semantic
@@ -1580,8 +1582,8 @@ function ConfiguredWorkspace({
                   className={clsx(
                     "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
                     paletteMode === "chat"
-                      ? "border-[#1f4a45] bg-[#1f4a45] text-white"
-                      : "border-[#d8cfbf] text-[#5c5348] hover:border-[#8a6c2d] hover:text-[#1b1916]",
+                      ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
+                      : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
                   )}
                 >
                   Ask
@@ -1613,7 +1615,7 @@ function ConfiguredWorkspace({
                     type="button"
                     onClick={() => void handleKnowledgeChat()}
                     disabled={isKnowledgeChatLoading || paletteQuery.trim().length === 0}
-                    className="border border-[#1f4a45] bg-[#1f4a45] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-white transition hover:bg-[#163733] disabled:cursor-wait disabled:opacity-60"
+                    className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition hover:bg-[var(--workspace-brand-hover)] disabled:cursor-wait disabled:opacity-60"
                   >
                     Ask
                   </button>
@@ -1623,7 +1625,7 @@ function ConfiguredWorkspace({
             <div className="max-h-[420px] overflow-y-auto py-2">
               {paletteMode === "pages" ? (
                 paletteResults.length === 0 ? (
-                  <p className="px-5 py-4 text-sm text-[#6a6257]">No matching pages.</p>
+                  <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">No matching pages.</p>
                 ) : (
                 paletteResults.map((page, index) => {
                   const pageInfo = getPageMeta(page);
@@ -1636,21 +1638,21 @@ function ConfiguredWorkspace({
                       className={clsx(
                         "flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition",
                         index === paletteHighlightIndex
-                          ? "bg-[#efe7d9]"
-                          : "hover:bg-[#f4eee3]",
+                          ? "bg-[var(--workspace-sidebar-bg)]"
+                          : "hover:bg-[var(--workspace-surface-hover)]",
                       )}
                     >
                       <span className="min-w-0">
-                        <span className="block truncate text-sm font-medium text-[#1b1916]">
+                        <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
                           {page.title}
                         </span>
-                        <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[#7a6e5f]">
+                        <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
                           {pageInfo.sidebarSection}
                         </span>
                       </span>
-                      <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[#8a6c2d]">
+                      <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
                         {page.archived ? (
-                          <span className="rounded-full border border-[#d8cfbf] px-2 py-1 text-[#7a6e5f]">
+                          <span className="rounded-full border border-[var(--workspace-border)] px-2 py-1 text-[var(--workspace-text-faint)]">
                             Archived
                           </span>
                         ) : null}
@@ -1660,13 +1662,13 @@ function ConfiguredWorkspace({
                 })
                 )
               ) : paletteMode === "nodes" ? paletteQuery.trim().length === 0 ? (
-                <p className="px-5 py-4 text-sm text-[#6a6257]">
+                <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">
                   Search across all active notes and tasks in all pages.
                 </p>
               ) : isNodeSearchLoading ? (
-                <p className="px-5 py-4 text-sm text-[#6a6257]">Searching notes…</p>
+                <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">Searching notes…</p>
               ) : nodeSearchResults.length === 0 ? (
-                <p className="px-5 py-4 text-sm text-[#6a6257]">No matching notes.</p>
+                <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">No matching notes.</p>
               ) : (
                 nodeSearchResults.map((result, index) => {
                   const pageInfo = getPageMeta(result.page);
@@ -1679,48 +1681,48 @@ function ConfiguredWorkspace({
                       className={clsx(
                         "flex w-full items-start justify-between gap-3 px-5 py-3 text-left transition",
                         index === paletteHighlightIndex
-                          ? "bg-[#efe7d9]"
-                          : "hover:bg-[#f4eee3]",
+                          ? "bg-[var(--workspace-sidebar-bg)]"
+                          : "hover:bg-[var(--workspace-surface-hover)]",
                       )}
                     >
                       <span className="min-w-0">
-                        <span className="block truncate text-sm font-medium text-[#1b1916]">
+                        <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
                           {result.node.text || "(empty line)"}
                         </span>
-                        <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[#7a6e5f]">
+                        <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
                           {result.page?.title ?? "Unknown page"}
                           {result.page ? ` • ${pageInfo.sidebarSection}` : ""}
                         </span>
                       </span>
-                      <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[#8a6c2d]">
+                      <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
                         <span>{result.node.kind === "task" ? "Task" : "Note"}</span>
                       </span>
                     </button>
                   );
                 })
               ) : paletteQuery.trim().length === 0 ? (
-                <p className="px-5 py-4 text-sm text-[#6a6257]">
+                <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">
                   Ask questions across all active notes and tasks in all active pages.
                 </p>
               ) : isKnowledgeChatLoading ? (
-                <p className="px-5 py-4 text-sm text-[#6a6257]">Thinking with your knowledge base…</p>
+                <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">Thinking with your knowledge base…</p>
               ) : knowledgeChatResponse ? (
                 <div className="space-y-4 px-5 py-4">
                   <div>
-                    <p className="text-[11px] uppercase tracking-[0.18em] text-[#8a6c2d]">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
                       Answer
                     </p>
-                    <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[#1b1916]">
+                    <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[var(--workspace-text)]">
                       {knowledgeChatResponse.answer}
                     </p>
                   </div>
                   <div>
-                    <p className="text-[11px] uppercase tracking-[0.18em] text-[#8a6c2d]">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
                       Sources
                     </p>
                     <div className="mt-2 space-y-2">
                       {knowledgeChatResponse.sources.length === 0 ? (
-                        <p className="text-sm text-[#6a6257]">No source snippets available.</p>
+                        <p className="text-sm text-[var(--workspace-text-subtle)]">No source snippets available.</p>
                       ) : (
                         knowledgeChatResponse.sources.map((result, index) => {
                           const pageInfo = getPageMeta(result.page);
@@ -1729,12 +1731,12 @@ function ConfiguredWorkspace({
                               key={`${result.node._id}:${index}`}
                               type="button"
                               onClick={() => handleSelectNodeSearchResult(result)}
-                              className="block w-full border border-[#ebe2d2] bg-[#fcfbf8] px-4 py-3 text-left transition hover:border-[#bcae96] hover:bg-[#f4eee3]"
+                              className="block w-full border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-4 py-3 text-left transition hover:border-[var(--workspace-border-hover)] hover:bg-[var(--workspace-surface-hover)]"
                             >
-                              <span className="block truncate text-sm font-medium text-[#1b1916]">
+                              <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
                                 {result.node.text || "(empty line)"}
                               </span>
-                              <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[#7a6e5f]">
+                              <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
                                 {result.page?.title ?? "Unknown page"}
                                 {result.page ? ` • ${pageInfo.sidebarSection}` : ""}
                               </span>
@@ -1744,13 +1746,13 @@ function ConfiguredWorkspace({
                       )}
                     </div>
                   </div>
-                  <div className="flex items-center justify-between gap-3 border-t border-[#ebe2d2] pt-3 text-[11px] uppercase tracking-[0.18em] text-[#7a6e5f]">
+                  <div className="flex items-center justify-between gap-3 border-t border-[var(--workspace-border-subtle)] pt-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
                     <span>{knowledgeChatResponse.model}</span>
                     <span>{knowledgeChatResponse.error ? "OpenAI issue surfaced" : "Grounded with semantic retrieval"}</span>
                   </div>
                 </div>
               ) : (
-                <p className="px-5 py-4 text-sm text-[#6a6257]">
+                <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">
                   Press Enter to ask your knowledge base.
                 </p>
               )}
@@ -1813,9 +1815,9 @@ function PageSection({
         {action}
       </div>
       {statusMessage ? (
-        <p className="mt-2 text-sm text-[#6a6257]">{statusMessage}</p>
+        <p className="mt-2 text-sm text-[var(--workspace-text-subtle)]">{statusMessage}</p>
       ) : null}
-      <div className="mt-2 border-b border-[#d8cfbf]" />
+      <div className="mt-2 border-b border-[var(--workspace-border)]" />
       <div className="mt-4 space-y-1">
         <OutlineNodeList
           nodes={sectionNode?.children ?? []}
@@ -2503,7 +2505,7 @@ function OutlineNodeEditor({
       <div
         data-node-shell
         data-node-id={node._id}
-        className={clsx("rounded-sm transition", isSelected ? "bg-[#efe7d9]" : "")}
+        className={clsx("rounded-sm transition", isSelected ? "bg-[var(--workspace-sidebar-bg)]" : "")}
         style={{ marginLeft: `${depth * 18}px` }}
       >
         <div className="flex items-start gap-2">
@@ -2520,7 +2522,7 @@ function OutlineNodeEditor({
           >
             |
           </button>
-          <div className="flex h-6 w-5 flex-none items-center justify-center text-[#8a6c2d]">
+          <div className="flex h-6 w-5 flex-none items-center justify-center text-[var(--workspace-accent)]">
             {isLocked ? null : node.kind === "task" ? (
               <button
                 type="button"
@@ -2530,15 +2532,15 @@ function OutlineNodeEditor({
                 className={clsx(
                   "flex h-4 w-4 items-center justify-center border text-[10px] transition",
                   node.taskStatus === "done"
-                    ? "border-[#1f4a45] bg-[#1f4a45] text-white"
-                    : "border-[#bcae96] bg-white text-transparent hover:border-[#8a6c2d]",
+                    ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
+                    : "border-[var(--workspace-border-hover)] bg-[var(--workspace-surface)] text-transparent hover:border-[var(--workspace-accent)]",
                   isDisabled ? "cursor-not-allowed opacity-70" : "",
                 )}
               >
                 x
               </button>
             ) : (
-              <span className="text-base leading-none text-[#8a6c2d]">•</span>
+              <span className="text-base leading-none text-[var(--workspace-accent)]">•</span>
             )}
           </div>
           <div className="min-w-0 flex-1">
@@ -2556,8 +2558,8 @@ function OutlineNodeEditor({
               disabled={isDisabled}
               rows={1}
               className={clsx(
-                "w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-0.5 text-[15px] leading-6 outline-none transition focus:border-[#d8cfbf] disabled:text-[#5c5348]",
-                node.taskStatus === "done" ? "text-[#7a6e5f] line-through" : "",
+                "w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-0.5 text-[15px] leading-6 outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]",
+                node.taskStatus === "done" ? "text-[var(--workspace-text-faint)] line-through" : "",
               )}
             />
           </div>
@@ -2740,7 +2742,7 @@ function InlineComposer({
         placeholder="New line…"
         disabled={readOnly}
         rows={1}
-        className="w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-0.5 text-[15px] leading-6 outline-none transition focus:border-[#d8cfbf] disabled:text-[#5c5348]"
+        className="w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-0.5 text-[15px] leading-6 outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]"
       />
     </div>
   );

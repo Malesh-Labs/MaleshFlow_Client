@@ -3,6 +3,65 @@
 :root {
   --background: #f5f5f4;
   --foreground: #111827;
+  --workspace-bg: #f7f4ec;
+  --workspace-sidebar-bg: #efe7d9;
+  --workspace-surface: #ffffff;
+  --workspace-surface-muted: #fcfbf8;
+  --workspace-surface-accent: #f8f3ea;
+  --workspace-surface-hover: #f4eee3;
+  --workspace-text: #1b1916;
+  --workspace-text-strong: #433d35;
+  --workspace-text-muted: #5c5348;
+  --workspace-text-subtle: #6a6257;
+  --workspace-text-faint: #7a6e5f;
+  --workspace-border: #d8cfbf;
+  --workspace-border-soft: #ddd2c0;
+  --workspace-border-subtle: #ebe2d2;
+  --workspace-border-hover: #bcae96;
+  --workspace-border-control: #c9bda8;
+  --workspace-accent: #8a6c2d;
+  --workspace-brand: #1f4a45;
+  --workspace-brand-hover: #163733;
+  --workspace-danger: #c95e4b;
+  --workspace-inverse-text: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #161513;
+    --foreground: #ece7dc;
+    --workspace-bg: #161513;
+    --workspace-sidebar-bg: #1e1b17;
+    --workspace-surface: #221f1a;
+    --workspace-surface-muted: #2a261f;
+    --workspace-surface-accent: #2f2a22;
+    --workspace-surface-hover: #383126;
+    --workspace-text: #f4eee3;
+    --workspace-text-strong: #ece0cf;
+    --workspace-text-muted: #d3c5b1;
+    --workspace-text-subtle: #b8ab98;
+    --workspace-text-faint: #a99982;
+    --workspace-border: #4b4437;
+    --workspace-border-soft: #40392f;
+    --workspace-border-subtle: #383126;
+    --workspace-border-hover: #726550;
+    --workspace-border-control: #5f5647;
+    --workspace-accent: #d3a347;
+    --workspace-brand: #73b5ad;
+    --workspace-brand-hover: #5da299;
+    --workspace-danger: #f28a76;
+    --workspace-inverse-text: #161513;
+  }
+}
+
+html {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  html {
+    color-scheme: dark;
+  }
 }
 
 @theme inline {
@@ -30,5 +89,5 @@ div::-webkit-scrollbar {
 textarea::-webkit-scrollbar-thumb,
 div::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: rgba(120, 113, 108, 0.35);
+  background: color-mix(in srgb, var(--workspace-text-faint) 35%, transparent);
 }
