@@ -173,6 +173,7 @@ export const answerWorkspaceQuestion = action({
       node: Doc<"nodes">;
       page: Doc<"pages"> | null;
       score?: number;
+      content?: string;
     }>;
     model: string;
     error: string | null;
@@ -197,6 +198,7 @@ export const answerWorkspaceQuestion = action({
       node: Doc<"nodes">;
       page: Doc<"pages"> | null;
       score?: number;
+      content?: string;
     }>;
     const sources = rawSources.filter((entry) => entry.page !== null).slice(0, 10);
 
@@ -226,6 +228,7 @@ export const answerWorkspaceQuestion = action({
           `[${index + 1}] Page: ${entry.page?.title ?? "Unknown page"}`,
           `Kind: ${entry.node.kind}`,
           `Text: ${entry.node.text || "(empty line)"}`,
+          `Context: ${entry.content?.trim() || entry.node.text || "(empty line)"}`,
         ].join("\n"),
       )
       .join("\n\n");
@@ -272,6 +275,7 @@ export const answerWorkspaceQuestion = action({
                   node: Doc<"nodes">;
                   page: Doc<"pages"> | null;
                   score?: number;
+                  content?: string;
                 } => entry !== null,
               )
           : sources.slice(0, 4);

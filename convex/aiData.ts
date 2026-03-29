@@ -42,6 +42,7 @@ export const fallbackTextSearch = internalQuery({
           score,
           node,
           page: pageMap.get(node.pageId) ?? null,
+          content: node.text,
         };
       })
       .filter((entry: { score: number }) => entry.score > 0)
@@ -58,14 +59,18 @@ export const hydrateEmbeddingMatches = internalQuery({
     embeddingIds: v.array(v.id("nodeEmbeddings")),
   },
   handler: async (ctx, args) => {
-    const embeddings = await Promise.all(
-      args.embeddingIds.map((embeddingId) => ctx.db.get(embeddingId)),
+    const embeddings = await Promise.all(args.embeddingIds.map((embeddingId) => ctx.db.get(embeddingId)));
+    const hydrated = await Promise.all(
+      embeddings
+        .filter((embedding): embedding is NonNullable<typeof embedding> => Boolean(embedding))
+        .map(async (embedding) => ({
+          embedding,
+          node: await ctx.db.get(embedding.nodeId),
+        })),
     );
-    const nodeIds = embeddings
-      .filter(Boolean)
-      .map((embedding) => embedding!.nodeId);
-    const nodes = await Promise.all(nodeIds.map((nodeId) => ctx.db.get(nodeId)));
-    const presentNodes = nodes.filter(Boolean);
+    const presentNodes = hydrated
+      .map((entry) => entry.node)
+      .filter(Boolean);
     const pages = await Promise.all(
       presentNodes.map((node) => ctx.db.get(node!.pageId)),
     );
@@ -75,11 +80,15 @@ export const hydrateEmbeddingMatches = internalQuery({
         .map((page) => [page._id, page]),
     );
 
-    return presentNodes
-      .filter((node): node is Doc<"nodes"> => Boolean(node) && !node!.archived)
-      .map((node) => ({
-        node,
-        page: pageMap.get(node.pageId) ?? null,
+    return hydrated
+      .filter(
+        (entry): entry is { embedding: NonNullable<(typeof hydrated)[number]["embedding"]>; node: Doc<"nodes"> } =>
+          Boolean(entry.node) && !entry.node!.archived,
+      )
+      .map((entry) => ({
+        node: entry.node,
+        page: pageMap.get(entry.node.pageId) ?? null,
+        content: entry.embedding.content,
       }))
       .filter((entry) => entry.page !== null);
   },

@@ -58,6 +58,7 @@ type NodeSearchResult = {
   node: Doc<"nodes">;
   page: PageDoc | null;
   score?: number;
+  content?: string;
 };
 type KnowledgeChatResponse = {
   answer: string;
@@ -203,6 +204,7 @@ function normalizeNodeSearchResults(results: unknown[]): NodeSearchResult[] {
       node?: Doc<"nodes">;
       page?: PageDoc | null;
       score?: number;
+      content?: string;
     };
 
     if (!record.node) {
@@ -213,6 +215,7 @@ function normalizeNodeSearchResults(results: unknown[]): NodeSearchResult[] {
       node: record.node,
       page: record.page ?? null,
       score: record.score,
+      content: record.content,
     };
   });
 
@@ -1821,6 +1824,11 @@ function ConfiguredWorkspace({
                                 {result.page?.title ?? "Unknown page"}
                                 {result.page ? ` • ${pageInfo.sidebarSection}` : ""}
                               </span>
+                              {result.content && result.content.trim() !== result.node.text.trim() ? (
+                                <span className="mt-2 block whitespace-pre-wrap text-xs leading-6 text-[var(--workspace-text-subtle)]">
+                                  {result.content}
+                                </span>
+                              ) : null}
                             </button>
                           );
                         })
