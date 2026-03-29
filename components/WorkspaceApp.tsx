@@ -54,6 +54,7 @@ type SidebarGroupKey = SidebarSection | typeof ARCHIVE_SECTION_LABEL;
 type PageType = "default" | "model" | "journal";
 type PageDoc = Doc<"pages">;
 type PaletteMode = "pages" | "nodes" | "chat";
+const PALETTE_MODE_ORDER: PaletteMode[] = ["pages", "nodes", "chat"];
 type NodeSearchResult = {
   node: Doc<"nodes">;
   page: PageDoc | null;
@@ -1169,6 +1170,23 @@ function ConfiguredWorkspace({
   };
 
   const handlePaletteKeyDown = (event: TextareaKeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      const currentIndex = PALETTE_MODE_ORDER.indexOf(paletteMode);
+      const direction = event.key === "ArrowRight" ? 1 : -1;
+      const nextIndex =
+        (currentIndex + direction + PALETTE_MODE_ORDER.length) % PALETTE_MODE_ORDER.length;
+      const nextMode = PALETTE_MODE_ORDER[nextIndex] ?? "pages";
+
+      setPaletteMode(nextMode);
+      setPaletteQuery("");
+      setPaletteHighlightIndex(0);
+      setNodeSearchResults([]);
+      setKnowledgeChatResponse(null);
+      setIsKnowledgeChatLoading(false);
+      return;
+    }
+
     if (paletteMode === "chat" && event.key === "Enter") {
       event.preventDefault();
       void handleKnowledgeChat();
