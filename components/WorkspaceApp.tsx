@@ -55,6 +55,7 @@ const OWNER_KEY_STORAGE_KEY = "maleshflow-owner-key";
 const OWNER_KEY_EVENT = "maleshflow-owner-key-change";
 const LAST_PAGE_STORAGE_KEY = "maleshflow-last-page-id";
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "maleshflow-sidebar-collapsed";
+const COLLAPSED_NODES_STORAGE_KEY = "maleshflow-collapsed-node-ids";
 const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
@@ -432,8 +433,13 @@ function isTextEntryElement(target: EventTarget | null) {
   );
 }
 
-function flattenTreeNodes(nodes: TreeNode[]): TreeNode[] {
-  return nodes.flatMap((node) => [node, ...flattenTreeNodes(node.children)]);
+function flattenTreeNodes(nodes: TreeNode[], collapsedNodeIds?: Set<string>): TreeNode[] {
+  return nodes.flatMap((node) => [
+    node,
+    ...(collapsedNodeIds?.has(node._id)
+      ? []
+      : flattenTreeNodes(node.children, collapsedNodeIds)),
+  ]);
 }
 
 function getNodeMeta(node: Doc<"nodes"> | TreeNode | null | undefined) {
@@ -838,6 +844,22 @@ function findRevealTargetElement(
   return null;
 }
 
+function getAncestorNodeIds(
+  targetNodeId: string,
+  nodeMap: Map<string, Doc<"nodes">>,
+) {
+  const ancestorNodeIds: string[] = [];
+  let currentNode = nodeMap.get(targetNodeId) ?? null;
+
+  while (currentNode?.parentNodeId) {
+    const parentNodeId = currentNode.parentNodeId as string;
+    ancestorNodeIds.push(parentNodeId);
+    currentNode = nodeMap.get(parentNodeId) ?? null;
+  }
+
+  return ancestorNodeIds;
+}
+
 function parseNodeDraft(draft: string) {
   const trimmed = draft.trim();
 
@@ -1127,6 +1149,7 @@ function ConfiguredWorkspace({
   const [activeDraggedNodePayload, setActiveDraggedNodePayload] = useState<DraggedNodePayload | null>(null);
   const [pendingRevealNodeId, setPendingRevealNodeId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+  const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [showSidebarDiagnostics, setShowSidebarDiagnostics] = useState(false);
   const [sidebarBootstrapError, setSidebarBootstrapError] = useState<string>("");
@@ -1196,6 +1219,18 @@ function ConfiguredWorkspace({
   const selectSingleNode = useCallback((nodeId: string) => {
     setSelectedNodeIds(new Set([nodeId]));
     setDragSelection(null);
+  }, []);
+
+  const toggleNodeCollapsed = useCallback((nodeId: string) => {
+    setCollapsedNodeIds((current) => {
+      const next = new Set(current);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
+      return next;
+    });
   }, []);
 
   const switchPaletteMode = useCallback((mode: PaletteMode) => {
@@ -1290,11 +1325,11 @@ function ConfiguredWorkspace({
   );
   const pageVisibleRows =
     pageMeta.pageType === "model"
-      ? flattenTreeNodes([...modelVisibleRoots, ...genericRoots])
+      ? flattenTreeNodes([...modelVisibleRoots, ...genericRoots], collapsedNodeIds)
       : pageMeta.pageType === "journal"
-        ? flattenTreeNodes([...journalVisibleRoots, ...genericRoots])
-        : flattenTreeNodes(genericRoots);
-  const sidebarVisibleRows = flattenTreeNodes(sidebarNodes);
+        ? flattenTreeNodes([...journalVisibleRoots, ...genericRoots], collapsedNodeIds)
+        : flattenTreeNodes(genericRoots, collapsedNodeIds);
+  const sidebarVisibleRows = flattenTreeNodes(sidebarNodes, collapsedNodeIds);
   const visibleNodeOrder = [...sidebarVisibleRows, ...pageVisibleRows].map((node) => node._id);
   const uncategorizedPages =
     (pages ?? []).filter((page) => !page.archived && !sidebarLinkedPageIds.has(page._id as string));
@@ -1371,6 +1406,22 @@ function ConfiguredWorkspace({
     }
 
     setIsSidebarCollapsed(window.localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY) === "true");
+    try {
+      const storedCollapsedNodeIds = JSON.parse(
+        window.localStorage.getItem(COLLAPSED_NODES_STORAGE_KEY) ?? "[]",
+      );
+      if (Array.isArray(storedCollapsedNodeIds)) {
+        setCollapsedNodeIds(
+          new Set(
+            storedCollapsedNodeIds.filter(
+              (value): value is string => typeof value === "string" && value.length > 0,
+            ),
+          ),
+        );
+      }
+    } catch {
+      setCollapsedNodeIds(new Set());
+    }
   }, []);
 
   useEffect(() => {
@@ -1383,6 +1434,17 @@ function ConfiguredWorkspace({
       isSidebarCollapsed ? "true" : "false",
     );
   }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      COLLAPSED_NODES_STORAGE_KEY,
+      JSON.stringify([...collapsedNodeIds]),
+    );
+  }, [collapsedNodeIds]);
 
   useEffect(() => {
     setLocationPageId(readPageIdFromLocation());
@@ -1597,6 +1659,7 @@ function ConfiguredWorkspace({
 
     window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
     window.localStorage.removeItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
+    window.localStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
     setSelectedPageId(null);
     setLocationPageId(null);
     writePageIdToHistory(null, "replace");
@@ -1927,6 +1990,28 @@ function ConfiguredWorkspace({
   }, [paletteMode]);
 
   useEffect(() => {
+    if (!pendingRevealNodeId || !activePageTree) {
+      return;
+    }
+
+    const pageNodeMap = new Map(
+      activePageTree.nodes.map((node) => [node._id as string, node]),
+    );
+    const ancestorNodeIds = getAncestorNodeIds(pendingRevealNodeId, pageNodeMap);
+    if (!ancestorNodeIds.some((ancestorNodeId) => collapsedNodeIds.has(ancestorNodeId))) {
+      return;
+    }
+
+    setCollapsedNodeIds((current) => {
+      const next = new Set(current);
+      for (const ancestorNodeId of ancestorNodeIds) {
+        next.delete(ancestorNodeId);
+      }
+      return next;
+    });
+  }, [activePageTree, collapsedNodeIds, pendingRevealNodeId]);
+
+  useEffect(() => {
     if (
       !pendingRevealNodeId ||
       !selectedPageId ||
@@ -1976,7 +2061,7 @@ function ConfiguredWorkspace({
         window.clearTimeout(timeoutId);
       }
     };
-  }, [activePageTree, pendingRevealNodeId, selectedPageId]);
+  }, [activePageTree, collapsedNodeIds, pendingRevealNodeId, selectedPageId]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -2614,7 +2699,9 @@ function ConfiguredWorkspace({
                       replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={false}
+                      collapsedNodeIds={collapsedNodeIds}
                       selectedNodeIds={selectedNodeIds}
+                      onToggleNodeCollapsed={toggleNodeCollapsed}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
                       pendingInsertedComposer={pendingInsertedComposer}
@@ -2959,7 +3046,9 @@ function ConfiguredWorkspace({
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
+                      collapsedNodeIds={collapsedNodeIds}
                       selectedNodeIds={selectedNodeIds}
+                      onToggleNodeCollapsed={toggleNodeCollapsed}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
                       pendingInsertedComposer={pendingInsertedComposer}
@@ -2992,7 +3081,9 @@ function ConfiguredWorkspace({
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
+                      collapsedNodeIds={collapsedNodeIds}
                       selectedNodeIds={selectedNodeIds}
+                      onToggleNodeCollapsed={toggleNodeCollapsed}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
                       pendingInsertedComposer={pendingInsertedComposer}
@@ -3028,7 +3119,9 @@ function ConfiguredWorkspace({
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
+                      collapsedNodeIds={collapsedNodeIds}
                       selectedNodeIds={selectedNodeIds}
+                      onToggleNodeCollapsed={toggleNodeCollapsed}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
                       pendingInsertedComposer={pendingInsertedComposer}
@@ -3061,7 +3154,9 @@ function ConfiguredWorkspace({
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
+                      collapsedNodeIds={collapsedNodeIds}
                       selectedNodeIds={selectedNodeIds}
+                      onToggleNodeCollapsed={toggleNodeCollapsed}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
                       pendingInsertedComposer={pendingInsertedComposer}
@@ -3106,7 +3201,9 @@ function ConfiguredWorkspace({
                       replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
+                      collapsedNodeIds={collapsedNodeIds}
                       selectedNodeIds={selectedNodeIds}
+                      onToggleNodeCollapsed={toggleNodeCollapsed}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
                       pendingInsertedComposer={pendingInsertedComposer}
@@ -3481,7 +3578,9 @@ function PageSection({
   replaceNodeAndInsertSiblings,
   setNodeTreeArchived,
   isPageReadOnly,
+  collapsedNodeIds,
   selectedNodeIds,
+  onToggleNodeCollapsed,
   onSelectSingleNode,
   onSelectNodeRange,
   pendingInsertedComposer,
@@ -3513,7 +3612,9 @@ function PageSection({
   replaceNodeAndInsertSiblings: ReplaceNodeAndInsertSiblingsMutation;
   setNodeTreeArchived: SetNodeTreeArchivedMutation;
   isPageReadOnly: boolean;
+  collapsedNodeIds: Set<string>;
   selectedNodeIds: Set<string>;
+  onToggleNodeCollapsed: (nodeId: string) => void;
   onSelectSingleNode: (nodeId: string) => void;
   onSelectNodeRange: (anchorNodeId: string, currentNodeId: string) => void;
   pendingInsertedComposer: PendingInsertedComposer | null;
@@ -3572,7 +3673,9 @@ function PageSection({
           setNodeTreeArchived={setNodeTreeArchived}
           depth={depthOffset}
           isPageReadOnly={isPageReadOnly}
+          collapsedNodeIds={collapsedNodeIds}
           selectedNodeIds={selectedNodeIds}
+          onToggleNodeCollapsed={onToggleNodeCollapsed}
           onSelectSingleNode={onSelectSingleNode}
           onSelectNodeRange={onSelectNodeRange}
           pendingInsertedComposer={pendingInsertedComposer}
@@ -3618,7 +3721,9 @@ function OutlineNodeList({
   depth = 0,
   parentNodeId = null,
   isPageReadOnly,
+  collapsedNodeIds,
   selectedNodeIds,
+  onToggleNodeCollapsed,
   onSelectSingleNode,
   onSelectNodeRange,
   pendingInsertedComposer,
@@ -3648,7 +3753,9 @@ function OutlineNodeList({
   depth?: number;
   parentNodeId?: Id<"nodes"> | null;
   isPageReadOnly: boolean;
+  collapsedNodeIds: Set<string>;
   selectedNodeIds: Set<string>;
+  onToggleNodeCollapsed: (nodeId: string) => void;
   onSelectSingleNode: (nodeId: string) => void;
   onSelectNodeRange: (anchorNodeId: string, currentNodeId: string) => void;
   pendingInsertedComposer: PendingInsertedComposer | null;
@@ -3690,8 +3797,10 @@ function OutlineNodeList({
           siblingIndex={index}
           depth={depth}
           isPageReadOnly={isPageReadOnly}
+          collapsedNodeIds={collapsedNodeIds}
           isSelected={isNodeWithinSelectedSubtree(node._id, selectedNodeIds, nodeMap)}
           selectedNodeIds={selectedNodeIds}
+          onToggleNodeCollapsed={onToggleNodeCollapsed}
           onSelectSingleNode={onSelectSingleNode}
           onSelectNodeRange={onSelectNodeRange}
         pendingInsertedComposer={pendingInsertedComposer}
@@ -3884,8 +3993,10 @@ function OutlineNodeEditor({
   setNodeTreeArchived,
   depth = 0,
   isPageReadOnly,
+  collapsedNodeIds,
   isSelected,
   selectedNodeIds,
+  onToggleNodeCollapsed,
   onSelectSingleNode,
   onSelectNodeRange,
   pendingInsertedComposer,
@@ -3918,8 +4029,10 @@ function OutlineNodeEditor({
   setNodeTreeArchived: SetNodeTreeArchivedMutation;
   depth?: number;
   isPageReadOnly: boolean;
+  collapsedNodeIds: Set<string>;
   isSelected: boolean;
   selectedNodeIds: Set<string>;
+  onToggleNodeCollapsed: (nodeId: string) => void;
   onSelectSingleNode: (nodeId: string) => void;
   onSelectNodeRange: (anchorNodeId: string, currentNodeId: string) => void;
   pendingInsertedComposer: PendingInsertedComposer | null;
@@ -4032,6 +4145,8 @@ function OutlineNodeEditor({
   const pendingSiblingComposerFocusToken =
     pendingSiblingComposerVisible ? pendingInsertedComposer?.focusToken ?? 0 : 0;
   const isDraggingAnotherNode = activeDraggedNodeId !== null && activeDraggedNodeId !== node._id;
+  const hasChildren = node.children.length > 0;
+  const isCollapsed = hasChildren && collapsedNodeIds.has(node._id);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -4115,6 +4230,24 @@ function OutlineNodeEditor({
       currentNode = nodeMap.get(currentNode.parentNodeId as string);
     }
     return false;
+  };
+
+  const handleToggleCollapsed = () => {
+    if (!hasChildren) {
+      return;
+    }
+
+    if (
+      !isCollapsed &&
+      [...selectedNodeIds].some(
+        (selectedNodeId) =>
+          selectedNodeId !== node._id && isDescendantOfNode(selectedNodeId, node._id),
+      )
+    ) {
+      onSelectSingleNode(node._id);
+    }
+
+    onToggleNodeCollapsed(node._id);
   };
 
   const getDropTargetFromEvent = (
@@ -4989,6 +5122,28 @@ function OutlineNodeEditor({
         <div className="flex min-h-8 items-center gap-2">
           <button
             type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={handleToggleCollapsed}
+            disabled={!hasChildren}
+            aria-label={isCollapsed ? "Expand nested items" : "Collapse nested items"}
+            className={clsx(
+              "flex h-8 w-4 flex-none items-center justify-center text-[11px] transition",
+              hasChildren
+                ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text)]"
+                : "cursor-default text-transparent",
+            )}
+          >
+            <span
+              className={clsx(
+                "inline-block transition-transform",
+                isCollapsed ? "rotate-0" : "rotate-90",
+              )}
+            >
+              ▸
+            </span>
+          </button>
+          <button
+            type="button"
             data-selection-gutter="true"
             aria-label="Drag line"
             draggable={!isDisabled}
@@ -5126,37 +5281,41 @@ function OutlineNodeEditor({
           </div>
         </div>
       </div>
-      <OutlineNodeList
-        nodes={node.children}
-        ownerKey={ownerKey}
-        pageId={pageId}
-        parentNodeId={node._id as Id<"nodes">}
-        nodeMap={nodeMap}
-        createNodesBatch={createNodesBatch}
-        updateNode={updateNode}
-        moveNode={moveNode}
-        splitNode={splitNode}
-        replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
-        setNodeTreeArchived={setNodeTreeArchived}
-        depth={depth + 1}
-        isPageReadOnly={isPageReadOnly}
-        selectedNodeIds={selectedNodeIds}
-        onSelectSingleNode={onSelectSingleNode}
-        onSelectNodeRange={onSelectNodeRange}
-        pendingInsertedComposer={pendingInsertedComposer}
-        onOpenInsertedComposer={onOpenInsertedComposer}
-        onClearInsertedComposer={onClearInsertedComposer}
-        onBeginTextEditing={onBeginTextEditing}
-        activeDraggedNodeId={activeDraggedNodeId}
-        activeDraggedNodePayload={activeDraggedNodePayload}
-        onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
-        onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
-        onSelectionStart={onSelectionStart}
-        onSelectionExtend={onSelectionExtend}
-        pagesByTitle={pagesByTitle}
-        onOpenPage={onOpenPage}
-        onOpenNode={onOpenNode}
-      />
+      {!isCollapsed ? (
+        <OutlineNodeList
+          nodes={node.children}
+          ownerKey={ownerKey}
+          pageId={pageId}
+          parentNodeId={node._id as Id<"nodes">}
+          nodeMap={nodeMap}
+          createNodesBatch={createNodesBatch}
+          updateNode={updateNode}
+          moveNode={moveNode}
+          splitNode={splitNode}
+          replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+          setNodeTreeArchived={setNodeTreeArchived}
+          depth={depth + 1}
+          isPageReadOnly={isPageReadOnly}
+          collapsedNodeIds={collapsedNodeIds}
+          selectedNodeIds={selectedNodeIds}
+          onToggleNodeCollapsed={onToggleNodeCollapsed}
+          onSelectSingleNode={onSelectSingleNode}
+          onSelectNodeRange={onSelectNodeRange}
+          pendingInsertedComposer={pendingInsertedComposer}
+          onOpenInsertedComposer={onOpenInsertedComposer}
+          onClearInsertedComposer={onClearInsertedComposer}
+          onBeginTextEditing={onBeginTextEditing}
+          activeDraggedNodeId={activeDraggedNodeId}
+          activeDraggedNodePayload={activeDraggedNodePayload}
+          onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
+          onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
+          onSelectionStart={onSelectionStart}
+          onSelectionExtend={onSelectionExtend}
+          pagesByTitle={pagesByTitle}
+          onOpenPage={onOpenPage}
+          onOpenNode={onOpenNode}
+        />
+      ) : null}
       {pendingSiblingComposerVisible ? (
         <InlineComposer
           ownerKey={ownerKey}
