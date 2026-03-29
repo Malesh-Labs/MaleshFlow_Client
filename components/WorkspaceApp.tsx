@@ -2092,6 +2092,7 @@ function OutlineNodeEditor({
 }) {
   const history = useWorkspaceHistory();
   const [draft, setDraft] = useState(node.text);
+  const [isFocused, setIsFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRef = useRef(draft);
 
@@ -2112,6 +2113,8 @@ function OutlineNodeEditor({
     previousSibling?._id
       ? getNodeEditorId(previousSibling._id as Id<"nodes">)
       : getComposerEditorId(pageId, parentNodeId);
+  const isVisualEmptyLine = draft.trim() === ".";
+  const shouldRevealVisualEmptyLine = isFocused || isSelected;
 
   useEffect(() => {
     draftRef.current = draft;
@@ -2660,7 +2663,7 @@ function OutlineNodeEditor({
             |
           </button>
           <div className="flex h-6 w-5 flex-none items-center justify-center text-[var(--workspace-accent)]">
-            {isLocked ? null : node.kind === "task" ? (
+            {isLocked || (isVisualEmptyLine && !shouldRevealVisualEmptyLine) ? null : node.kind === "task" ? (
               <button
                 type="button"
                 onMouseDown={(event) => event.preventDefault()}
@@ -2688,7 +2691,9 @@ function OutlineNodeEditor({
                 setDraft(event.target.value);
                 history.updateDraftValue(editorId, editorTarget, event.target.value);
               }}
+              onFocus={() => setIsFocused(true)}
               onBlur={() => void handleSave()}
+              onBlurCapture={() => setIsFocused(false)}
               onPaste={(event) => void handlePaste(event)}
               onKeyDown={(event) => void handleKeyDown(event)}
               placeholder="Write a line…"
@@ -2697,6 +2702,7 @@ function OutlineNodeEditor({
               className={clsx(
                 "w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-0.5 text-[15px] leading-6 outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]",
                 node.taskStatus === "done" ? "text-[var(--workspace-text-faint)] line-through" : "",
+                isVisualEmptyLine && !shouldRevealVisualEmptyLine ? "text-transparent" : "",
               )}
             />
           </div>
