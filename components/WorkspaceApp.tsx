@@ -2457,7 +2457,29 @@ function ConfiguredWorkspace({
 
   return (
     <WorkspaceHistoryProvider value={history}>
-      <main className="min-h-screen bg-[var(--workspace-bg)] text-[var(--workspace-text)]">
+      <main className="relative min-h-screen bg-[var(--workspace-bg)] text-[var(--workspace-text)]">
+      <div className="pointer-events-none fixed right-4 top-4 z-40 md:right-6 md:top-6">
+        <div className="pointer-events-auto flex items-center gap-2 border border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface)_88%,transparent)] px-2 py-2 shadow-[0_18px_40px_-28px_rgba(0,0,0,0.5)] backdrop-blur-sm">
+          <button
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => void history.undo()}
+            disabled={!history.canUndo || history.isApplyingHistory}
+            className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Undo
+          </button>
+          <button
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => void history.redo()}
+            disabled={!history.canRedo || history.isApplyingHistory}
+            className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            Redo
+          </button>
+        </div>
+      </div>
       <div
         className={clsx(
           "mx-auto grid min-h-screen max-w-[1600px] grid-cols-1",
@@ -2876,26 +2898,6 @@ function ConfiguredWorkspace({
                       disabled={isPageArchived}
                       className="mt-4 w-full border-0 bg-transparent p-0 text-4xl font-semibold tracking-tight outline-none disabled:text-[var(--workspace-text-muted)]"
                     />
-                  </div>
-                  <div className="flex items-center gap-2 pt-1">
-                    <button
-                      type="button"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => void history.undo()}
-                      disabled={!history.canUndo || history.isApplyingHistory || isPageArchived}
-                      className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Undo
-                    </button>
-                    <button
-                      type="button"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => void history.redo()}
-                      disabled={!history.canRedo || history.isApplyingHistory || isPageArchived}
-                      className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Redo
-                    </button>
                   </div>
                 </div>
                 <div className="mt-6 h-px bg-[var(--workspace-border-subtle)]" />
