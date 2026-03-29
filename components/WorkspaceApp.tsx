@@ -3,12 +3,14 @@
 import clsx from "clsx";
 import { useAction, useMutation, useQuery } from "convex/react";
 import {
+  Component,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
+  type ErrorInfo,
   type FormEvent,
   type ReactNode,
   type KeyboardEvent as TextareaKeyboardEvent,
@@ -145,6 +147,18 @@ type SetNodeTreeArchivedMutation = ReturnType<
   typeof useMutation<typeof api.workspace.setNodeTreeArchived>
 >;
 
+type WorkspaceErrorBoundaryProps = {
+  ownerKey: string;
+  onLockWorkspace: () => void;
+  children: ReactNode;
+};
+
+type WorkspaceErrorBoundaryState = {
+  error: Error | null;
+  componentStack: string;
+  resetKey: number;
+};
+
 type SectionSlot =
   | "model"
   | "recentExamples"
@@ -218,6 +232,131 @@ function toTreeNodes(nodes: Doc<"nodes">[]) {
       parentNodeId: node.parentNodeId ? (node.parentNodeId as string) : null,
     })),
   ) as TreeNode[];
+}
+
+class WorkspaceErrorBoundary extends Component<
+  WorkspaceErrorBoundaryProps,
+  WorkspaceErrorBoundaryState
+> {
+  state: WorkspaceErrorBoundaryState = {
+    error: null,
+    componentStack: "",
+    resetKey: 0,
+  };
+
+  static getDerivedStateFromError(error: Error): Partial<WorkspaceErrorBoundaryState> {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("Workspace render failed", error, errorInfo);
+    this.setState({
+      error,
+      componentStack: errorInfo.componentStack ?? "",
+    });
+  }
+
+  componentDidUpdate(prevProps: WorkspaceErrorBoundaryProps) {
+    if (prevProps.ownerKey !== this.props.ownerKey && this.state.error) {
+      this.handleReset();
+    }
+  }
+
+  handleReset = () => {
+    this.setState((currentState) => ({
+      error: null,
+      componentStack: "",
+      resetKey: currentState.resetKey + 1,
+    }));
+  };
+
+  render() {
+    if (this.state.error) {
+      return (
+        <main className="min-h-screen bg-[var(--workspace-bg)] px-6 py-8 text-[var(--workspace-text)]">
+          <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-4xl items-center">
+            <div className="w-full border border-[var(--workspace-danger)] bg-[var(--workspace-surface)] p-6 shadow-[0_24px_80px_-40px_rgba(0,0,0,0.45)]">
+              <p className="text-xs uppercase tracking-[0.22em] text-[var(--workspace-danger)]">
+                Workspace Error
+              </p>
+              <h1 className="mt-3 text-2xl font-semibold tracking-tight">
+                Something crashed while loading the workspace
+              </h1>
+              <p className="mt-3 text-sm leading-6 text-[var(--workspace-text-subtle)]">
+                The real error is surfaced below so we can debug it quickly.
+              </p>
+
+              <div className="mt-5 space-y-4">
+                <div className="border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] p-4">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-subtle)]">
+                    Message
+                  </p>
+                  <pre className="mt-2 whitespace-pre-wrap break-words font-mono text-sm leading-6 text-[var(--workspace-text)]">
+                    {this.state.error.message || String(this.state.error)}
+                  </pre>
+                </div>
+
+                {this.state.error.stack ? (
+                  <div className="border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] p-4">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-subtle)]">
+                      Stack
+                    </p>
+                    <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 text-[var(--workspace-text-subtle)]">
+                      {this.state.error.stack}
+                    </pre>
+                  </div>
+                ) : null}
+
+                {this.state.componentStack ? (
+                  <div className="border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] p-4">
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-subtle)]">
+                      Component Stack
+                    </p>
+                    <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-xs leading-5 text-[var(--workspace-text-subtle)]">
+                      {this.state.componentStack.trim()}
+                    </pre>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="mt-6 flex flex-wrap gap-3">
+                <button
+                  type="button"
+                  onClick={this.handleReset}
+                  className="border border-[var(--workspace-border)] px-4 py-2 text-sm transition hover:bg-[var(--workspace-surface-muted)]"
+                >
+                  Try again
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    this.handleReset();
+                    this.props.onLockWorkspace();
+                  }}
+                  className="border border-[var(--workspace-border)] px-4 py-2 text-sm transition hover:bg-[var(--workspace-surface-muted)]"
+                >
+                  Lock workspace
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof window !== "undefined") {
+                      window.location.reload();
+                    }
+                  }}
+                  className="bg-[var(--workspace-brand)] px-4 py-2 text-sm font-medium text-[var(--workspace-inverse-text)] transition hover:bg-[var(--workspace-brand-hover)]"
+                >
+                  Reload page
+                </button>
+              </div>
+            </div>
+          </div>
+        </main>
+      );
+    }
+
+    return <div key={this.state.resetKey}>{this.props.children}</div>;
+  }
 }
 
 function getPageMeta(page: Doc<"pages"> | null | undefined) {
@@ -778,7 +917,14 @@ export default function WorkspaceApp() {
     );
   }
 
-  return <ConfiguredWorkspace ownerKey={ownerKey} setOwnerKey={setOwnerKey} />;
+  return (
+    <WorkspaceErrorBoundary
+      ownerKey={ownerKey}
+      onLockWorkspace={() => setOwnerKey("")}
+    >
+      <ConfiguredWorkspace ownerKey={ownerKey} setOwnerKey={setOwnerKey} />
+    </WorkspaceErrorBoundary>
+  );
 }
 
 function ConfiguredWorkspace({
