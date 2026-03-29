@@ -1372,6 +1372,27 @@ function ConfiguredWorkspace({
     }
   };
 
+  const handleResetLocalState = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Clear the saved browser state for this app on this device and reload?",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
+    window.localStorage.removeItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
+    setSelectedPageId(null);
+    setLocationPageId(null);
+    writePageIdToHistory(null, "replace");
+    setOwnerKey("");
+    window.location.reload();
+  }, [setOwnerKey]);
+
   useEffect(() => {
     if (!dragSelection) {
       return;
@@ -2368,6 +2389,16 @@ function ConfiguredWorkspace({
                   ) : null}
                   <p className="text-xs leading-5 text-[var(--workspace-text-faint)]">
                     {embeddingProgressLabel}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleResetLocalState}
+                    className="w-full border border-[var(--workspace-border-control)] px-3 py-2 text-left text-xs font-medium uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                  >
+                    Reset Local State
+                  </button>
+                  <p className="text-xs leading-5 text-[var(--workspace-text-faint)]">
+                    Clears saved browser state for this site and reloads.
                   </p>
                   <button
                     type="button"
