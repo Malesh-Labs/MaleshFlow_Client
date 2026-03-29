@@ -49,6 +49,7 @@ const OWNER_KEY_STORAGE_KEY = "maleshflow-owner-key";
 const OWNER_KEY_EVENT = "maleshflow-owner-key-change";
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
+type SidebarGroupKey = SidebarSection | typeof ARCHIVE_SECTION_LABEL;
 type PageType = "default" | "model" | "journal";
 type PageDoc = Doc<"pages">;
 type PaletteMode = "pages" | "nodes";
@@ -502,6 +503,9 @@ function ConfiguredWorkspace({
   const [isNodeSearchLoading, setIsNodeSearchLoading] = useState(false);
   const [pendingRevealNodeId, setPendingRevealNodeId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
+  const [collapsedSidebarSections, setCollapsedSidebarSections] = useState<Set<SidebarGroupKey>>(
+    () => new Set(),
+  );
   const [dragSelection, setDragSelection] = useState<{
     anchorNodeId: string;
     currentNodeId: string;
@@ -544,6 +548,18 @@ function ConfiguredWorkspace({
   const clearNodeSelection = useCallback(() => {
     setSelectedNodeIds(new Set());
     setDragSelection(null);
+  }, []);
+
+  const toggleSidebarSection = useCallback((section: SidebarGroupKey) => {
+    setCollapsedSidebarSections((current) => {
+      const next = new Set(current);
+      if (next.has(section)) {
+        next.delete(section);
+      } else {
+        next.add(section);
+      }
+      return next;
+    });
   }, []);
 
   const openPalette = useCallback((mode: PaletteMode) => {
@@ -1119,66 +1135,86 @@ function ConfiguredWorkspace({
                 key={section}
                 className="border-t border-[#ddd2c0] pt-6 first:border-t-0 first:pt-0"
               >
-                <h2 className="text-sm font-semibold uppercase tracking-[0.22em] text-[#7a6e5f]">
-                  {section}
-                </h2>
-                <div className="mt-3 space-y-2">
-                  {sectionPages.map((page) => (
-                    <button
-                      key={page._id}
-                      type="button"
-                      onClick={() => handleSelectPage(page._id)}
-                      className={clsx(
-                        "block w-full border-l-2 px-3 py-2 text-left text-sm transition",
-                        selectedPageId === page._id
-                          ? "border-[#1f4a45] bg-[#f8f3ea] text-[#1f4a45]"
-                          : "border-transparent text-[#433d35] hover:border-[#bcae96] hover:bg-[#f8f3ea]",
-                      )}
-                    >
-                      {page.title}
-                    </button>
-                  ))}
-                </div>
                 <button
                   type="button"
-                  onClick={() => void handleCreatePage(section)}
-                  disabled={isCreatingPage === section}
-                  className="mt-3 w-full border border-dashed border-[#bcae96] px-3 py-2 text-left text-sm font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:bg-[#f8f3ea] disabled:cursor-wait disabled:opacity-60"
+                  onClick={() => toggleSidebarSection(section)}
+                  className="flex w-full items-center justify-between text-left text-sm font-semibold uppercase tracking-[0.22em] text-[#7a6e5f]"
                 >
-                  {isCreatingPage === section ? "Creating page…" : `New ${section.slice(0, -1)}`}
+                  <span>{section}</span>
+                  <span className="text-xs text-[#8a6c2d]">
+                    {collapsedSidebarSections.has(section) ? "+" : "-"}
+                  </span>
                 </button>
+                {!collapsedSidebarSections.has(section) ? (
+                  <>
+                    <div className="mt-3 space-y-2">
+                      {sectionPages.map((page) => (
+                        <button
+                          key={page._id}
+                          type="button"
+                          onClick={() => handleSelectPage(page._id)}
+                          className={clsx(
+                            "block w-full border-l-2 px-3 py-2 text-left text-sm transition",
+                            selectedPageId === page._id
+                              ? "border-[#1f4a45] bg-[#f8f3ea] text-[#1f4a45]"
+                              : "border-transparent text-[#433d35] hover:border-[#bcae96] hover:bg-[#f8f3ea]",
+                          )}
+                        >
+                          {page.title}
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleCreatePage(section)}
+                      disabled={isCreatingPage === section}
+                      className="mt-3 w-full border border-dashed border-[#bcae96] px-3 py-2 text-left text-sm font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:bg-[#f8f3ea] disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {isCreatingPage === section ? "Creating page…" : `New ${section.slice(0, -1)}`}
+                    </button>
+                  </>
+                ) : null}
               </section>
             ))}
             <section className="border-t border-[#ddd2c0] pt-6">
-              <h2 className="text-sm font-semibold uppercase tracking-[0.22em] text-[#7a6e5f]">
-                {ARCHIVE_SECTION_LABEL}
-              </h2>
-              <div className="mt-3 space-y-2">
-                {archivedPages.length === 0 ? (
-                  <p className="px-3 py-2 text-sm text-[#7a6e5f]">
-                    No archived pages
-                  </p>
-                ) : (
-                  archivedPages.map((page) => (
-                    <button
-                      key={page._id}
-                      type="button"
-                      onClick={() => handleSelectPage(page._id)}
-                      className={clsx(
-                        "block w-full border-l-2 px-3 py-2 text-left text-sm transition",
-                        selectedPageId === page._id
-                          ? "border-[#1f4a45] bg-[#f8f3ea] text-[#1f4a45]"
-                          : "border-transparent text-[#433d35] hover:border-[#bcae96] hover:bg-[#f8f3ea]",
-                      )}
-                    >
-                      <span>{page.title}</span>
-                      <span className="ml-2 text-[11px] uppercase tracking-[0.18em] text-[#8a6c2d]">
-                        Archived
-                      </span>
-                    </button>
-                  ))
-                )}
-              </div>
+              <button
+                type="button"
+                onClick={() => toggleSidebarSection(ARCHIVE_SECTION_LABEL)}
+                className="flex w-full items-center justify-between text-left text-sm font-semibold uppercase tracking-[0.22em] text-[#7a6e5f]"
+              >
+                <span>{ARCHIVE_SECTION_LABEL}</span>
+                <span className="text-xs text-[#8a6c2d]">
+                  {collapsedSidebarSections.has(ARCHIVE_SECTION_LABEL) ? "+" : "-"}
+                </span>
+              </button>
+              {!collapsedSidebarSections.has(ARCHIVE_SECTION_LABEL) ? (
+                <div className="mt-3 space-y-2">
+                  {archivedPages.length === 0 ? (
+                    <p className="px-3 py-2 text-sm text-[#7a6e5f]">
+                      No archived pages
+                    </p>
+                  ) : (
+                    archivedPages.map((page) => (
+                      <button
+                        key={page._id}
+                        type="button"
+                        onClick={() => handleSelectPage(page._id)}
+                        className={clsx(
+                          "block w-full border-l-2 px-3 py-2 text-left text-sm transition",
+                          selectedPageId === page._id
+                            ? "border-[#1f4a45] bg-[#f8f3ea] text-[#1f4a45]"
+                            : "border-transparent text-[#433d35] hover:border-[#bcae96] hover:bg-[#f8f3ea]",
+                        )}
+                      >
+                        <span>{page.title}</span>
+                        <span className="ml-2 text-[11px] uppercase tracking-[0.18em] text-[#8a6c2d]">
+                          Archived
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              ) : null}
             </section>
           </div>
         </aside>
