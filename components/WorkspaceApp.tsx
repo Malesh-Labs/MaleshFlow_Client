@@ -427,33 +427,6 @@ function isTextEntryElement(target: EventTarget | null) {
   );
 }
 
-function parseDraggedNodePayload(rawValue: string | null | undefined) {
-  if (!rawValue) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(rawValue) as Partial<DraggedNodePayload>;
-    if (
-      typeof parsed.nodeId !== "string" ||
-      typeof parsed.pageId !== "string" ||
-      (parsed.parentNodeId !== null && typeof parsed.parentNodeId !== "string") ||
-      (parsed.previousSiblingId !== null && typeof parsed.previousSiblingId !== "string")
-    ) {
-      return null;
-    }
-
-    return {
-      nodeId: parsed.nodeId,
-      pageId: parsed.pageId,
-      parentNodeId: parsed.parentNodeId ?? null,
-      previousSiblingId: parsed.previousSiblingId ?? null,
-    } satisfies DraggedNodePayload;
-  } catch {
-    return null;
-  }
-}
-
 function flattenTreeNodes(nodes: TreeNode[]): TreeNode[] {
   return nodes.flatMap((node) => [node, ...flattenTreeNodes(node.children)]);
 }
@@ -1040,6 +1013,7 @@ function ConfiguredWorkspace({
   );
   const [isKnowledgeChatLoading, setIsKnowledgeChatLoading] = useState(false);
   const [activeDraggedNodeId, setActiveDraggedNodeId] = useState<string | null>(null);
+  const [activeDraggedNodePayload, setActiveDraggedNodePayload] = useState<DraggedNodePayload | null>(null);
   const [pendingRevealNodeId, setPendingRevealNodeId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -2280,7 +2254,9 @@ function ConfiguredWorkspace({
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
                       activeDraggedNodeId={activeDraggedNodeId}
+                      activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                      onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2626,7 +2602,9 @@ function ConfiguredWorkspace({
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
                       activeDraggedNodeId={activeDraggedNodeId}
+                      activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                      onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2656,7 +2634,9 @@ function ConfiguredWorkspace({
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
                       activeDraggedNodeId={activeDraggedNodeId}
+                      activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                      onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2689,7 +2669,9 @@ function ConfiguredWorkspace({
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
                       activeDraggedNodeId={activeDraggedNodeId}
+                      activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                      onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2719,7 +2701,9 @@ function ConfiguredWorkspace({
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
                       activeDraggedNodeId={activeDraggedNodeId}
+                      activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                      onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2761,7 +2745,9 @@ function ConfiguredWorkspace({
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
                       activeDraggedNodeId={activeDraggedNodeId}
+                      activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                      onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -3139,7 +3125,9 @@ function PageSection({
   onOpenInsertedComposer,
   onClearInsertedComposer,
   activeDraggedNodeId,
+  activeDraggedNodePayload,
   onSetActiveDraggedNodeId,
+  onSetActiveDraggedNodePayload,
   onSelectionStart,
   onSelectionExtend,
   pagesByTitle,
@@ -3172,7 +3160,9 @@ function PageSection({
   ) => void;
   onClearInsertedComposer: () => void;
   activeDraggedNodeId: string | null;
+  activeDraggedNodePayload: DraggedNodePayload | null;
   onSetActiveDraggedNodeId: (nodeId: string | null) => void;
+  onSetActiveDraggedNodePayload: (payload: DraggedNodePayload | null) => void;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
   pagesByTitle: Map<string, PageDoc>;
@@ -3217,7 +3207,9 @@ function PageSection({
           onOpenInsertedComposer={onOpenInsertedComposer}
           onClearInsertedComposer={onClearInsertedComposer}
           activeDraggedNodeId={activeDraggedNodeId}
+          activeDraggedNodePayload={activeDraggedNodePayload}
           onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
+          onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
           onSelectionStart={onSelectionStart}
           onSelectionExtend={onSelectionExtend}
           pagesByTitle={pagesByTitle}
@@ -3259,7 +3251,9 @@ function OutlineNodeList({
   onOpenInsertedComposer,
   onClearInsertedComposer,
   activeDraggedNodeId,
+  activeDraggedNodePayload,
   onSetActiveDraggedNodeId,
+  onSetActiveDraggedNodePayload,
   onSelectionStart,
   onSelectionExtend,
   pagesByTitle,
@@ -3290,7 +3284,9 @@ function OutlineNodeList({
   ) => void;
   onClearInsertedComposer: () => void;
   activeDraggedNodeId: string | null;
+  activeDraggedNodePayload: DraggedNodePayload | null;
   onSetActiveDraggedNodeId: (nodeId: string | null) => void;
+  onSetActiveDraggedNodePayload: (payload: DraggedNodePayload | null) => void;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
   pagesByTitle: Map<string, PageDoc>;
@@ -3322,14 +3318,16 @@ function OutlineNodeList({
           selectedNodeIds={selectedNodeIds}
           onSelectSingleNode={onSelectSingleNode}
           onSelectNodeRange={onSelectNodeRange}
-          pendingInsertedComposer={pendingInsertedComposer}
-          onOpenInsertedComposer={onOpenInsertedComposer}
-          onClearInsertedComposer={onClearInsertedComposer}
-          activeDraggedNodeId={activeDraggedNodeId}
-          onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
-          onSelectionStart={onSelectionStart}
-          onSelectionExtend={onSelectionExtend}
-          pagesByTitle={pagesByTitle}
+        pendingInsertedComposer={pendingInsertedComposer}
+        onOpenInsertedComposer={onOpenInsertedComposer}
+        onClearInsertedComposer={onClearInsertedComposer}
+        activeDraggedNodeId={activeDraggedNodeId}
+        activeDraggedNodePayload={activeDraggedNodePayload}
+        onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
+        onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
+        onSelectionStart={onSelectionStart}
+        onSelectionExtend={onSelectionExtend}
+        pagesByTitle={pagesByTitle}
           onOpenPage={onOpenPage}
           onOpenNode={onOpenNode}
         />
@@ -3517,7 +3515,9 @@ function OutlineNodeEditor({
   onOpenInsertedComposer,
   onClearInsertedComposer,
   activeDraggedNodeId,
+  activeDraggedNodePayload,
   onSetActiveDraggedNodeId,
+  onSetActiveDraggedNodePayload,
   onSelectionStart,
   onSelectionExtend,
   pagesByTitle,
@@ -3552,7 +3552,9 @@ function OutlineNodeEditor({
   ) => void;
   onClearInsertedComposer: () => void;
   activeDraggedNodeId: string | null;
+  activeDraggedNodePayload: DraggedNodePayload | null;
   onSetActiveDraggedNodeId: (nodeId: string | null) => void;
+  onSetActiveDraggedNodePayload: (payload: DraggedNodePayload | null) => void;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
   pagesByTitle: Map<string, PageDoc>;
@@ -3795,7 +3797,7 @@ function OutlineNodeEditor({
     const relativeY = event.clientY - bounds.top;
     const relativeX = event.clientX - bounds.left;
     const upperZone = relativeY < bounds.height * 0.35;
-    const nestingThreshold = 54 + depth * 18;
+    const nestingThreshold = 86;
     const wantsNest = !upperZone && relativeX > nestingThreshold;
 
     if (wantsNest) {
@@ -3805,7 +3807,7 @@ function OutlineNodeEditor({
         afterNodeId:
           ((node.children[node.children.length - 1]?._id as Id<"nodes"> | undefined) ?? null),
         lineSide: "bottom",
-        lineIndentOffset: 44,
+        lineIndentOffset: 56,
       };
     }
 
@@ -3816,7 +3818,7 @@ function OutlineNodeEditor({
         ? (((siblings[siblingIndex - 1]?._id as Id<"nodes"> | undefined) ?? null))
         : (node._id as Id<"nodes">),
       lineSide: upperZone ? "top" : "bottom",
-      lineIndentOffset: 26,
+      lineIndentOffset: 38,
     };
   };
 
@@ -3837,14 +3839,12 @@ function OutlineNodeEditor({
     event.dataTransfer.setData(NODE_DRAG_MIME_TYPE, JSON.stringify(payload));
     event.dataTransfer.setData("text/plain", JSON.stringify(payload));
     onSetActiveDraggedNodeId(node._id);
+    onSetActiveDraggedNodePayload(payload);
     onSelectSingleNode(node._id);
   };
 
   const handleDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
-    const payload = parseDraggedNodePayload(
-      event.dataTransfer.getData(NODE_DRAG_MIME_TYPE) ||
-        event.dataTransfer.getData("text/plain"),
-    );
+    const payload = activeDraggedNodePayload;
 
     if (
       !payload ||
@@ -3866,13 +3866,11 @@ function OutlineNodeEditor({
   };
 
   const handleDrop = async (event: ReactDragEvent<HTMLDivElement>) => {
-    const payload = parseDraggedNodePayload(
-      event.dataTransfer.getData(NODE_DRAG_MIME_TYPE) ||
-        event.dataTransfer.getData("text/plain"),
-    );
+    const payload = activeDraggedNodePayload;
     const nextDropTarget = payload ? getDropTargetFromEvent(event, payload) : null;
     setDropTarget(null);
     onSetActiveDraggedNodeId(null);
+    onSetActiveDraggedNodePayload(null);
 
     if (
       !payload ||
@@ -4551,6 +4549,7 @@ function OutlineNodeEditor({
           onSelectionStart(node._id);
         }}
         onMouseEnter={() => onSelectionExtend(node._id)}
+        onDragEnter={handleDragOver}
         onDragOver={handleDragOver}
         onDragLeave={(event) => {
           if (
@@ -4571,17 +4570,16 @@ function OutlineNodeEditor({
         )}
         style={{ marginLeft: `${depth * 18}px` }}
       >
-        {dropTarget?.lineSide === "top" ? (
+        {dropTarget ? (
           <div
-            className="pointer-events-none absolute right-0 top-0 border-t-2 border-[var(--workspace-accent)]"
+            className={clsx(
+              "pointer-events-none absolute right-0 z-20 h-0 border-t-2 border-[var(--workspace-brand)]",
+              dropTarget.lineSide === "top" ? "top-0" : "bottom-0",
+            )}
             style={{ left: `${dropTarget.lineIndentOffset}px` }}
-          />
-        ) : null}
-        {dropTarget?.lineSide === "bottom" ? (
-          <div
-            className="pointer-events-none absolute right-0 bottom-0 border-t-2 border-[var(--workspace-accent)]"
-            style={{ left: `${dropTarget.lineIndentOffset}px` }}
-          />
+          >
+            <span className="absolute -left-1.5 -top-[5px] h-2.5 w-2.5 rounded-full bg-[var(--workspace-brand)]" />
+          </div>
         ) : null}
         <div className="flex min-h-8 items-center gap-2">
           <button
@@ -4594,6 +4592,7 @@ function OutlineNodeEditor({
             onDragEnd={() => {
               setDropTarget(null);
               onSetActiveDraggedNodeId(null);
+              onSetActiveDraggedNodePayload(null);
             }}
             className={clsx(
               "flex h-8 w-5 flex-none items-center justify-center border-r transition",
@@ -4719,7 +4718,9 @@ function OutlineNodeEditor({
         onOpenInsertedComposer={onOpenInsertedComposer}
         onClearInsertedComposer={onClearInsertedComposer}
         activeDraggedNodeId={activeDraggedNodeId}
+        activeDraggedNodePayload={activeDraggedNodePayload}
         onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
+        onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
         onSelectionStart={onSelectionStart}
         onSelectionExtend={onSelectionExtend}
         pagesByTitle={pagesByTitle}
