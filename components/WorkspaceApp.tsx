@@ -121,6 +121,12 @@ type DraggedNodePayload = {
   parentNodeId: string | null;
   previousSiblingId: string | null;
 };
+type PendingInsertedComposer = {
+  pageId: string;
+  parentNodeId: string | null;
+  afterNodeId: string;
+  focusToken: number;
+};
 type UpdateNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.updateNode>>;
 type CreateNodesBatchMutation = ReturnType<typeof useMutation<typeof api.workspace.createNodesBatch>>;
 type MoveNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.moveNode>>;
@@ -774,6 +780,8 @@ function ConfiguredWorkspace({
     anchorNodeId: string;
     currentNodeId: string;
   } | null>(null);
+  const [pendingInsertedComposer, setPendingInsertedComposer] =
+    useState<PendingInsertedComposer | null>(null);
   const [locationPageId, setLocationPageId] = useState<string | null>(null);
 
   const isOwnerKeyValid = useQuery(
@@ -1073,6 +1081,7 @@ function ConfiguredWorkspace({
     setChatStatus("");
     setJournalFeedbackStatus("");
     clearNodeSelection();
+    setPendingInsertedComposer(null);
   }, [clearNodeSelection, pageTree?.page?._id, pageTree?.page?.title]);
 
   const handleRebuildEmbeddings = async () => {
@@ -1121,6 +1130,28 @@ function ConfiguredWorkspace({
     );
     setDragSelection(null);
   }, [visibleNodeOrder]);
+
+  const openInsertedComposer = useCallback(
+    (pageId: Id<"pages">, parentNodeId: Id<"nodes"> | null, afterNodeId: Id<"nodes">) => {
+      setPendingInsertedComposer((current) => ({
+        pageId,
+        parentNodeId,
+        afterNodeId,
+        focusToken:
+          current &&
+          current.pageId === pageId &&
+          current.parentNodeId === parentNodeId &&
+          current.afterNodeId === afterNodeId
+            ? current.focusToken + 1
+            : 1,
+      }));
+    },
+    [],
+  );
+
+  const clearInsertedComposer = useCallback(() => {
+    setPendingInsertedComposer(null);
+  }, []);
 
   useEffect(() => {
     const handleMouseUp = () => {
@@ -2010,6 +2041,9 @@ function ConfiguredWorkspace({
                       selectedNodeIds={selectedNodeIds}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
+                      pendingInsertedComposer={pendingInsertedComposer}
+                      onOpenInsertedComposer={openInsertedComposer}
+                      onClearInsertedComposer={clearInsertedComposer}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2035,6 +2069,9 @@ function ConfiguredWorkspace({
                       selectedNodeIds={selectedNodeIds}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
+                      pendingInsertedComposer={pendingInsertedComposer}
+                      onOpenInsertedComposer={openInsertedComposer}
+                      onClearInsertedComposer={clearInsertedComposer}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2063,6 +2100,9 @@ function ConfiguredWorkspace({
                       selectedNodeIds={selectedNodeIds}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
+                      pendingInsertedComposer={pendingInsertedComposer}
+                      onOpenInsertedComposer={openInsertedComposer}
+                      onClearInsertedComposer={clearInsertedComposer}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2088,6 +2128,9 @@ function ConfiguredWorkspace({
                       selectedNodeIds={selectedNodeIds}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
+                      pendingInsertedComposer={pendingInsertedComposer}
+                      onOpenInsertedComposer={openInsertedComposer}
+                      onClearInsertedComposer={clearInsertedComposer}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2125,6 +2168,9 @@ function ConfiguredWorkspace({
                       selectedNodeIds={selectedNodeIds}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
+                      pendingInsertedComposer={pendingInsertedComposer}
+                      onOpenInsertedComposer={openInsertedComposer}
+                      onClearInsertedComposer={clearInsertedComposer}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2502,6 +2548,9 @@ function PageSection({
   selectedNodeIds,
   onSelectSingleNode,
   onSelectNodeRange,
+  pendingInsertedComposer,
+  onOpenInsertedComposer,
+  onClearInsertedComposer,
   onSelectionStart,
   onSelectionExtend,
   pagesByTitle,
@@ -2526,6 +2575,13 @@ function PageSection({
   selectedNodeIds: Set<string>;
   onSelectSingleNode: (nodeId: string) => void;
   onSelectNodeRange: (anchorNodeId: string, currentNodeId: string) => void;
+  pendingInsertedComposer: PendingInsertedComposer | null;
+  onOpenInsertedComposer: (
+    pageId: Id<"pages">,
+    parentNodeId: Id<"nodes"> | null,
+    afterNodeId: Id<"nodes">,
+  ) => void;
+  onClearInsertedComposer: () => void;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
   pagesByTitle: Map<string, PageDoc>;
@@ -2566,6 +2622,9 @@ function PageSection({
           selectedNodeIds={selectedNodeIds}
           onSelectSingleNode={onSelectSingleNode}
           onSelectNodeRange={onSelectNodeRange}
+          pendingInsertedComposer={pendingInsertedComposer}
+          onOpenInsertedComposer={onOpenInsertedComposer}
+          onClearInsertedComposer={onClearInsertedComposer}
           onSelectionStart={onSelectionStart}
           onSelectionExtend={onSelectionExtend}
           pagesByTitle={pagesByTitle}
@@ -2603,6 +2662,9 @@ function OutlineNodeList({
   selectedNodeIds,
   onSelectSingleNode,
   onSelectNodeRange,
+  pendingInsertedComposer,
+  onOpenInsertedComposer,
+  onClearInsertedComposer,
   onSelectionStart,
   onSelectionExtend,
   pagesByTitle,
@@ -2625,6 +2687,13 @@ function OutlineNodeList({
   selectedNodeIds: Set<string>;
   onSelectSingleNode: (nodeId: string) => void;
   onSelectNodeRange: (anchorNodeId: string, currentNodeId: string) => void;
+  pendingInsertedComposer: PendingInsertedComposer | null;
+  onOpenInsertedComposer: (
+    pageId: Id<"pages">,
+    parentNodeId: Id<"nodes"> | null,
+    afterNodeId: Id<"nodes">,
+  ) => void;
+  onClearInsertedComposer: () => void;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
   pagesByTitle: Map<string, PageDoc>;
@@ -2656,6 +2725,9 @@ function OutlineNodeList({
           selectedNodeIds={selectedNodeIds}
           onSelectSingleNode={onSelectSingleNode}
           onSelectNodeRange={onSelectNodeRange}
+          pendingInsertedComposer={pendingInsertedComposer}
+          onOpenInsertedComposer={onOpenInsertedComposer}
+          onClearInsertedComposer={onClearInsertedComposer}
           onSelectionStart={onSelectionStart}
           onSelectionExtend={onSelectionExtend}
           pagesByTitle={pagesByTitle}
@@ -2820,6 +2892,9 @@ function OutlineNodeEditor({
   selectedNodeIds,
   onSelectSingleNode,
   onSelectNodeRange,
+  pendingInsertedComposer,
+  onOpenInsertedComposer,
+  onClearInsertedComposer,
   onSelectionStart,
   onSelectionExtend,
   pagesByTitle,
@@ -2846,6 +2921,13 @@ function OutlineNodeEditor({
   selectedNodeIds: Set<string>;
   onSelectSingleNode: (nodeId: string) => void;
   onSelectNodeRange: (anchorNodeId: string, currentNodeId: string) => void;
+  pendingInsertedComposer: PendingInsertedComposer | null;
+  onOpenInsertedComposer: (
+    pageId: Id<"pages">,
+    parentNodeId: Id<"nodes"> | null,
+    afterNodeId: Id<"nodes">,
+  ) => void;
+  onClearInsertedComposer: () => void;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
   pagesByTitle: Map<string, PageDoc>;
@@ -2937,6 +3019,12 @@ function OutlineNodeEditor({
     linkSuggestions.length === 0
       ? 0
       : Math.min(linkHighlightIndex, linkSuggestions.length - 1);
+  const pendingSiblingComposerVisible =
+    pendingInsertedComposer?.pageId === pageId &&
+    pendingInsertedComposer?.parentNodeId === parentNodeId &&
+    pendingInsertedComposer?.afterNodeId === node._id;
+  const pendingSiblingComposerFocusToken =
+    pendingSiblingComposerVisible ? pendingInsertedComposer?.focusToken ?? 0 : 0;
 
   useEffect(() => {
     draftRef.current = draft;
@@ -3767,59 +3855,18 @@ function OutlineNodeEditor({
       return;
     }
 
-    const result = await commitNodeText(draft);
-    if (result.deleted) {
-      return;
+    if (draft.trim().length > 0 || pendingSiblingComposerVisible) {
+      onOpenInsertedComposer(pageId, parentNodeId, node._id as Id<"nodes">);
     }
 
-    const createdNodes = (await createNodesBatch({
-      ownerKey,
-      pageId,
-      nodes: [
-        {
-          parentNodeId,
-          afterNodeId: node._id as Id<"nodes">,
-          text: "",
-          kind: "note",
-          taskStatus: null,
-        },
-      ],
-    })) as Doc<"nodes">[];
-
-    const createEntry: HistoryEntry | null =
-      createdNodes[0]
-        ? {
-            type: "create_nodes",
-            pageId,
-            nodes: [
-              toCreatedNodeSnapshot(
-                createdNodes[0],
-                node._id as Id<"nodes">,
-              ),
-            ],
-            focusAfterUndoId: editorId,
-            focusAfterRedoId: getNodeEditorId(createdNodes[0]._id),
-          }
-        : null;
-
-    if (result.updateEntry && createEntry) {
-      history.pushUndoEntry({
-        type: "compound",
-        pageId,
-        entries: [result.updateEntry, createEntry],
-        focusAfterUndoId: editorId,
-        focusAfterRedoId: createEntry.focusAfterRedoId,
-      });
+    const result = await commitNodeText(draft);
+    if (result.deleted) {
+      onClearInsertedComposer();
       return;
     }
 
     if (result.updateEntry) {
       history.pushUndoEntry(result.updateEntry);
-      return;
-    }
-
-    if (createEntry) {
-      history.pushUndoEntry(createEntry);
     }
   };
 
@@ -3991,12 +4038,35 @@ function OutlineNodeEditor({
         selectedNodeIds={selectedNodeIds}
         onSelectSingleNode={onSelectSingleNode}
         onSelectNodeRange={onSelectNodeRange}
+        pendingInsertedComposer={pendingInsertedComposer}
+        onOpenInsertedComposer={onOpenInsertedComposer}
+        onClearInsertedComposer={onClearInsertedComposer}
         onSelectionStart={onSelectionStart}
         onSelectionExtend={onSelectionExtend}
         pagesByTitle={pagesByTitle}
         onOpenPage={onOpenPage}
         onOpenNode={onOpenNode}
       />
+      {pendingSiblingComposerVisible ? (
+        <InlineComposer
+          ownerKey={ownerKey}
+          pageId={pageId}
+          parentNodeId={parentNodeId}
+          afterNodeId={node._id as Id<"nodes">}
+          createNodesBatch={createNodesBatch}
+          readOnly={isPageReadOnly}
+          depth={depth}
+          autoFocusToken={pendingSiblingComposerFocusToken}
+          persistWhenEmpty
+          placeholder="Write a line…"
+          onSubmitted={() => {
+            onClearInsertedComposer();
+          }}
+          onCancel={() => {
+            onClearInsertedComposer();
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -4009,6 +4079,11 @@ function InlineComposer({
   createNodesBatch,
   readOnly = false,
   depth = 0,
+  autoFocusToken = 0,
+  persistWhenEmpty = false,
+  placeholder = "New line…",
+  onSubmitted,
+  onCancel,
 }: {
   ownerKey: string;
   pageId: Id<"pages">;
@@ -4017,6 +4092,11 @@ function InlineComposer({
   createNodesBatch: CreateNodesBatchMutation;
   readOnly?: boolean;
   depth?: number;
+  autoFocusToken?: number;
+  persistWhenEmpty?: boolean;
+  placeholder?: string;
+  onSubmitted?: () => void;
+  onCancel?: () => void;
 }) {
   const history = useWorkspaceHistory();
   const [draft, setDraft] = useState("");
@@ -4075,6 +4155,16 @@ function InlineComposer({
   useEffect(() => {
     return () => history.flushDraftCheckpoint(editorId);
   }, [editorId, history]);
+
+  useEffect(() => {
+    if (autoFocusToken <= 0) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      focusElementAtEnd(textareaRef.current);
+    });
+  }, [autoFocusToken]);
 
   const applyLinkSuggestion = (suggestion: LinkSuggestion) => {
     if (!activeLinkToken) {
@@ -4143,6 +4233,7 @@ function InlineComposer({
 
     history.resetTrackedValue(editorId, editorTarget, "");
     setDraft("");
+    onSubmitted?.();
     history.pushUndoEntry({
       type: "create_nodes",
       pageId,
@@ -4187,6 +4278,10 @@ function InlineComposer({
     }
 
     if (event.key !== "Enter") {
+      if ((event.key === "Escape" || event.key === "Backspace") && draft.trim().length === 0) {
+        event.preventDefault();
+        onCancel?.();
+      }
       return;
     }
 
@@ -4215,6 +4310,9 @@ function InlineComposer({
     const currentDraft = draftRef.current;
     if (readOnly || currentDraft.trim().length === 0) {
       history.flushDraftCheckpoint(editorId);
+      if (!persistWhenEmpty) {
+        onCancel?.();
+      }
       return;
     }
 
@@ -4241,7 +4339,7 @@ function InlineComposer({
         }}
         onPaste={(event) => void handlePaste(event)}
         onKeyDown={(event) => void handleKeyDown(event)}
-        placeholder="New line…"
+        placeholder={placeholder}
         disabled={readOnly}
         rows={1}
         className="w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-0.5 text-[15px] leading-6 outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]"
