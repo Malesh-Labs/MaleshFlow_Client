@@ -10,12 +10,18 @@ export type ExtractedLink =
       targetNodeRef: string;
     };
 
+export type ExtractedLinkMatch = {
+  start: number;
+  end: number;
+  link: ExtractedLink;
+};
+
 const WIKI_LINK_PATTERN = /\[\[([^[\]]+)\]\]/g;
 const NODE_LINK_PATTERN = /\(\(([a-zA-Z0-9_-]+)\)\)/g;
 const NODE_WIKI_TARGET_PATTERN = /^(.*?)\|node:([a-zA-Z0-9_-]+)$/;
 
-export function extractLinks(text: string) {
-  const matches: Array<{ index: number; link: ExtractedLink }> = [];
+export function extractLinkMatches(text: string) {
+  const matches: ExtractedLinkMatch[] = [];
 
   for (const match of text.matchAll(WIKI_LINK_PATTERN)) {
     const inner = match[1]?.trim();
@@ -31,7 +37,8 @@ export function extractLinks(text: string) {
       }
 
       matches.push({
-        index: match.index ?? 0,
+        start: match.index ?? 0,
+        end: (match.index ?? 0) + match[0].length,
         link: {
           kind: "node",
           label: match[0],
@@ -42,7 +49,8 @@ export function extractLinks(text: string) {
     }
 
     matches.push({
-      index: match.index ?? 0,
+      start: match.index ?? 0,
+      end: (match.index ?? 0) + match[0].length,
       link: {
         kind: "page",
         label: match[0],
@@ -58,7 +66,8 @@ export function extractLinks(text: string) {
     }
 
     matches.push({
-      index: match.index ?? 0,
+      start: match.index ?? 0,
+      end: (match.index ?? 0) + match[0].length,
       link: {
         kind: "node",
         label: match[0],
@@ -67,5 +76,9 @@ export function extractLinks(text: string) {
     });
   }
 
-  return matches.sort((left, right) => left.index - right.index).map((match) => match.link);
+  return matches.sort((left, right) => left.start - right.start);
+}
+
+export function extractLinks(text: string) {
+  return extractLinkMatches(text).map((match) => match.link);
 }

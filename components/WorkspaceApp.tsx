@@ -17,6 +17,7 @@ import {
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
+import { extractLinkMatches } from "@/lib/domain/links";
 import {
   buildNodeSelectionIds,
   filterPagesForCommandPalette,
@@ -82,6 +83,19 @@ type LinkSuggestion =
       title: string;
       subtitle: string;
       insertText: string;
+    };
+type LinkPreviewSegment =
+  | {
+      key: string;
+      kind: "text";
+      text: string;
+    }
+  | {
+      key: string;
+      kind: "page";
+      text: string;
+      pageId: Id<"pages">;
+      archived: boolean;
     };
 type KnowledgeChatResponse = {
   answer: string;
@@ -251,6 +265,10 @@ function sanitizeLinkLabel(value: string) {
   return value.replace(/\|/g, "/").replace(/\]\]/g, "] ]").trim() || "Untitled node";
 }
 
+function normalizePageTitleKey(value: string) {
+  return value.trim().toLowerCase();
+}
+
 function buildNodeLinkInsertText(node: Doc<"nodes">) {
   return `[[${sanitizeLinkLabel(node.text)}|node:${node._id}]]`;
 }
@@ -302,6 +320,68 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
     }));
 
   return [...pageSuggestions, ...nodeSuggestions];
+}
+
+function buildLinkPreviewSegments(
+  value: string,
+  pagesByTitle: Map<string, PageDoc>,
+): LinkPreviewSegment[] {
+  const matches = extractLinkMatches(value);
+  if (matches.length === 0) {
+    return [];
+  }
+
+  const segments: LinkPreviewSegment[] = [];
+  let cursor = 0;
+  let hasResolvedPageLink = false;
+
+  for (const match of matches) {
+    if (match.start > cursor) {
+      segments.push({
+        key: `text:${cursor}`,
+        kind: "text",
+        text: value.slice(cursor, match.start),
+      });
+    }
+
+    if (match.link.kind === "page") {
+      const page = pagesByTitle.get(normalizePageTitleKey(match.link.targetPageTitle));
+      if (page) {
+        hasResolvedPageLink = true;
+        segments.push({
+          key: `page:${match.start}`,
+          kind: "page",
+          text: page.title,
+          pageId: page._id,
+          archived: page.archived,
+        });
+      } else {
+        segments.push({
+          key: `text:${match.start}`,
+          kind: "text",
+          text: value.slice(match.start, match.end),
+        });
+      }
+    } else {
+      segments.push({
+        key: `text:${match.start}`,
+        kind: "text",
+        text: value.slice(match.start, match.end),
+      });
+    }
+
+    cursor = match.end;
+  }
+
+  if (cursor < value.length) {
+    segments.push({
+      key: `text:${cursor}`,
+      kind: "text",
+      text: value.slice(cursor),
+    });
+  }
+
+  return hasResolvedPageLink ? segments : [];
 }
 
 function collectChildren(nodes: TreeNode[], excludedIds: Set<string>) {
@@ -731,6 +811,17 @@ function ConfiguredWorkspace({
       ) ?? [],
   }));
   const archivedPages = pages?.filter((page) => page.archived) ?? [];
+  const pagesByTitle = useMemo(() => {
+    const next = new Map<string, PageDoc>();
+    for (const page of pages ?? []) {
+      const key = normalizePageTitleKey(page.title);
+      if (!key || next.has(key)) {
+        continue;
+      }
+      next.set(key, page);
+    }
+    return next;
+  }, [pages]);
   const paletteResults = filterPagesForCommandPalette(
     pages ?? [],
     paletteQuery,
@@ -1584,14 +1675,16 @@ function ConfiguredWorkspace({
                         moveNode={moveNode}
                         splitNode={splitNode}
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
-                        setNodeTreeArchived={setNodeTreeArchived}
-                        isPageReadOnly={isPageArchived}
-                        selectedNodeIds={selectedNodeIds}
-                        onSelectionStart={beginNodeSelection}
-                        onSelectionExtend={extendNodeSelection}
-                        depthOffset={1}
-                      />
-                    </div>
+                      setNodeTreeArchived={setNodeTreeArchived}
+                      isPageReadOnly={isPageArchived}
+                      selectedNodeIds={selectedNodeIds}
+                      onSelectionStart={beginNodeSelection}
+                      onSelectionExtend={extendNodeSelection}
+                      pagesByTitle={pagesByTitle}
+                      onOpenPage={handleSelectPage}
+                      depthOffset={1}
+                    />
+                  </div>
                     <div className="pt-8">
                       <PageSection
                         title="Recent"
@@ -1604,14 +1697,16 @@ function ConfiguredWorkspace({
                         moveNode={moveNode}
                         splitNode={splitNode}
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
-                        setNodeTreeArchived={setNodeTreeArchived}
-                        isPageReadOnly={isPageArchived}
-                        selectedNodeIds={selectedNodeIds}
-                        onSelectionStart={beginNodeSelection}
-                        onSelectionExtend={extendNodeSelection}
-                        depthOffset={1}
-                      />
-                    </div>
+                      setNodeTreeArchived={setNodeTreeArchived}
+                      isPageReadOnly={isPageArchived}
+                      selectedNodeIds={selectedNodeIds}
+                      onSelectionStart={beginNodeSelection}
+                      onSelectionExtend={extendNodeSelection}
+                      pagesByTitle={pagesByTitle}
+                      onOpenPage={handleSelectPage}
+                      depthOffset={1}
+                    />
+                  </div>
                   </div>
                 ) : pageMeta.pageType === "journal" ? (
                   <div className="divide-y divide-[var(--workspace-border-subtle)]">
@@ -1627,14 +1722,16 @@ function ConfiguredWorkspace({
                         moveNode={moveNode}
                         splitNode={splitNode}
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
-                        setNodeTreeArchived={setNodeTreeArchived}
-                        isPageReadOnly={isPageArchived}
-                        selectedNodeIds={selectedNodeIds}
-                        onSelectionStart={beginNodeSelection}
-                        onSelectionExtend={extendNodeSelection}
-                        depthOffset={1}
-                      />
-                    </div>
+                      setNodeTreeArchived={setNodeTreeArchived}
+                      isPageReadOnly={isPageArchived}
+                      selectedNodeIds={selectedNodeIds}
+                      onSelectionStart={beginNodeSelection}
+                      onSelectionExtend={extendNodeSelection}
+                      pagesByTitle={pagesByTitle}
+                      onOpenPage={handleSelectPage}
+                      depthOffset={1}
+                    />
+                  </div>
                     <div className="pt-8">
                       <PageSection
                         title="Feedback"
@@ -1647,14 +1744,16 @@ function ConfiguredWorkspace({
                         moveNode={moveNode}
                         splitNode={splitNode}
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
-                        setNodeTreeArchived={setNodeTreeArchived}
-                        isPageReadOnly={isPageArchived}
-                        selectedNodeIds={selectedNodeIds}
-                        onSelectionStart={beginNodeSelection}
-                        onSelectionExtend={extendNodeSelection}
-                        depthOffset={1}
-                        statusMessage={journalFeedbackStatus}
-                        action={
+                      setNodeTreeArchived={setNodeTreeArchived}
+                      isPageReadOnly={isPageArchived}
+                      selectedNodeIds={selectedNodeIds}
+                      onSelectionStart={beginNodeSelection}
+                      onSelectionExtend={extendNodeSelection}
+                      pagesByTitle={pagesByTitle}
+                      onOpenPage={handleSelectPage}
+                      depthOffset={1}
+                      statusMessage={journalFeedbackStatus}
+                      action={
                           <button
                             type="button"
                             onClick={() => void handleGenerateJournalFeedback()}
@@ -1684,6 +1783,8 @@ function ConfiguredWorkspace({
                       selectedNodeIds={selectedNodeIds}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
+                      pagesByTitle={pagesByTitle}
+                      onOpenPage={handleSelectPage}
                     />
                     <InlineComposer
                       ownerKey={ownerKey}
@@ -1997,6 +2098,8 @@ function PageSection({
   selectedNodeIds,
   onSelectionStart,
   onSelectionExtend,
+  pagesByTitle,
+  onOpenPage,
   depthOffset = 0,
   action = null,
   statusMessage = "",
@@ -2016,6 +2119,8 @@ function PageSection({
   selectedNodeIds: Set<string>;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
+  pagesByTitle: Map<string, PageDoc>;
+  onOpenPage: (pageId: Id<"pages">) => void;
   depthOffset?: number;
   action?: ReactNode;
   statusMessage?: string;
@@ -2051,6 +2156,8 @@ function PageSection({
           selectedNodeIds={selectedNodeIds}
           onSelectionStart={onSelectionStart}
           onSelectionExtend={onSelectionExtend}
+          pagesByTitle={pagesByTitle}
+          onOpenPage={onOpenPage}
         />
         <InlineComposer
           ownerKey={ownerKey}
@@ -2083,6 +2190,8 @@ function OutlineNodeList({
   selectedNodeIds,
   onSelectionStart,
   onSelectionExtend,
+  pagesByTitle,
+  onOpenPage,
 }: {
   nodes: TreeNode[];
   ownerKey: string;
@@ -2100,6 +2209,8 @@ function OutlineNodeList({
   selectedNodeIds: Set<string>;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
+  pagesByTitle: Map<string, PageDoc>;
+  onOpenPage: (pageId: Id<"pages">) => void;
 }) {
   return (
     <>
@@ -2124,6 +2235,8 @@ function OutlineNodeList({
           selectedNodeIds={selectedNodeIds}
           onSelectionStart={onSelectionStart}
           onSelectionExtend={onSelectionExtend}
+          pagesByTitle={pagesByTitle}
+          onOpenPage={onOpenPage}
         />
       ))}
     </>
@@ -2179,6 +2292,68 @@ function LinkAutocompleteMenu({
   );
 }
 
+function LinkedTextPreview({
+  segments,
+  onFocusLine,
+  onOpenPage,
+  isDisabled,
+  className,
+}: {
+  segments: LinkPreviewSegment[];
+  onFocusLine: () => void;
+  onOpenPage: (pageId: Id<"pages">) => void;
+  isDisabled: boolean;
+  className?: string;
+}) {
+  return (
+    <div
+      className={clsx(
+        "absolute inset-0 z-10 whitespace-pre-wrap break-words px-0 py-0.5 text-[15px] leading-6",
+        isDisabled ? "cursor-default" : "cursor-text",
+        className,
+      )}
+      onMouseDown={(event) => {
+        const target = event.target as HTMLElement;
+        if (target.closest("[data-page-link-preview='true']")) {
+          return;
+        }
+        if (isDisabled) {
+          return;
+        }
+        event.preventDefault();
+        onFocusLine();
+      }}
+    >
+      {segments.map((segment) =>
+        segment.kind === "text" ? (
+          <span key={segment.key}>{segment.text}</span>
+        ) : (
+          <button
+            key={segment.key}
+            type="button"
+            data-page-link-preview="true"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onOpenPage(segment.pageId);
+            }}
+            className={clsx(
+              "inline cursor-pointer text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px] transition hover:text-[var(--workspace-brand-hover)]",
+              segment.archived ? "opacity-75" : "",
+            )}
+          >
+            {segment.text}
+          </button>
+        ),
+      )}
+    </div>
+  );
+}
+
 function OutlineNodeEditor({
   node,
   previousSibling,
@@ -2198,6 +2373,8 @@ function OutlineNodeEditor({
   selectedNodeIds,
   onSelectionStart,
   onSelectionExtend,
+  pagesByTitle,
+  onOpenPage,
 }: {
   node: TreeNode;
   previousSibling: TreeNode | null;
@@ -2217,6 +2394,8 @@ function OutlineNodeEditor({
   selectedNodeIds: Set<string>;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
+  pagesByTitle: Map<string, PageDoc>;
+  onOpenPage: (pageId: Id<"pages">) => void;
 }) {
   const history = useWorkspaceHistory();
   const [draft, setDraft] = useState(node.text);
@@ -2247,6 +2426,15 @@ function OutlineNodeEditor({
   const isVisualEmptyLine = normalizedDraft === ".";
   const isVisualSeparatorLine = normalizedDraft === "---";
   const shouldRevealVisualPlaceholder = isFocused || isSelected;
+  const linkPreviewSegments = useMemo(
+    () => buildLinkPreviewSegments(draft, pagesByTitle),
+    [draft, pagesByTitle],
+  );
+  const hasPageLinkPreview =
+    !isFocused &&
+    !isVisualEmptyLine &&
+    !isVisualSeparatorLine &&
+    linkPreviewSegments.length > 0;
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
   const linkTargetResults = useQuery(
     api.workspace.searchLinkTargets,
@@ -2311,6 +2499,10 @@ function OutlineNodeEditor({
       textareaRef.current?.focus();
       textareaRef.current?.setSelectionRange(nextCaretPosition, nextCaretPosition);
     });
+  };
+
+  const focusLineEditor = () => {
+    focusElementAtEnd(textareaRef.current);
   };
 
   const buildUpdateEntry = (
@@ -2916,8 +3108,22 @@ function OutlineNodeEditor({
                 (isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder
                   ? "text-transparent"
                   : "",
+                hasPageLinkPreview ? "text-transparent caret-transparent" : "",
               )}
             />
+            {hasPageLinkPreview ? (
+              <LinkedTextPreview
+                segments={linkPreviewSegments}
+                onFocusLine={focusLineEditor}
+                onOpenPage={onOpenPage}
+                isDisabled={isDisabled}
+                className={clsx(
+                  node.taskStatus === "done"
+                    ? "text-[var(--workspace-text-faint)] line-through"
+                    : "text-[var(--workspace-text)]",
+                )}
+              />
+            ) : null}
             {isFocused && activeLinkToken ? (
               <LinkAutocompleteMenu
                 suggestions={linkSuggestions}
@@ -2946,6 +3152,8 @@ function OutlineNodeEditor({
         selectedNodeIds={selectedNodeIds}
         onSelectionStart={onSelectionStart}
         onSelectionExtend={onSelectionExtend}
+        pagesByTitle={pagesByTitle}
+        onOpenPage={onOpenPage}
       />
     </div>
   );

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractLinks } from "../lib/domain/links";
+import { extractLinkMatches, extractLinks } from "../lib/domain/links";
 import { parseMarkdownFile, serializePageToMarkdown } from "../lib/domain/markdown";
 import {
   buildDeterministicEmbedding,
@@ -29,6 +29,33 @@ test("extractLinks finds wiki links and node refs", () => {
       targetNodeRef: "node_456",
     },
   ]);
+});
+
+test("extractLinkMatches preserves ranges for inline rendering", () => {
+  const matches = extractLinkMatches("See [[Launch Page]] and [[Attachment note|node:node_456]].");
+
+  assert.deepEqual(
+    matches.map((match) => ({
+      start: match.start,
+      end: match.end,
+      kind: match.link.kind,
+      label: match.link.label,
+    })),
+    [
+      {
+        start: 4,
+        end: 19,
+        kind: "page",
+        label: "[[Launch Page]]",
+      },
+      {
+        start: 24,
+        end: 57,
+        kind: "node",
+        label: "[[Attachment note|node:node_456]]",
+      },
+    ],
+  );
 });
 
 test("parseMarkdownFile converts headings, bullets, and tasks into nodes", () => {
