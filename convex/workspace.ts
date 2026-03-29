@@ -7,6 +7,7 @@ import {
   buildUniquePageSlug,
   computeNodePosition,
   deleteNodeTree,
+  enqueueNodeEmbeddingRefresh,
   enqueueNodeAiWork,
   listPageNodes,
   setNodeTreeArchivedState,
@@ -792,7 +793,7 @@ export const moveNode = mutation({
       updatedAt: getTimestamp(),
     });
 
-    await enqueueNodeAiWork(ctx, args.nodeId);
+    await enqueueNodeEmbeddingRefresh(ctx, args.nodeId);
   },
 });
 

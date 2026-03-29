@@ -187,6 +187,13 @@ export async function enqueueNodeAiWork(
   await ctx.scheduler.runAfter(0, internal.ai.generateEmbeddingForNode, { nodeId });
 }
 
+export async function enqueueNodeEmbeddingRefresh(
+  ctx: MutationCtx,
+  nodeId: Id<"nodes">,
+) {
+  await ctx.scheduler.runAfter(0, internal.ai.generateEmbeddingForNode, { nodeId });
+}
+
 export async function deleteNodeTree(
   db: DatabaseWriter,
   nodeId: Id<"nodes">,
