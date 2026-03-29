@@ -6,6 +6,7 @@ import { v } from "convex/values";
 import { z } from "zod";
 import { action, internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
 import { assertOwnerKey } from "./lib/auth";
 import { buildDeterministicEmbedding, buildEmbeddingInput } from "../lib/domain/embeddings";
 
@@ -14,6 +15,11 @@ const taskMetadataSchema = z.object({
   taskStatus: z.enum(["todo", "in_progress", "done", "cancelled"]).nullable(),
   priority: z.enum(["low", "medium", "high"]).nullable(),
   rationale: z.string(),
+});
+
+const knowledgeAnswerSchema = z.object({
+  answer: z.string(),
+  sourceIndexes: z.array(z.number().int().min(1)).max(8),
 });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -53,6 +59,37 @@ async function createEmbedding(text: string) {
   return response.data[0]?.embedding ?? buildDeterministicEmbedding(text);
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function runSemanticSearch(ctx: any, args: {
+  query: string;
+  pageId?: string;
+  limit?: number;
+}) {
+  const limit = Math.max(1, Math.min(args.limit ?? 8, 20));
+  const vector = await createEmbedding(args.query);
+
+  const matches = await ctx.vectorSearch("nodeEmbeddings", "by_embedding", {
+    vector,
+    limit,
+    filter: args.pageId
+      ? (query: { eq: (field: string, value: unknown) => unknown }) =>
+          query.eq("pageId", args.pageId!)
+      : undefined,
+  });
+
+  if (matches.length === 0) {
+    return await ctx.runQuery(fallbackTextSearchRef, {
+      query: args.query,
+      pageId: args.pageId ?? undefined,
+      limit,
+    });
+  }
+
+  return await ctx.runQuery(hydrateEmbeddingMatchesRef, {
+    embeddingIds: matches.map((match: { _id: string }) => match._id),
+  });
+}
+
 export const searchNodes = action({
   args: {
     ownerKey: v.string(),
@@ -62,28 +99,149 @@ export const searchNodes = action({
   },
   handler: async (ctx, args): Promise<unknown[]> => {
     assertOwnerKey(args.ownerKey);
-    const limit = Math.max(1, Math.min(args.limit ?? 8, 20));
-    const vector = await createEmbedding(args.query);
-
-    const matches = await ctx.vectorSearch("nodeEmbeddings", "by_embedding", {
-      vector,
-      limit,
-      filter: args.pageId
-        ? (query) => query.eq("pageId", args.pageId!)
-        : undefined,
+    return await runSemanticSearch(ctx, {
+      query: args.query,
+      pageId: args.pageId as string | undefined,
+      limit: args.limit,
     });
+  },
+});
 
-    if (matches.length === 0) {
-      return await ctx.runQuery(fallbackTextSearchRef, {
-        query: args.query,
-        pageId: args.pageId ?? undefined,
-        limit,
-      });
+export const answerWorkspaceQuestion = action({
+  args: {
+    ownerKey: v.string(),
+    question: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    answer: string;
+    sources: Array<{
+      node: Doc<"nodes">;
+      page: Doc<"pages"> | null;
+      score?: number;
+    }>;
+    model: string;
+    error: string | null;
+  }> => {
+    assertOwnerKey(args.ownerKey);
+
+    const question = args.question.trim();
+    const model = process.env.OPENAI_CHAT_MODEL ?? "gpt-5-mini";
+    if (question.length === 0) {
+      return {
+        answer: "Ask a question to search your knowledge base.",
+        sources: [],
+        model,
+        error: null,
+      };
     }
 
-    return await ctx.runQuery(hydrateEmbeddingMatchesRef, {
-      embeddingIds: matches.map((match) => match._id),
-    });
+    const rawSources = (await runSemanticSearch(ctx, {
+      query: question,
+      limit: args.limit ?? 10,
+    })) as Array<{
+      node: Doc<"nodes">;
+      page: Doc<"pages"> | null;
+      score?: number;
+    }>;
+    const sources = rawSources.filter((entry) => entry.page !== null).slice(0, 10);
+
+    if (sources.length === 0) {
+      return {
+        answer: "I couldn't find any relevant notes or tasks in your knowledge base yet.",
+        sources: [],
+        model,
+        error: null,
+      };
+    }
+
+    const client = getOpenAIClient();
+    if (!client) {
+      return {
+        answer:
+          "OpenAI is not configured, so I can only show the closest matching notes right now.",
+        sources,
+        model,
+        error: "OPENAI_API_KEY is not configured in Convex.",
+      };
+    }
+
+    const sourceContext = sources
+      .map((entry, index) =>
+        [
+          `[${index + 1}] Page: ${entry.page?.title ?? "Unknown page"}`,
+          `Kind: ${entry.node.kind}`,
+          `Text: ${entry.node.text || "(empty line)"}`,
+        ].join("\n"),
+      )
+      .join("\n\n");
+
+    try {
+      const response = await client.responses.parse({
+        model,
+        input: [
+          {
+            role: "system",
+            content:
+              "Answer the user's question using only the provided knowledge base snippets. If the snippets are insufficient, say so clearly. Keep the answer concise and grounded. Cite source numbers like [1] when helpful.",
+          },
+          {
+            role: "user",
+            content: [`Question: ${question}`, "", "Knowledge base snippets:", sourceContext].join(
+              "\n",
+            ),
+          },
+        ],
+        text: {
+          format: zodTextFormat(knowledgeAnswerSchema, "knowledge_base_answer"),
+        },
+      });
+
+      const parsed = response.output_parsed;
+      if (!parsed) {
+        return {
+          answer: "OpenAI returned no answer.",
+          sources,
+          model,
+          error: "OpenAI returned no parsed answer.",
+        };
+      }
+
+      const chosenSources =
+        parsed.sourceIndexes.length > 0
+          ? parsed.sourceIndexes
+              .map((index) => sources[index - 1] ?? null)
+              .filter(
+                (
+                  entry,
+                ): entry is {
+                  node: Doc<"nodes">;
+                  page: Doc<"pages"> | null;
+                  score?: number;
+                } => entry !== null,
+              )
+          : sources.slice(0, 4);
+
+      return {
+        answer: parsed.answer,
+        sources: chosenSources,
+        model,
+        error: null,
+      };
+    } catch (error) {
+      return {
+        answer:
+          error instanceof Error
+            ? `OpenAI knowledge-base chat failed: ${error.message}`
+            : "OpenAI knowledge-base chat failed.",
+        sources,
+        model,
+        error: error instanceof Error ? error.message : "Unknown OpenAI error.",
+      };
+    }
   },
 });
 

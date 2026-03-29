@@ -52,11 +52,17 @@ type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
 type SidebarGroupKey = SidebarSection | typeof ARCHIVE_SECTION_LABEL;
 type PageType = "default" | "model" | "journal";
 type PageDoc = Doc<"pages">;
-type PaletteMode = "pages" | "nodes";
+type PaletteMode = "pages" | "nodes" | "chat";
 type NodeSearchResult = {
   node: Doc<"nodes">;
   page: PageDoc | null;
   score?: number;
+};
+type KnowledgeChatResponse = {
+  answer: string;
+  sources: NodeSearchResult[];
+  model: string;
+  error: string | null;
 };
 type UpdateNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.updateNode>>;
 type CreateNodesBatchMutation = ReturnType<typeof useMutation<typeof api.workspace.createNodesBatch>>;
@@ -501,6 +507,10 @@ function ConfiguredWorkspace({
   const [paletteHighlightIndex, setPaletteHighlightIndex] = useState(0);
   const [nodeSearchResults, setNodeSearchResults] = useState<NodeSearchResult[]>([]);
   const [isNodeSearchLoading, setIsNodeSearchLoading] = useState(false);
+  const [knowledgeChatResponse, setKnowledgeChatResponse] = useState<KnowledgeChatResponse | null>(
+    null,
+  );
+  const [isKnowledgeChatLoading, setIsKnowledgeChatLoading] = useState(false);
   const [pendingRevealNodeId, setPendingRevealNodeId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [collapsedSidebarSections, setCollapsedSidebarSections] = useState<Set<SidebarGroupKey>>(
@@ -541,6 +551,7 @@ function ConfiguredWorkspace({
   const rewriteModelSection = useAction(api.chat.rewriteModelSection);
   const generateJournalFeedback = useAction(api.chat.generateJournalFeedback);
   const searchNodes = useAction(api.ai.searchNodes);
+  const answerWorkspaceQuestion = useAction(api.ai.answerWorkspaceQuestion);
   const pageTitleInputRef = useRef<HTMLInputElement>(null);
   const pageTitleDraftRef = useRef(pageTitleDraft);
   const paletteInputRef = useRef<HTMLInputElement>(null);
@@ -566,9 +577,9 @@ function ConfiguredWorkspace({
     setPaletteMode(mode);
     setPaletteQuery("");
     setPaletteHighlightIndex(0);
-    if (mode === "nodes") {
-      setNodeSearchResults([]);
-    }
+    setNodeSearchResults([]);
+    setKnowledgeChatResponse(null);
+    setIsKnowledgeChatLoading(false);
     setPaletteOpen(true);
   }, []);
 
@@ -655,7 +666,11 @@ function ConfiguredWorkspace({
     14,
   );
   const activePaletteResultsCount =
-    paletteMode === "pages" ? paletteResults.length : nodeSearchResults.length;
+    paletteMode === "pages"
+      ? paletteResults.length
+      : paletteMode === "nodes"
+        ? nodeSearchResults.length
+        : 0;
 
   useEffect(() => {
     pageTitleDraftRef.current = pageTitleDraft;
@@ -761,6 +776,13 @@ function ConfiguredWorkspace({
       window.clearTimeout(timeoutId);
     };
   }, [ownerKey, paletteMode, paletteOpen, paletteQuery, searchNodes]);
+
+  useEffect(() => {
+    if (paletteMode !== "chat") {
+      setIsKnowledgeChatLoading(false);
+      return;
+    }
+  }, [paletteMode]);
 
   useEffect(() => {
     if (!pendingRevealNodeId || !selectedPageId) {
@@ -936,6 +958,7 @@ function ConfiguredWorkspace({
     setPaletteHighlightIndex(0);
     setPaletteMode("pages");
     setNodeSearchResults([]);
+    setKnowledgeChatResponse(null);
     clearNodeSelection();
   }, [clearNodeSelection]);
 
@@ -950,8 +973,39 @@ function ConfiguredWorkspace({
     setPaletteQuery("");
     setPaletteHighlightIndex(0);
     setPaletteMode("nodes");
+    setKnowledgeChatResponse(null);
     clearNodeSelection();
   }, [clearNodeSelection]);
+
+  const handleKnowledgeChat = useCallback(async () => {
+    const question = paletteQuery.trim();
+    if (question.length === 0) {
+      setKnowledgeChatResponse(null);
+      return;
+    }
+
+    setIsKnowledgeChatLoading(true);
+    try {
+      const response = (await answerWorkspaceQuestion({
+        ownerKey,
+        question,
+        limit: 10,
+      })) as KnowledgeChatResponse;
+      setKnowledgeChatResponse(response);
+    } catch (error) {
+      setKnowledgeChatResponse({
+        answer:
+          error instanceof Error
+            ? `Knowledge-base chat failed: ${error.message}`
+            : "Knowledge-base chat failed.",
+        sources: [],
+        model: "gpt-5-mini",
+        error: error instanceof Error ? error.message : "Unknown error.",
+      });
+    } finally {
+      setIsKnowledgeChatLoading(false);
+    }
+  }, [answerWorkspaceQuestion, ownerKey, paletteQuery]);
 
   const handleArchivePage = async (page: PageDoc, archived: boolean) => {
     await archivePage({
@@ -1044,6 +1098,12 @@ function ConfiguredWorkspace({
   };
 
   const handlePaletteKeyDown = (event: TextareaKeyboardEvent<HTMLInputElement>) => {
+    if (paletteMode === "chat" && event.key === "Enter") {
+      event.preventDefault();
+      void handleKnowledgeChat();
+      return;
+    }
+
     if (event.key === "ArrowDown") {
       event.preventDefault();
       setPaletteHighlightIndex((current) =>
@@ -1101,30 +1161,39 @@ function ConfiguredWorkspace({
       <main className="min-h-screen bg-[#f7f4ec] text-[#1b1916]">
       <div className="mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)]">
         <aside className="border-b border-[#d8cfbf] bg-[#efe7d9] p-6 lg:border-b-0 lg:border-r">
-          <div className="flex items-start justify-end gap-4">
-            <button
-              type="button"
-              onClick={() => {
-                openPalette("pages");
+              <div className="flex items-start justify-end gap-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    openPalette("pages");
               }}
               className="border border-[#c9bda8] px-3 py-1 text-xs font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
             >
               Pages
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                openPalette("nodes");
-              }}
+                <button
+                  type="button"
+                  onClick={() => {
+                    openPalette("nodes");
+                  }}
               className="border border-[#c9bda8] px-3 py-1 text-xs font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
-            >
-              Semantic
-            </button>
-            <button
-              type="button"
-              onClick={() => setOwnerKey("")}
-              className="border border-[#c9bda8] px-3 py-1 text-xs font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
-            >
+                >
+                  Semantic
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    openPalette("chat");
+                  }}
+                  className="border border-[#c9bda8] px-3 py-1 text-xs font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
+                >
+                  Ask
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOwnerKey("")}
+                  className="border border-[#c9bda8] px-3 py-1 text-xs font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
+                >
               Lock
             </button>
           </div>
@@ -1517,6 +1586,8 @@ function ConfiguredWorkspace({
             setPaletteQuery("");
             setPaletteMode("pages");
             setNodeSearchResults([]);
+            setKnowledgeChatResponse(null);
+            setIsKnowledgeChatLoading(false);
           }}
         >
           <div
@@ -1548,6 +1619,8 @@ function ConfiguredWorkspace({
                     setPaletteQuery("");
                     setPaletteHighlightIndex(0);
                     setNodeSearchResults([]);
+                    setKnowledgeChatResponse(null);
+                    setIsKnowledgeChatLoading(false);
                   }}
                   className={clsx(
                     "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
@@ -1558,22 +1631,58 @@ function ConfiguredWorkspace({
                 >
                   Semantic
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPaletteMode("chat");
+                    setPaletteQuery("");
+                    setPaletteHighlightIndex(0);
+                    setNodeSearchResults([]);
+                    setKnowledgeChatResponse(null);
+                    setIsKnowledgeChatLoading(false);
+                  }}
+                  className={clsx(
+                    "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
+                    paletteMode === "chat"
+                      ? "border-[#1f4a45] bg-[#1f4a45] text-white"
+                      : "border-[#d8cfbf] text-[#5c5348] hover:border-[#8a6c2d] hover:text-[#1b1916]",
+                  )}
+                >
+                  Ask
+                </button>
               </div>
-              <input
-                ref={paletteInputRef}
-                value={paletteQuery}
-                onChange={(event) => {
-                  setPaletteQuery(event.target.value);
-                  setPaletteHighlightIndex(0);
-                }}
-                onKeyDown={handlePaletteKeyDown}
-                placeholder={
-                  paletteMode === "pages"
-                    ? "Search pages..."
-                    : "Search notes and tasks semantically across the workspace..."
-                }
-                className="w-full border-0 bg-transparent p-0 text-lg outline-none"
-              />
+              <div className="flex items-center gap-3">
+                <input
+                  ref={paletteInputRef}
+                  value={paletteQuery}
+                  onChange={(event) => {
+                    setPaletteQuery(event.target.value);
+                    setPaletteHighlightIndex(0);
+                    if (paletteMode === "chat") {
+                      setKnowledgeChatResponse(null);
+                    }
+                  }}
+                  onKeyDown={handlePaletteKeyDown}
+                  placeholder={
+                    paletteMode === "pages"
+                      ? "Search pages..."
+                      : paletteMode === "nodes"
+                        ? "Search notes and tasks semantically across the workspace..."
+                        : "Ask your knowledge base a question..."
+                  }
+                  className="w-full border-0 bg-transparent p-0 text-lg outline-none"
+                />
+                {paletteMode === "chat" ? (
+                  <button
+                    type="button"
+                    onClick={() => void handleKnowledgeChat()}
+                    disabled={isKnowledgeChatLoading || paletteQuery.trim().length === 0}
+                    className="border border-[#1f4a45] bg-[#1f4a45] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-white transition hover:bg-[#163733] disabled:cursor-wait disabled:opacity-60"
+                  >
+                    Ask
+                  </button>
+                ) : null}
+              </div>
             </div>
             <div className="max-h-[420px] overflow-y-auto py-2">
               {paletteMode === "pages" ? (
@@ -1614,7 +1723,7 @@ function ConfiguredWorkspace({
                   );
                 })
                 )
-              ) : paletteQuery.trim().length === 0 ? (
+              ) : paletteMode === "nodes" ? paletteQuery.trim().length === 0 ? (
                 <p className="px-5 py-4 text-sm text-[#6a6257]">
                   Search across all active notes and tasks in all pages.
                 </p>
@@ -1653,6 +1762,61 @@ function ConfiguredWorkspace({
                     </button>
                   );
                 })
+              ) : paletteQuery.trim().length === 0 ? (
+                <p className="px-5 py-4 text-sm text-[#6a6257]">
+                  Ask questions across all active notes and tasks in all active pages.
+                </p>
+              ) : isKnowledgeChatLoading ? (
+                <p className="px-5 py-4 text-sm text-[#6a6257]">Thinking with your knowledge base…</p>
+              ) : knowledgeChatResponse ? (
+                <div className="space-y-4 px-5 py-4">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-[#8a6c2d]">
+                      Answer
+                    </p>
+                    <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[#1b1916]">
+                      {knowledgeChatResponse.answer}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-[#8a6c2d]">
+                      Sources
+                    </p>
+                    <div className="mt-2 space-y-2">
+                      {knowledgeChatResponse.sources.length === 0 ? (
+                        <p className="text-sm text-[#6a6257]">No source snippets available.</p>
+                      ) : (
+                        knowledgeChatResponse.sources.map((result, index) => {
+                          const pageInfo = getPageMeta(result.page);
+                          return (
+                            <button
+                              key={`${result.node._id}:${index}`}
+                              type="button"
+                              onClick={() => handleSelectNodeSearchResult(result)}
+                              className="block w-full border border-[#ebe2d2] bg-[#fcfbf8] px-4 py-3 text-left transition hover:border-[#bcae96] hover:bg-[#f4eee3]"
+                            >
+                              <span className="block truncate text-sm font-medium text-[#1b1916]">
+                                {result.node.text || "(empty line)"}
+                              </span>
+                              <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[#7a6e5f]">
+                                {result.page?.title ?? "Unknown page"}
+                                {result.page ? ` • ${pageInfo.sidebarSection}` : ""}
+                              </span>
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 border-t border-[#ebe2d2] pt-3 text-[11px] uppercase tracking-[0.18em] text-[#7a6e5f]">
+                    <span>{knowledgeChatResponse.model}</span>
+                    <span>{knowledgeChatResponse.error ? "OpenAI issue surfaced" : "Grounded with semantic retrieval"}</span>
+                  </div>
+                </div>
+              ) : (
+                <p className="px-5 py-4 text-sm text-[#6a6257]">
+                  Press Enter to ask your knowledge base.
+                </p>
               )}
             </div>
           </div>
