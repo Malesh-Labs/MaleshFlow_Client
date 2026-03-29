@@ -54,8 +54,8 @@ type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
 type SidebarGroupKey = SidebarSection | typeof ARCHIVE_SECTION_LABEL;
 type PageType = "default" | "model" | "journal";
 type PageDoc = Doc<"pages">;
-type PaletteMode = "pages" | "nodes" | "chat";
-const PALETTE_MODE_ORDER: PaletteMode[] = ["pages", "nodes", "chat"];
+type PaletteMode = "pages" | "find" | "nodes" | "chat";
+const PALETTE_MODE_ORDER: PaletteMode[] = ["pages", "find", "nodes", "chat"];
 type NodeSearchResult = {
   node: Doc<"nodes">;
   page: PageDoc | null;
@@ -706,7 +706,9 @@ function ConfiguredWorkspace({
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("pages");
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteHighlightIndex, setPaletteHighlightIndex] = useState(0);
+  const [textSearchResults, setTextSearchResults] = useState<NodeSearchResult[]>([]);
   const [nodeSearchResults, setNodeSearchResults] = useState<NodeSearchResult[]>([]);
+  const [isTextSearchLoading, setIsTextSearchLoading] = useState(false);
   const [isNodeSearchLoading, setIsNodeSearchLoading] = useState(false);
   const [knowledgeChatResponse, setKnowledgeChatResponse] = useState<KnowledgeChatResponse | null>(
     null,
@@ -757,6 +759,7 @@ function ConfiguredWorkspace({
   const setNodeTreeArchived = useMutation(api.workspace.setNodeTreeArchived);
   const rewriteModelSection = useAction(api.chat.rewriteModelSection);
   const generateJournalFeedback = useAction(api.chat.generateJournalFeedback);
+  const findNodesText = useAction(api.ai.findNodesText);
   const searchNodes = useAction(api.ai.searchNodes);
   const answerWorkspaceQuestion = useAction(api.ai.answerWorkspaceQuestion);
   const pageTitleInputRef = useRef<HTMLInputElement>(null);
@@ -785,6 +788,7 @@ function ConfiguredWorkspace({
     setPaletteMode(mode);
     setPaletteQuery("");
     setPaletteHighlightIndex(0);
+    setTextSearchResults([]);
     setNodeSearchResults([]);
     setKnowledgeChatResponse(null);
     setIsKnowledgeChatLoading(false);
@@ -880,6 +884,8 @@ function ConfiguredWorkspace({
   const activePaletteResultsCount =
     paletteMode === "pages"
       ? paletteResults.length
+      : paletteMode === "find"
+        ? textSearchResults.length
       : paletteMode === "nodes"
         ? nodeSearchResults.length
         : 0;
@@ -1072,6 +1078,51 @@ function ConfiguredWorkspace({
   }, [paletteOpen, paletteMode]);
 
   useEffect(() => {
+    if (!paletteOpen || paletteMode !== "find") {
+      setIsTextSearchLoading(false);
+      return;
+    }
+
+    const normalizedQuery = paletteQuery.trim();
+    if (normalizedQuery.length === 0) {
+      setTextSearchResults([]);
+      setIsTextSearchLoading(false);
+      return;
+    }
+
+    let isCancelled = false;
+    setIsTextSearchLoading(true);
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const results = (await findNodesText({
+          ownerKey,
+          query: normalizedQuery,
+          limit: 12,
+        })) as unknown[];
+
+        if (isCancelled) {
+          return;
+        }
+
+        setTextSearchResults(normalizeNodeSearchResults(results));
+      } catch {
+        if (!isCancelled) {
+          setTextSearchResults([]);
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsTextSearchLoading(false);
+        }
+      }
+    }, 120);
+
+    return () => {
+      isCancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [findNodesText, ownerKey, paletteMode, paletteOpen, paletteQuery]);
+
+  useEffect(() => {
     if (!paletteOpen || paletteMode !== "nodes") {
       setIsNodeSearchLoading(false);
       return;
@@ -1169,6 +1220,7 @@ function ConfiguredWorkspace({
           setPaletteOpen(false);
           setPaletteQuery("");
           setPaletteMode("pages");
+          setTextSearchResults([]);
           setNodeSearchResults([]);
           return;
         }
@@ -1299,6 +1351,7 @@ function ConfiguredWorkspace({
     setPaletteQuery("");
     setPaletteHighlightIndex(0);
     setPaletteMode("pages");
+    setTextSearchResults([]);
     setNodeSearchResults([]);
     setKnowledgeChatResponse(null);
     clearNodeSelection();
@@ -1317,6 +1370,7 @@ function ConfiguredWorkspace({
     setPaletteQuery("");
     setPaletteHighlightIndex(0);
     setPaletteMode("nodes");
+    setTextSearchResults([]);
     setKnowledgeChatResponse(null);
     clearNodeSelection();
   }, [clearNodeSelection]);
@@ -1496,7 +1550,10 @@ function ConfiguredWorkspace({
         return;
       }
 
-      const highlighted = nodeSearchResults[paletteHighlightIndex];
+      const highlighted =
+        paletteMode === "find"
+          ? textSearchResults[paletteHighlightIndex]
+          : nodeSearchResults[paletteHighlightIndex];
       if (highlighted) {
         handleSelectNodeSearchResult(highlighted);
       }
@@ -1537,6 +1594,15 @@ function ConfiguredWorkspace({
             >
               Pages
             </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    openPalette("find");
+                  }}
+              className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                >
+                  Find
+                </button>
                 <button
                   type="button"
                   onClick={() => {
@@ -1951,6 +2017,7 @@ function ConfiguredWorkspace({
             setPaletteOpen(false);
             setPaletteQuery("");
             setPaletteMode("pages");
+            setTextSearchResults([]);
             setNodeSearchResults([]);
             setKnowledgeChatResponse(null);
             setIsKnowledgeChatLoading(false);
@@ -1981,9 +2048,30 @@ function ConfiguredWorkspace({
                 <button
                   type="button"
                   onClick={() => {
+                    setPaletteMode("find");
+                    setPaletteQuery("");
+                    setPaletteHighlightIndex(0);
+                    setTextSearchResults([]);
+                    setNodeSearchResults([]);
+                    setKnowledgeChatResponse(null);
+                    setIsKnowledgeChatLoading(false);
+                  }}
+                  className={clsx(
+                    "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
+                    paletteMode === "find"
+                      ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
+                      : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                  )}
+                >
+                  Find
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
                     setPaletteMode("nodes");
                     setPaletteQuery("");
                     setPaletteHighlightIndex(0);
+                    setTextSearchResults([]);
                     setNodeSearchResults([]);
                     setKnowledgeChatResponse(null);
                     setIsKnowledgeChatLoading(false);
@@ -2003,6 +2091,7 @@ function ConfiguredWorkspace({
                     setPaletteMode("chat");
                     setPaletteQuery("");
                     setPaletteHighlightIndex(0);
+                    setTextSearchResults([]);
                     setNodeSearchResults([]);
                     setKnowledgeChatResponse(null);
                     setIsKnowledgeChatLoading(false);
@@ -2032,6 +2121,8 @@ function ConfiguredWorkspace({
                   placeholder={
                     paletteMode === "pages"
                       ? "Search pages..."
+                      : paletteMode === "find"
+                        ? "Find exact text in notes and tasks..."
                       : paletteMode === "nodes"
                         ? "Search notes and tasks semantically across the workspace..."
                         : "Ask your knowledge base a question..."
@@ -2089,6 +2180,45 @@ function ConfiguredWorkspace({
                   );
                 })
                 )
+              ) : paletteMode === "find" ? paletteQuery.trim().length === 0 ? (
+                <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">
+                  Find plain text across all active notes and tasks in all pages.
+                </p>
+              ) : isTextSearchLoading ? (
+                <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">Finding text…</p>
+              ) : textSearchResults.length === 0 ? (
+                <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">No matching text.</p>
+              ) : (
+                textSearchResults.map((result, index) => {
+                  const pageInfo = getPageMeta(result.page);
+                  return (
+                    <button
+                      key={`${result.node._id}:${result.page?._id ?? "page"}:find`}
+                      type="button"
+                      onMouseEnter={() => setPaletteHighlightIndex(index)}
+                      onClick={() => handleSelectNodeSearchResult(result)}
+                      className={clsx(
+                        "flex w-full items-start justify-between gap-3 px-5 py-3 text-left transition",
+                        index === paletteHighlightIndex
+                          ? "bg-[var(--workspace-sidebar-bg)]"
+                          : "hover:bg-[var(--workspace-surface-hover)]",
+                      )}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
+                          {result.node.text || "(empty line)"}
+                        </span>
+                        <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                          {result.page?.title ?? "Unknown page"}
+                          {result.page ? ` • ${pageInfo.sidebarSection}` : ""}
+                        </span>
+                      </span>
+                      <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                        <span>Text</span>
+                      </span>
+                    </button>
+                  );
+                })
               ) : paletteMode === "nodes" ? paletteQuery.trim().length === 0 ? (
                 <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">
                   Search across all active notes and tasks in all pages.

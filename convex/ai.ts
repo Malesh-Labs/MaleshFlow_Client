@@ -158,6 +158,23 @@ export const searchNodes = action({
   },
 });
 
+export const findNodesText = action({
+  args: {
+    ownerKey: v.string(),
+    query: v.string(),
+    pageId: v.optional(v.id("pages")),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<unknown[]> => {
+    assertOwnerKey(args.ownerKey);
+    return await ctx.runQuery(fallbackTextSearchRef, {
+      query: args.query,
+      pageId: args.pageId,
+      limit: Math.max(1, Math.min(args.limit ?? 12, 20)),
+    });
+  },
+});
+
 export const answerWorkspaceQuestion = action({
   args: {
     ownerKey: v.string(),
