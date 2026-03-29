@@ -783,6 +783,39 @@ function findNodeContext(
   );
 }
 
+function findRevealTargetElement(
+  targetNodeId: string,
+  nodes: Doc<"nodes">[],
+): HTMLElement | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  const directTarget = document.querySelector<HTMLElement>(
+    `[data-node-id="${targetNodeId}"]`,
+  );
+  if (directTarget) {
+    return directTarget;
+  }
+
+  const nodesById = new Map(nodes.map((node) => [node._id as string, node]));
+  let currentNode = nodesById.get(targetNodeId) ?? null;
+  while (currentNode) {
+    const sectionSlot = getNodeMeta(currentNode).sectionSlot;
+    if (typeof sectionSlot === "string" && sectionSlot.length > 0) {
+      return document.querySelector<HTMLElement>(
+        `[data-section-slot="${sectionSlot}"]`,
+      );
+    }
+
+    currentNode = currentNode.parentNodeId
+      ? (nodesById.get(currentNode.parentNodeId as string) ?? null)
+      : null;
+  }
+
+  return null;
+}
+
 function parseNodeDraft(draft: string) {
   const trimmed = draft.trim();
 
@@ -1799,29 +1832,56 @@ function ConfiguredWorkspace({
   }, [paletteMode]);
 
   useEffect(() => {
-    if (!pendingRevealNodeId || !selectedPageId) {
+    if (
+      !pendingRevealNodeId ||
+      !selectedPageId ||
+      !activePageTree ||
+      activePageTree.page._id !== selectedPageId
+    ) {
       return;
     }
 
-    const timeoutId = window.setTimeout(() => {
-      const target = document.querySelector<HTMLElement>(
-        `[data-node-id="${pendingRevealNodeId}"]`,
-      );
+    let cancelled = false;
+    let timeoutId: number | null = null;
+    let attempts = 0;
 
-      if (!target) {
+    const reveal = () => {
+      if (cancelled) {
         return;
       }
 
-      setSelectedNodeIds(new Set([pendingRevealNodeId]));
-      target.scrollIntoView({
-        block: "center",
-        behavior: "smooth",
-      });
-      setPendingRevealNodeId(null);
-    }, 120);
+      const target = findRevealTargetElement(
+        pendingRevealNodeId,
+        activePageTree.nodes,
+      );
 
-    return () => window.clearTimeout(timeoutId);
-  }, [pendingRevealNodeId, selectedPageId]);
+      if (target) {
+        setSelectedNodeIds(new Set([pendingRevealNodeId]));
+        target.scrollIntoView({
+          block: "center",
+          behavior: "smooth",
+        });
+        setPendingRevealNodeId(null);
+        return;
+      }
+
+      if (attempts >= 15) {
+        return;
+      }
+
+      attempts += 1;
+      timeoutId = window.setTimeout(reveal, 90);
+    };
+
+    timeoutId = window.setTimeout(reveal, 40);
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
+  }, [activePageTree, pendingRevealNodeId, selectedPageId]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -3377,7 +3437,13 @@ function PageSection({
     : null;
 
   return (
-    <div>
+    <div
+      data-section-slot={
+        typeof getNodeMeta(sectionNode).sectionSlot === "string"
+          ? (getNodeMeta(sectionNode).sectionSlot as string)
+          : undefined
+      }
+    >
       <div className="flex items-center justify-between gap-4">
         <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
         {action}
