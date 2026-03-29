@@ -194,6 +194,23 @@ export async function enqueueNodeEmbeddingRefresh(
   await ctx.scheduler.runAfter(0, internal.ai.generateEmbeddingForNode, { nodeId });
 }
 
+export async function enqueuePageRootEmbeddingRefresh(
+  ctx: MutationCtx,
+  pageId: Id<"pages">,
+) {
+  const rootNodes = await listPageNodes(ctx.db, pageId);
+
+  for (const node of rootNodes) {
+    if (node.parentNodeId !== null) {
+      continue;
+    }
+
+    await ctx.scheduler.runAfter(0, internal.ai.generateEmbeddingForNode, {
+      nodeId: node._id,
+    });
+  }
+}
+
 export async function deleteNodeTree(
   db: DatabaseWriter,
   nodeId: Id<"nodes">,

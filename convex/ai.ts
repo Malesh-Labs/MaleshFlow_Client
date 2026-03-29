@@ -8,7 +8,11 @@ import { action, internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { assertOwnerKey } from "./lib/auth";
-import { buildDeterministicEmbedding, buildEmbeddingInput } from "../lib/domain/embeddings";
+import {
+  buildDeterministicEmbedding,
+  buildEmbeddingInput,
+  buildRootEmbeddingInput,
+} from "../lib/domain/embeddings";
 
 const taskMetadataSchema = z.object({
   kind: z.enum(["note", "task"]),
@@ -57,6 +61,53 @@ async function createEmbedding(text: string) {
   });
 
   return response.data[0]?.embedding ?? buildDeterministicEmbedding(text);
+}
+
+function formatNodeForEmbedding(node: {
+  text: string;
+  kind: string;
+  taskStatus: string | null;
+}) {
+  const text = node.text.trim();
+  if (text.length === 0) {
+    return "";
+  }
+
+  if (node.kind === "task") {
+    return `${node.taskStatus === "done" ? "[x]" : "[ ]"} ${text}`;
+  }
+
+  return text;
+}
+
+function collectRootSubtreeLines(
+  rootNodeId: string,
+  allNodes: Array<Doc<"nodes">>,
+) {
+  const sortedNodes = [...allNodes].sort((left, right) => left.position - right.position);
+  const childrenByParent = new Map<string | null, Array<Doc<"nodes">>>();
+
+  for (const node of sortedNodes) {
+    const key = node.parentNodeId ?? null;
+    const bucket = childrenByParent.get(key) ?? [];
+    bucket.push(node);
+    childrenByParent.set(key, bucket);
+  }
+
+  const lines: string[] = [];
+  const visit = (nodeId: string, depth: number) => {
+    const children = childrenByParent.get(nodeId) ?? [];
+    for (const child of children) {
+      const formatted = formatNodeForEmbedding(child);
+      if (formatted.length > 0) {
+        lines.push(`${"  ".repeat(depth)}${formatted}`);
+      }
+      visit(child._id, depth + 1);
+    }
+  };
+
+  visit(rootNodeId, 0);
+  return lines;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -260,15 +311,27 @@ export const generateEmbeddingForNode = internalAction({
         nodeId: args.nodeId,
       });
 
-      if (!context || context.node.archived || context.node.text.trim().length === 0) {
+      if (!context || context.node.archived) {
         return;
       }
 
-      const input = buildEmbeddingInput({
-        pageTitle: context.page.title,
-        ancestors: context.ancestors,
-        nodeText: context.node.text,
-      });
+      const input =
+        context.node.parentNodeId === null
+          ? buildRootEmbeddingInput({
+              pageTitle: context.page.title,
+              rootText: context.node.text.trim(),
+              subtreeLines: collectRootSubtreeLines(context.node._id, context.allNodes),
+            })
+          : buildEmbeddingInput({
+              pageTitle: context.page.title,
+              ancestors: context.ancestors,
+              nodeText: context.node.text,
+            });
+
+      if (input.trim().length === 0) {
+        return;
+      }
+
       const vector = await createEmbedding(input);
 
       await ctx.runMutation(saveNodeEmbeddingRef, {

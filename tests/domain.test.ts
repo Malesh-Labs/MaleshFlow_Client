@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { extractLinks } from "../lib/domain/links";
 import { parseMarkdownFile, serializePageToMarkdown } from "../lib/domain/markdown";
-import { buildDeterministicEmbedding, buildEmbeddingInput } from "../lib/domain/embeddings";
+import {
+  buildDeterministicEmbedding,
+  buildEmbeddingInput,
+  buildRootEmbeddingInput,
+} from "../lib/domain/embeddings";
 
 test("extractLinks finds wiki links and node refs", () => {
   const links = extractLinks("Plan [[Launch Page]] after reviewing ((node_123)).");
@@ -74,4 +78,21 @@ test("buildDeterministicEmbedding is stable and uses contextual input", () => {
 
   assert.equal(first.length, 1536);
   assert.deepEqual(first, second);
+});
+
+test("buildRootEmbeddingInput includes root-level subtree context", () => {
+  const input = buildRootEmbeddingInput({
+    pageTitle: "Dating Model",
+    rootText: "Model",
+    subtreeLines: [
+      "Be playful and grounded",
+      "  [ ] Ask better follow-up questions",
+      "Use concrete examples",
+    ],
+  });
+
+  assert.match(input, /Page: Dating Model/);
+  assert.match(input, /Root: Model/);
+  assert.match(input, /Subtree:/);
+  assert.match(input, /\[ \] Ask better follow-up questions/);
 });

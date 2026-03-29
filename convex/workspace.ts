@@ -9,6 +9,7 @@ import {
   deleteNodeTree,
   enqueueNodeEmbeddingRefresh,
   enqueueNodeAiWork,
+  enqueuePageRootEmbeddingRefresh,
   listPageNodes,
   setNodeTreeArchivedState,
   syncLinksForNode,
@@ -423,6 +424,8 @@ export const createPage = mutation({
       });
     }
 
+    await enqueuePageRootEmbeddingRefresh(ctx, pageId);
+
     return pageId;
   },
 });
@@ -561,6 +564,8 @@ export const createNodesBatch = mutation({
       await enqueueNodeAiWork(ctx, nodeId);
     }
 
+    await enqueuePageRootEmbeddingRefresh(ctx, args.pageId);
+
     return createdNodes;
   },
 });
@@ -610,6 +615,7 @@ export const updateNode = mutation({
     if (refreshed) {
       await syncLinksForNode(ctx.db, refreshed);
       await enqueueNodeAiWork(ctx, refreshed._id);
+      await enqueuePageRootEmbeddingRefresh(ctx, refreshed.pageId);
     }
   },
 });
@@ -676,6 +682,8 @@ export const splitNode = mutation({
       await syncLinksForNode(ctx.db, createdNode);
       await enqueueNodeAiWork(ctx, createdNode._id);
     }
+
+    await enqueuePageRootEmbeddingRefresh(ctx, node.pageId);
 
     return {
       updatedNode,
@@ -754,6 +762,8 @@ export const replaceNodeAndInsertSiblings = mutation({
       await enqueueNodeAiWork(ctx, updatedNode._id);
     }
 
+    await enqueuePageRootEmbeddingRefresh(ctx, node.pageId);
+
     return {
       updatedNode,
       createdNodes,
@@ -776,6 +786,7 @@ export const moveNode = mutation({
       throw new Error("Node not found.");
     }
 
+    const previousPageId = node.pageId;
     const pageId = args.pageId ?? node.pageId;
     const parentNodeId =
       args.parentNodeId === undefined ? node.parentNodeId : args.parentNodeId;
@@ -794,6 +805,10 @@ export const moveNode = mutation({
     });
 
     await enqueueNodeEmbeddingRefresh(ctx, args.nodeId);
+    await enqueuePageRootEmbeddingRefresh(ctx, previousPageId);
+    if (pageId !== previousPageId) {
+      await enqueuePageRootEmbeddingRefresh(ctx, pageId);
+    }
   },
 });
 
@@ -821,6 +836,8 @@ export const reorderNode = mutation({
       position,
       updatedAt: getTimestamp(),
     });
+
+    await enqueuePageRootEmbeddingRefresh(ctx, node.pageId);
   },
 });
 
@@ -847,6 +864,11 @@ export const setNodeTreeArchived = mutation({
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
+    const node = await ctx.db.get(args.nodeId);
+    if (!node) {
+      throw new Error("Node not found.");
+    }
+
     const descendants = await setNodeTreeArchivedState(
       ctx.db,
       args.nodeId,
@@ -863,6 +885,8 @@ export const setNodeTreeArchived = mutation({
         await enqueueNodeAiWork(ctx, node._id);
       }
     }
+
+    await enqueuePageRootEmbeddingRefresh(ctx, node.pageId);
   },
 });
 

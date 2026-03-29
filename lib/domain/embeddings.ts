@@ -14,6 +14,22 @@ export function buildEmbeddingInput(args: {
   return parts.join("\n");
 }
 
+export function buildRootEmbeddingInput(args: {
+  pageTitle: string;
+  rootText: string;
+  subtreeLines: string[];
+}) {
+  const parts = [
+    `Page: ${args.pageTitle}`,
+    `Root: ${args.rootText}`,
+    args.subtreeLines.length > 0
+      ? `Subtree:\n${args.subtreeLines.join("\n")}`
+      : "",
+  ].filter(Boolean);
+
+  return parts.join("\n");
+}
+
 export function buildDeterministicEmbedding(text: string) {
   const vector = new Array<number>(EMBEDDING_DIMENSIONS).fill(0);
   const normalized = text.trim().toLowerCase();
