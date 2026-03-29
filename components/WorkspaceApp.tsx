@@ -1134,6 +1134,9 @@ function ConfiguredWorkspace({
   const sidebarLinkedPageIds = new Set((sidebarTree?.linkedPageIds ?? []).map((pageId) => pageId as string));
   const isSidebarQueryLoading =
     Boolean(ownerKey) && isOwnerKeyValid === true && typeof sidebarTree === "undefined";
+  const isMainPaneLoading =
+    (Boolean(ownerKey) && isOwnerKeyValid === true && typeof pages === "undefined") ||
+    (selectedPageId !== null && typeof pageTree === "undefined");
 
   const modelSection = findSectionNode(tree, "model");
   const recentExamplesSection = findSectionNode(tree, "recentExamples");
@@ -2469,7 +2472,18 @@ function ConfiguredWorkspace({
         </aside>
 
         <section className="p-6 md:p-10">
-          {!selectedPage ? (
+          {isMainPaneLoading ? (
+            <div className="grid min-h-[60vh] place-items-center border border-dashed border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface)_70%,transparent)] p-8 text-center">
+              <div>
+                <p className="text-xs uppercase tracking-[0.3em] text-[var(--workspace-accent)]">
+                  Loading
+                </p>
+                <h2 className="mt-3 text-3xl font-semibold tracking-tight">
+                  Opening page…
+                </h2>
+              </div>
+            </div>
+          ) : !selectedPage ? (
             <div className="grid min-h-[60vh] place-items-center border border-dashed border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface)_70%,transparent)] p-8 text-center">
               <div>
                 <p className="text-xs uppercase tracking-[0.3em] text-[var(--workspace-accent)]">
