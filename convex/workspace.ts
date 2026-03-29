@@ -110,6 +110,30 @@ export const validateOwnerKey = query({
   },
 });
 
+export const rebuildEmbeddings = mutation({
+  args: {
+    ownerKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const nodes = (await ctx.db.query("nodes").collect()).filter(
+      (node) => !node.archived,
+    );
+    const uniqueNodeIds = [...new Set(nodes.map((node) => node._id))];
+
+    for (const nodeId of uniqueNodeIds) {
+      await ctx.scheduler.runAfter(0, internal.ai.generateEmbeddingForNode, {
+        nodeId,
+      });
+    }
+
+    return {
+      queuedCount: uniqueNodeIds.length,
+    };
+  },
+});
+
 export const getPageTree = query({
   args: {
     ownerKey: v.string(),

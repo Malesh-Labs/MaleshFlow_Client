@@ -485,9 +485,11 @@ function ConfiguredWorkspace({
   const [modelChatInput, setModelChatInput] = useState("");
   const [chatStatus, setChatStatus] = useState("");
   const [journalFeedbackStatus, setJournalFeedbackStatus] = useState("");
+  const [embeddingRebuildStatus, setEmbeddingRebuildStatus] = useState("");
   const [isCreatingPage, setIsCreatingPage] = useState<SidebarSection | null>(null);
   const [isSendingChat, setIsSendingChat] = useState(false);
   const [isGeneratingJournalFeedback, setIsGeneratingJournalFeedback] = useState(false);
+  const [isRebuildingEmbeddings, setIsRebuildingEmbeddings] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("pages");
   const [paletteQuery, setPaletteQuery] = useState("");
@@ -527,6 +529,7 @@ function ConfiguredWorkspace({
   const renamePage = useMutation(api.workspace.renamePage);
   const archivePage = useMutation(api.workspace.archivePage);
   const deletePageForever = useMutation(api.workspace.deletePageForever);
+  const rebuildEmbeddings = useMutation(api.workspace.rebuildEmbeddings);
   const createNodesBatch = useMutation(api.workspace.createNodesBatch);
   const updateNode = useMutation(api.workspace.updateNode);
   const moveNode = useMutation(api.workspace.moveNode);
@@ -714,6 +717,32 @@ function ConfiguredWorkspace({
     setJournalFeedbackStatus("");
     clearNodeSelection();
   }, [clearNodeSelection, pageTree?.page?._id, pageTree?.page?.title]);
+
+  const handleRebuildEmbeddings = async () => {
+    setIsRebuildingEmbeddings(true);
+    setEmbeddingRebuildStatus("");
+    try {
+      const result = (await rebuildEmbeddings({
+        ownerKey,
+      })) as {
+        queuedCount: number;
+      };
+
+      setEmbeddingRebuildStatus(
+        result.queuedCount > 0
+          ? `Queued ${result.queuedCount} node embeddings for refresh.`
+          : "No active nodes needed an embedding rebuild.",
+      );
+    } catch (error) {
+      setEmbeddingRebuildStatus(
+        error instanceof Error
+          ? error.message
+          : "Could not queue an embedding rebuild right now.",
+      );
+    } finally {
+      setIsRebuildingEmbeddings(false);
+    }
+  };
 
   useEffect(() => {
     if (!dragSelection) {
@@ -1292,13 +1321,28 @@ function ConfiguredWorkspace({
             </section>
           </div>
           <div className="mt-6 pt-4">
-            <button
-              type="button"
-              onClick={() => setOwnerKey("")}
-              className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-            >
-              Lock
-            </button>
+            <div className="space-y-3">
+              <button
+                type="button"
+                onClick={() => void handleRebuildEmbeddings()}
+                disabled={isRebuildingEmbeddings}
+                className="w-full border border-[var(--workspace-border-control)] px-3 py-2 text-left text-xs font-medium uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
+              >
+                {isRebuildingEmbeddings ? "Rebuilding…" : "Rebuild Embeddings"}
+              </button>
+              {embeddingRebuildStatus ? (
+                <p className="text-xs leading-5 text-[var(--workspace-text-faint)]">
+                  {embeddingRebuildStatus}
+                </p>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setOwnerKey("")}
+                className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+              >
+                Lock
+              </button>
+            </div>
           </div>
         </aside>
 
