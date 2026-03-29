@@ -1770,6 +1770,89 @@ function ConfiguredWorkspace({
     [history, moveNode, ownerKey, selectSingleNode, selectedNodeIds, sidebarNodes, tree],
   );
 
+  const indentHighlightedNodeByKeyboard = useCallback(
+    async (outdent: boolean) => {
+      if (selectedNodeIds.size !== 1) {
+        return;
+      }
+
+      const nodeId = [...selectedNodeIds][0];
+      if (!nodeId) {
+        return;
+      }
+
+      const context = findNodeContext(sidebarNodes, tree, nodeId);
+      if (!context || getNodeMeta(context.node).locked === true) {
+        return;
+      }
+
+      const page = pagesById.get(context.pageId as string);
+      if (page?.archived) {
+        return;
+      }
+
+      const beforePlacement = buildNodePlacement(
+        context.pageId,
+        context.parentNodeId,
+        (context.previousSibling?._id as Id<"nodes"> | undefined) ?? null,
+      );
+      let afterPlacement: NodePlacement | null = null;
+
+      if (outdent) {
+        if (!context.node.parentNodeId) {
+          return;
+        }
+
+        const parentNode = workspaceNodeMap.get(context.node.parentNodeId as string);
+        if (!parentNode) {
+          return;
+        }
+
+        afterPlacement = buildNodePlacement(
+          context.pageId,
+          (parentNode.parentNodeId as Id<"nodes"> | null) ?? null,
+          parentNode._id as Id<"nodes">,
+        );
+
+        await moveNode({
+          ownerKey,
+          nodeId: context.node._id as Id<"nodes">,
+          pageId: context.pageId,
+          parentNodeId: (parentNode.parentNodeId as Id<"nodes"> | null) ?? null,
+          afterNodeId: parentNode._id as Id<"nodes">,
+        });
+      } else {
+        if (!context.previousSibling) {
+          return;
+        }
+
+        afterPlacement = buildNodePlacement(
+          context.pageId,
+          context.previousSibling._id as Id<"nodes">,
+          null,
+        );
+
+        await moveNode({
+          ownerKey,
+          nodeId: context.node._id as Id<"nodes">,
+          pageId: context.pageId,
+          parentNodeId: context.previousSibling._id as Id<"nodes">,
+        });
+      }
+
+      history.pushUndoEntry({
+        type: "move_node",
+        pageId: context.pageId,
+        nodeId: context.node._id as Id<"nodes">,
+        beforePlacement,
+        afterPlacement,
+        focusEditorId: getNodeEditorId(context.node._id as Id<"nodes">),
+      });
+      selectSingleNode(context.node._id);
+    },
+    [history, moveNode, ownerKey, pagesById, selectSingleNode, selectedNodeIds, sidebarNodes, tree, workspaceNodeMap],
+  );
+
   const toggleHighlightedNodeKind = useCallback(async () => {
     if (selectedNodeIds.size !== 1) {
       return;
@@ -2130,6 +2213,12 @@ function ConfiguredWorkspace({
       }
 
       if (selectedNodeIds.size > 0 && !isTextEntryElement(event.target)) {
+        if (event.key === "Tab") {
+          event.preventDefault();
+          void indentHighlightedNodeByKeyboard(event.shiftKey);
+          return;
+        }
+
         if (event.key === "ArrowUp" || event.key === "ArrowDown") {
           event.preventDefault();
           const direction = event.key === "ArrowDown" ? 1 : -1;
@@ -2193,6 +2282,7 @@ function ConfiguredWorkspace({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    indentHighlightedNodeByKeyboard,
     moveHighlightedNodeByKeyboard,
     openPalette,
     paletteOpen,
