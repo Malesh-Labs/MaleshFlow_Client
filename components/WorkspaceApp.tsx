@@ -75,19 +75,6 @@ type SetNodeTreeArchivedMutation = ReturnType<
   typeof useMutation<typeof api.workspace.setNodeTreeArchived>
 >;
 
-type ModelChatDebug = {
-  model: string;
-  systemPrompt: string;
-  userPrompt: string;
-  response:
-    | {
-        summary: string;
-        modelLines: string[];
-      }
-    | null;
-  error: string | null;
-};
-
 type SectionSlot =
   | "model"
   | "recentExamples"
@@ -496,7 +483,6 @@ function ConfiguredWorkspace({
   const [pageTitleDraft, setPageTitleDraft] = useState("");
   const [modelChatInput, setModelChatInput] = useState("");
   const [chatStatus, setChatStatus] = useState("");
-  const [modelChatDebug, setModelChatDebug] = useState<ModelChatDebug | null>(null);
   const [journalFeedbackStatus, setJournalFeedbackStatus] = useState("");
   const [isCreatingPage, setIsCreatingPage] = useState<SidebarSection | null>(null);
   const [isSendingChat, setIsSendingChat] = useState(false);
@@ -514,7 +500,7 @@ function ConfiguredWorkspace({
   const [pendingRevealNodeId, setPendingRevealNodeId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [collapsedSidebarSections, setCollapsedSidebarSections] = useState<Set<SidebarGroupKey>>(
-    () => new Set(),
+    () => new Set<SidebarGroupKey>([...SIDEBAR_SECTIONS, ARCHIVE_SECTION_LABEL]),
   );
   const [dragSelection, setDragSelection] = useState<{
     anchorNodeId: string;
@@ -617,13 +603,6 @@ function ConfiguredWorkspace({
   const recentExamplesSection = findSectionNode(tree, "recentExamples");
   const journalThoughtsSection = findSectionNode(tree, "journalThoughts");
   const journalFeedbackSection = findSectionNode(tree, "journalFeedback");
-  const visibleModelChatDebug = modelChatDebug ?? {
-    model: "gpt-5-mini",
-    systemPrompt: "",
-    userPrompt: "",
-    response: null,
-    error: null,
-  };
   const genericRoots =
     pageMeta.pageType === "model"
       ? collectChildren(
@@ -696,7 +675,6 @@ function ConfiguredWorkspace({
     setPageTitleDraft(pageTree?.page?.title ?? "");
     setChatStatus("");
     setJournalFeedbackStatus("");
-    setModelChatDebug(null);
     clearNodeSelection();
   }, [clearNodeSelection, pageTree?.page?._id, pageTree?.page?.title]);
 
@@ -1080,10 +1058,8 @@ function ConfiguredWorkspace({
         prompt: modelChatInput.trim(),
       })) as {
         summary: string;
-        debug: ModelChatDebug;
       };
       setChatStatus(result.summary);
-      setModelChatDebug(result.debug);
       setModelChatInput("");
     } catch (error) {
       setChatStatus(
@@ -1091,7 +1067,6 @@ function ConfiguredWorkspace({
           ? error.message
           : "Could not update the model right now.",
       );
-      setModelChatDebug(null);
     } finally {
       setIsSendingChat(false);
     }
@@ -1533,45 +1508,6 @@ function ConfiguredWorkspace({
                       </button>
                     </div>
                   </form>
-                  <div className="mt-4 space-y-4 border-t border-[#ebe2d2] pt-4 text-xs text-[#5c5348]">
-                    <p className="font-semibold uppercase tracking-[0.22em] text-[#8a6c2d]">
-                      AI Debug
-                    </p>
-                    <div>
-                      <p className="font-semibold uppercase tracking-[0.18em] text-[#8a6c2d]">
-                        OpenAI Request
-                      </p>
-                      <pre className="mt-2 max-h-[320px] overflow-auto whitespace-pre-wrap border border-[#ebe2d2] bg-[#fcfbf8] p-4 font-mono text-[13px] leading-6">
-{JSON.stringify(
-  {
-    model: visibleModelChatDebug.model,
-    systemPrompt:
-      visibleModelChatDebug.systemPrompt || "(send a message to populate this)",
-    userPrompt:
-      visibleModelChatDebug.userPrompt || "(send a message to populate this)",
-  },
-  null,
-  2,
-)}
-                      </pre>
-                    </div>
-                    <div>
-                      <p className="font-semibold uppercase tracking-[0.18em] text-[#8a6c2d]">
-                        OpenAI Response
-                      </p>
-                      <pre className="mt-2 max-h-[320px] overflow-auto whitespace-pre-wrap border border-[#ebe2d2] bg-[#fcfbf8] p-4 font-mono text-[13px] leading-6">
-{JSON.stringify(
-  visibleModelChatDebug.error
-    ? { error: visibleModelChatDebug.error }
-    : visibleModelChatDebug.response ?? {
-        status: "No response yet",
-      },
-  null,
-  2,
-)}
-                      </pre>
-                    </div>
-                  </div>
                 </div>
               ) : null}
             </div>
