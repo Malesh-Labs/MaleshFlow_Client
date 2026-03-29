@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useAction, useConvexConnectionState, useMutation, useQuery } from "convex/react";
 import {
   Component,
   useCallback,
@@ -960,6 +960,8 @@ function ConfiguredWorkspace({
   const [pendingRevealNodeId, setPendingRevealNodeId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [showSidebarDiagnostics, setShowSidebarDiagnostics] = useState(false);
+  const [sidebarBootstrapError, setSidebarBootstrapError] = useState<string>("");
   const [dragSelection, setDragSelection] = useState<{
     anchorNodeId: string;
     currentNodeId: string;
@@ -967,6 +969,7 @@ function ConfiguredWorkspace({
   const [pendingInsertedComposer, setPendingInsertedComposer] =
     useState<PendingInsertedComposer | null>(null);
   const [locationPageId, setLocationPageId] = useState<string | null>(null);
+  const connectionState = useConvexConnectionState();
 
   const isOwnerKeyValid = useQuery(
     api.workspace.validateOwnerKey,
@@ -1072,6 +1075,8 @@ function ConfiguredWorkspace({
     (sidebarTree?.nodes ?? []).map((node) => [node._id as string, node]),
   );
   const sidebarLinkedPageIds = new Set((sidebarTree?.linkedPageIds ?? []).map((pageId) => pageId as string));
+  const isSidebarQueryLoading =
+    Boolean(ownerKey) && isOwnerKeyValid === true && typeof sidebarTree === "undefined";
 
   const modelSection = findSectionNode(tree, "model");
   const recentExamplesSection = findSectionNode(tree, "recentExamples");
@@ -1199,19 +1204,43 @@ function ConfiguredWorkspace({
   useEffect(() => {
     if (!ownerKey || !isOwnerKeyValid) {
       hasRequestedSidebarPage.current = false;
+      setSidebarBootstrapError("");
+      setShowSidebarDiagnostics(false);
       return;
     }
 
     if (sidebarTree === null && !hasRequestedSidebarPage.current) {
       hasRequestedSidebarPage.current = true;
-      void ensureSidebarPage({ ownerKey });
+      setSidebarBootstrapError("");
+      void ensureSidebarPage({ ownerKey }).catch((error) => {
+        hasRequestedSidebarPage.current = false;
+        setSidebarBootstrapError(
+          error instanceof Error
+            ? error.message
+            : "Could not create the sidebar page.",
+        );
+      });
       return;
     }
 
     if (sidebarTree) {
       hasRequestedSidebarPage.current = false;
+      setSidebarBootstrapError("");
     }
   }, [ensureSidebarPage, isOwnerKeyValid, ownerKey, sidebarTree]);
+
+  useEffect(() => {
+    if (!isSidebarQueryLoading) {
+      setShowSidebarDiagnostics(false);
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setShowSidebarDiagnostics(true);
+    }, 1500);
+
+    return () => window.clearTimeout(timeout);
+  }, [isSidebarQueryLoading]);
 
   useEffect(() => {
     if (!pages) {
@@ -1298,6 +1327,24 @@ function ConfiguredWorkspace({
     clearNodeSelection();
     setPendingInsertedComposer(null);
   }, [clearNodeSelection, pageTree?.page?._id, pageTree?.page?.title]);
+
+  const handleRetrySidebarSetup = useCallback(async () => {
+    if (!ownerKey) {
+      return;
+    }
+
+    hasRequestedSidebarPage.current = false;
+    setSidebarBootstrapError("");
+    setShowSidebarDiagnostics(false);
+
+    try {
+      await ensureSidebarPage({ ownerKey });
+    } catch (error) {
+      setSidebarBootstrapError(
+        error instanceof Error ? error.message : "Could not create the sidebar page.",
+      );
+    }
+  }, [ensureSidebarPage, ownerKey]);
 
   const handleRebuildEmbeddings = async () => {
     setIsRebuildingEmbeddings(true);
@@ -2108,9 +2155,7 @@ function ConfiguredWorkspace({
                     Use `[[Page]]` links to build your map.
                   </p>
                 </div>
-                {!sidebarTree ? (
-                  <p className="text-sm text-[var(--workspace-text-faint)]">Preparing sidebar…</p>
-                ) : (
+                {sidebarTree ? (
                   <div className="space-y-1">
                     <OutlineNodeList
                       nodes={sidebarNodes}
@@ -2148,6 +2193,83 @@ function ConfiguredWorkspace({
                       depth={0}
                       placeholder="New sidebar line…"
                     />
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-sm text-[var(--workspace-text-faint)]">
+                      {sidebarTree === null ? "Creating sidebar structure…" : "Preparing sidebar…"}
+                    </p>
+                    {sidebarBootstrapError ? (
+                      <div className="border border-[var(--workspace-danger)] bg-[var(--workspace-surface-muted)] p-3">
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-danger)]">
+                          Sidebar Error
+                        </p>
+                        <p className="mt-2 text-sm leading-6 text-[var(--workspace-text-subtle)]">
+                          {sidebarBootstrapError}
+                        </p>
+                      </div>
+                    ) : null}
+                    {showSidebarDiagnostics ? (
+                      <div className="border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] p-3 text-sm text-[var(--workspace-text-subtle)]">
+                        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                          Sidebar Diagnostics
+                        </p>
+                        <div className="mt-2 space-y-1">
+                          <p>
+                            Connection:{" "}
+                            {connectionState.isWebSocketConnected
+                              ? "connected"
+                              : connectionState.hasEverConnected
+                                ? "reconnecting"
+                                : "connecting"}
+                          </p>
+                          <p>
+                            Owner token:{" "}
+                            {isOwnerKeyValid === true
+                              ? "valid"
+                              : isOwnerKeyValid === false
+                                ? "invalid"
+                                : "checking"}
+                          </p>
+                          <p>
+                            Pages query: {pages ? `${pages.length} page(s) loaded` : "loading"}
+                          </p>
+                          <p>
+                            Sidebar query:{" "}
+                            {sidebarTree === null
+                              ? "missing sidebar page"
+                              : isSidebarQueryLoading
+                                ? "still loading"
+                                : "idle"}
+                          </p>
+                          <p>
+                            In-flight requests:{" "}
+                            {connectionState.hasInflightRequests ? "yes" : "no"}
+                          </p>
+                        </div>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void handleRetrySidebarSetup()}
+                            className="border border-[var(--workspace-border-control)] px-3 py-1.5 text-xs font-medium uppercase tracking-[0.14em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                          >
+                            Retry Sidebar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => window.location.reload()}
+                            className="border border-[var(--workspace-border-control)] px-3 py-1.5 text-xs font-medium uppercase tracking-[0.14em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                          >
+                            Reload
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                    {pages && pages.length > 0 ? (
+                      <p className="text-xs leading-5 text-[var(--workspace-text-faint)]">
+                        Your pages are still available below while the sidebar outline catches up.
+                      </p>
+                    ) : null}
                   </div>
                 )}
 
