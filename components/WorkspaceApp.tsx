@@ -51,6 +51,12 @@ const OWNER_KEY_EVENT = "maleshflow-owner-key-change";
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
 type PageType = "default" | "model" | "journal";
 type PageDoc = Doc<"pages">;
+type PaletteMode = "pages" | "nodes";
+type NodeSearchResult = {
+  node: Doc<"nodes">;
+  page: PageDoc | null;
+  score?: number;
+};
 type UpdateNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.updateNode>>;
 type CreateNodesBatchMutation = ReturnType<typeof useMutation<typeof api.workspace.createNodesBatch>>;
 type MoveNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.moveNode>>;
@@ -190,6 +196,34 @@ function formatLocalDateTitle(date = new Date()) {
   const month = `${date.getMonth() + 1}`.padStart(2, "0");
   const day = `${date.getDate()}`.padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function normalizeNodeSearchResults(results: unknown[]): NodeSearchResult[] {
+  const normalizedResults: Array<NodeSearchResult | null> = results.map((result) => {
+    if (!result || typeof result !== "object") {
+      return null;
+    }
+
+    const record = result as {
+      node?: Doc<"nodes">;
+      page?: PageDoc | null;
+      score?: number;
+    };
+
+    if (!record.node) {
+      return null;
+    }
+
+    return {
+      node: record.node,
+      page: record.page ?? null,
+      score: record.score,
+    };
+  });
+
+  return normalizedResults.filter(
+    (result): result is NodeSearchResult => result !== null,
+  );
 }
 
 function collectChildren(nodes: TreeNode[], excludedIds: Set<string>) {
@@ -461,8 +495,12 @@ function ConfiguredWorkspace({
   const [isSendingChat, setIsSendingChat] = useState(false);
   const [isGeneratingJournalFeedback, setIsGeneratingJournalFeedback] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteMode, setPaletteMode] = useState<PaletteMode>("pages");
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteHighlightIndex, setPaletteHighlightIndex] = useState(0);
+  const [nodeSearchResults, setNodeSearchResults] = useState<NodeSearchResult[]>([]);
+  const [isNodeSearchLoading, setIsNodeSearchLoading] = useState(false);
+  const [pendingRevealNodeId, setPendingRevealNodeId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [dragSelection, setDragSelection] = useState<{
     anchorNodeId: string;
@@ -487,6 +525,7 @@ function ConfiguredWorkspace({
   const createPage = useMutation(api.workspace.createPage);
   const renamePage = useMutation(api.workspace.renamePage);
   const archivePage = useMutation(api.workspace.archivePage);
+  const deletePageForever = useMutation(api.workspace.deletePageForever);
   const createNodesBatch = useMutation(api.workspace.createNodesBatch);
   const updateNode = useMutation(api.workspace.updateNode);
   const moveNode = useMutation(api.workspace.moveNode);
@@ -497,6 +536,7 @@ function ConfiguredWorkspace({
   const setNodeTreeArchived = useMutation(api.workspace.setNodeTreeArchived);
   const rewriteModelSection = useAction(api.chat.rewriteModelSection);
   const generateJournalFeedback = useAction(api.chat.generateJournalFeedback);
+  const searchNodes = useAction(api.ai.searchNodes);
   const pageTitleInputRef = useRef<HTMLInputElement>(null);
   const pageTitleDraftRef = useRef(pageTitleDraft);
   const paletteInputRef = useRef<HTMLInputElement>(null);
@@ -504,6 +544,16 @@ function ConfiguredWorkspace({
   const clearNodeSelection = useCallback(() => {
     setSelectedNodeIds(new Set());
     setDragSelection(null);
+  }, []);
+
+  const openPalette = useCallback((mode: PaletteMode) => {
+    setPaletteMode(mode);
+    setPaletteQuery("");
+    setPaletteHighlightIndex(0);
+    if (mode === "nodes") {
+      setNodeSearchResults([]);
+    }
+    setPaletteOpen(true);
   }, []);
 
   const history = useWorkspaceHistoryController({
@@ -588,6 +638,8 @@ function ConfiguredWorkspace({
     paletteQuery,
     14,
   );
+  const activePaletteResultsCount =
+    paletteMode === "pages" ? paletteResults.length : nodeSearchResults.length;
 
   useEffect(() => {
     pageTitleDraftRef.current = pageTitleDraft;
@@ -647,14 +699,90 @@ function ConfiguredWorkspace({
 
     setPaletteHighlightIndex(0);
     window.setTimeout(() => paletteInputRef.current?.focus(), 0);
-  }, [paletteOpen]);
+  }, [paletteOpen, paletteMode]);
+
+  useEffect(() => {
+    if (!paletteOpen || paletteMode !== "nodes") {
+      setIsNodeSearchLoading(false);
+      return;
+    }
+
+    const normalizedQuery = paletteQuery.trim();
+    if (normalizedQuery.length === 0) {
+      setNodeSearchResults([]);
+      setIsNodeSearchLoading(false);
+      return;
+    }
+
+    let isCancelled = false;
+    setIsNodeSearchLoading(true);
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const results = (await searchNodes({
+          ownerKey,
+          query: normalizedQuery,
+          limit: 12,
+        })) as unknown[];
+
+        if (isCancelled) {
+          return;
+        }
+
+        setNodeSearchResults(normalizeNodeSearchResults(results));
+      } catch {
+        if (!isCancelled) {
+          setNodeSearchResults([]);
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsNodeSearchLoading(false);
+        }
+      }
+    }, 180);
+
+    return () => {
+      isCancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [ownerKey, paletteMode, paletteOpen, paletteQuery, searchNodes]);
+
+  useEffect(() => {
+    if (!pendingRevealNodeId || !selectedPageId) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const target = document.querySelector<HTMLElement>(
+        `[data-node-id="${pendingRevealNodeId}"]`,
+      );
+
+      if (!target) {
+        return;
+      }
+
+      setSelectedNodeIds(new Set([pendingRevealNodeId]));
+      target.scrollIntoView({
+        block: "center",
+        behavior: "smooth",
+      });
+      setPendingRevealNodeId(null);
+    }, 120);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [pendingRevealNodeId, selectedPageId]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      const isModifier = event.metaKey || event.ctrlKey;
+      if (isModifier && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        setPaletteQuery("");
-        setPaletteOpen(true);
+        openPalette("pages");
+        return;
+      }
+
+      if (isModifier && event.key.toLowerCase() === "o") {
+        event.preventDefault();
+        openPalette(event.shiftKey ? "nodes" : "pages");
         return;
       }
 
@@ -663,6 +791,8 @@ function ConfiguredWorkspace({
           event.preventDefault();
           setPaletteOpen(false);
           setPaletteQuery("");
+          setPaletteMode("pages");
+          setNodeSearchResults([]);
           return;
         }
 
@@ -675,7 +805,7 @@ function ConfiguredWorkspace({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [paletteOpen, selectedNodeIds.size]);
+  }, [openPalette, paletteOpen, selectedNodeIds.size]);
 
   useEffect(() => {
     if (selectedNodeIds.size === 0) {
@@ -788,6 +918,22 @@ function ConfiguredWorkspace({
     setPaletteOpen(false);
     setPaletteQuery("");
     setPaletteHighlightIndex(0);
+    setPaletteMode("pages");
+    setNodeSearchResults([]);
+    clearNodeSelection();
+  }, [clearNodeSelection]);
+
+  const handleSelectNodeSearchResult = useCallback((result: NodeSearchResult) => {
+    if (!result.page) {
+      return;
+    }
+
+    setSelectedPageId(result.page._id);
+    setPendingRevealNodeId(result.node._id as string);
+    setPaletteOpen(false);
+    setPaletteQuery("");
+    setPaletteHighlightIndex(0);
+    setPaletteMode("nodes");
     clearNodeSelection();
   }, [clearNodeSelection]);
 
@@ -797,6 +943,29 @@ function ConfiguredWorkspace({
       pageId: page._id,
       archived,
     });
+  };
+
+  const handleDeletePageForever = async (page: PageDoc) => {
+    const firstConfirmation = window.confirm(
+      `Delete "${page.title}" forever? This will permanently remove the archived page and all of its contents.`,
+    );
+    if (!firstConfirmation) {
+      return;
+    }
+
+    const secondConfirmation = window.confirm(
+      `Are you absolutely sure? "${page.title}" cannot be recovered after this.`,
+    );
+    if (!secondConfirmation) {
+      return;
+    }
+
+    await deletePageForever({
+      ownerKey,
+      pageId: page._id,
+    });
+
+    setSelectedPageId(null);
   };
 
   const handleGenerateJournalFeedback = async () => {
@@ -862,7 +1031,7 @@ function ConfiguredWorkspace({
     if (event.key === "ArrowDown") {
       event.preventDefault();
       setPaletteHighlightIndex((current) =>
-        paletteResults.length === 0 ? 0 : Math.min(current + 1, paletteResults.length - 1),
+        activePaletteResultsCount === 0 ? 0 : Math.min(current + 1, activePaletteResultsCount - 1),
       );
       return;
     }
@@ -870,16 +1039,24 @@ function ConfiguredWorkspace({
     if (event.key === "ArrowUp") {
       event.preventDefault();
       setPaletteHighlightIndex((current) =>
-        paletteResults.length === 0 ? 0 : Math.max(current - 1, 0),
+        activePaletteResultsCount === 0 ? 0 : Math.max(current - 1, 0),
       );
       return;
     }
 
     if (event.key === "Enter") {
       event.preventDefault();
-      const highlighted = paletteResults[paletteHighlightIndex];
+      if (paletteMode === "pages") {
+        const highlighted = paletteResults[paletteHighlightIndex];
+        if (highlighted) {
+          handleSelectPage(highlighted._id);
+        }
+        return;
+      }
+
+      const highlighted = nodeSearchResults[paletteHighlightIndex];
       if (highlighted) {
-        handleSelectPage(highlighted._id);
+        handleSelectNodeSearchResult(highlighted);
       }
     }
   };
@@ -912,12 +1089,20 @@ function ConfiguredWorkspace({
             <button
               type="button"
               onClick={() => {
-                setPaletteQuery("");
-                setPaletteOpen(true);
+                openPalette("pages");
               }}
               className="border border-[#c9bda8] px-3 py-1 text-xs font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
             >
-              Search
+              Pages
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                openPalette("nodes");
+              }}
+              className="border border-[#c9bda8] px-3 py-1 text-xs font-medium text-[#5c5348] transition hover:border-[#8a6c2d] hover:text-[#1b1916]"
+            >
+              Semantic
             </button>
             <button
               type="button"
@@ -1067,6 +1252,15 @@ function ConfiguredWorkspace({
                     >
                       {isPageArchived ? "Restore" : "Archive"}
                     </button>
+                    {isPageArchived ? (
+                      <button
+                        type="button"
+                        onClick={() => selectedPage && void handleDeletePageForever(selectedPage)}
+                        className="border border-[#c95e4b] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#c95e4b] transition hover:bg-[#c95e4b] hover:text-white"
+                      >
+                        Delete Forever
+                      </button>
+                    ) : null}
                   </div>
                 </div>
                 <div className="mt-6 h-px bg-[#ebe2d2]" />
@@ -1285,6 +1479,8 @@ function ConfiguredWorkspace({
           onClick={() => {
             setPaletteOpen(false);
             setPaletteQuery("");
+            setPaletteMode("pages");
+            setNodeSearchResults([]);
           }}
         >
           <div
@@ -1292,6 +1488,41 @@ function ConfiguredWorkspace({
             onClick={(event) => event.stopPropagation()}
           >
             <div className="border-b border-[#ebe2d2] px-5 py-4">
+              <div className="mb-4 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPaletteMode("pages");
+                    setPaletteQuery("");
+                    setPaletteHighlightIndex(0);
+                  }}
+                  className={clsx(
+                    "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
+                    paletteMode === "pages"
+                      ? "border-[#1f4a45] bg-[#1f4a45] text-white"
+                      : "border-[#d8cfbf] text-[#5c5348] hover:border-[#8a6c2d] hover:text-[#1b1916]",
+                  )}
+                >
+                  Pages
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPaletteMode("nodes");
+                    setPaletteQuery("");
+                    setPaletteHighlightIndex(0);
+                    setNodeSearchResults([]);
+                  }}
+                  className={clsx(
+                    "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
+                    paletteMode === "nodes"
+                      ? "border-[#1f4a45] bg-[#1f4a45] text-white"
+                      : "border-[#d8cfbf] text-[#5c5348] hover:border-[#8a6c2d] hover:text-[#1b1916]",
+                  )}
+                >
+                  Semantic
+                </button>
+              </div>
               <input
                 ref={paletteInputRef}
                 value={paletteQuery}
@@ -1300,14 +1531,19 @@ function ConfiguredWorkspace({
                   setPaletteHighlightIndex(0);
                 }}
                 onKeyDown={handlePaletteKeyDown}
-                placeholder="Search pages..."
+                placeholder={
+                  paletteMode === "pages"
+                    ? "Search pages..."
+                    : "Search notes and tasks semantically across the workspace..."
+                }
                 className="w-full border-0 bg-transparent p-0 text-lg outline-none"
               />
             </div>
             <div className="max-h-[420px] overflow-y-auto py-2">
-              {paletteResults.length === 0 ? (
-                <p className="px-5 py-4 text-sm text-[#6a6257]">No matching pages.</p>
-              ) : (
+              {paletteMode === "pages" ? (
+                paletteResults.length === 0 ? (
+                  <p className="px-5 py-4 text-sm text-[#6a6257]">No matching pages.</p>
+                ) : (
                 paletteResults.map((page, index) => {
                   const pageInfo = getPageMeta(page);
                   return (
@@ -1337,6 +1573,46 @@ function ConfiguredWorkspace({
                             Archived
                           </span>
                         ) : null}
+                      </span>
+                    </button>
+                  );
+                })
+                )
+              ) : paletteQuery.trim().length === 0 ? (
+                <p className="px-5 py-4 text-sm text-[#6a6257]">
+                  Search across all active notes and tasks in all pages.
+                </p>
+              ) : isNodeSearchLoading ? (
+                <p className="px-5 py-4 text-sm text-[#6a6257]">Searching notes…</p>
+              ) : nodeSearchResults.length === 0 ? (
+                <p className="px-5 py-4 text-sm text-[#6a6257]">No matching notes.</p>
+              ) : (
+                nodeSearchResults.map((result, index) => {
+                  const pageInfo = getPageMeta(result.page);
+                  return (
+                    <button
+                      key={`${result.node._id}:${result.page?._id ?? "page"}`}
+                      type="button"
+                      onMouseEnter={() => setPaletteHighlightIndex(index)}
+                      onClick={() => handleSelectNodeSearchResult(result)}
+                      className={clsx(
+                        "flex w-full items-start justify-between gap-3 px-5 py-3 text-left transition",
+                        index === paletteHighlightIndex
+                          ? "bg-[#efe7d9]"
+                          : "hover:bg-[#f4eee3]",
+                      )}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-[#1b1916]">
+                          {result.node.text || "(empty line)"}
+                        </span>
+                        <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[#7a6e5f]">
+                          {result.page?.title ?? "Unknown page"}
+                          {result.page ? ` • ${pageInfo.sidebarSection}` : ""}
+                        </span>
+                      </span>
+                      <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[#8a6c2d]">
+                        <span>{result.node.kind === "task" ? "Task" : "Note"}</span>
                       </span>
                     </button>
                   );

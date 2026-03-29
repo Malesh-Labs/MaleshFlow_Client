@@ -155,6 +155,64 @@ export const archivePage = mutation({
   },
 });
 
+export const deletePageForever = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const page = await ctx.db.get(args.pageId);
+    if (!page) {
+      throw new Error("Page not found.");
+    }
+
+    if (!page.archived) {
+      throw new Error("Only archived pages can be deleted forever.");
+    }
+
+    const pageNodes = await listPageNodes(ctx.db, args.pageId);
+    const rootNodes = pageNodes.filter((node) => node.parentNodeId === null);
+
+    for (const rootNode of rootNodes) {
+      await deleteNodeTree(ctx.db, rootNode._id);
+    }
+
+    const outboundPageLinks = await ctx.db
+      .query("links")
+      .withIndex("by_source_page", (query) => query.eq("sourcePageId", args.pageId))
+      .collect();
+    const inboundPageLinks = await ctx.db
+      .query("links")
+      .withIndex("by_target_page", (query) => query.eq("targetPageId", args.pageId))
+      .collect();
+
+    for (const link of [...outboundPageLinks, ...inboundPageLinks]) {
+      await ctx.db.delete(link._id);
+    }
+
+    const pageThreads = await ctx.db
+      .query("chatThreads")
+      .withIndex("by_page_updatedAt", (query) => query.eq("pageId", args.pageId))
+      .collect();
+
+    for (const thread of pageThreads) {
+      const messages = await ctx.db
+        .query("chatMessages")
+        .withIndex("by_thread_createdAt", (query) => query.eq("threadId", thread._id))
+        .collect();
+
+      for (const message of messages) {
+        await ctx.db.delete(message._id);
+      }
+
+      await ctx.db.delete(thread._id);
+    }
+
+    await ctx.db.delete(args.pageId);
+  },
+});
+
 export const getBacklinks = query({
   args: {
     ownerKey: v.string(),

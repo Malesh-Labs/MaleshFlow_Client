@@ -10,7 +10,7 @@ export const fallbackTextSearch = internalQuery({
     limit: v.number(),
   },
   handler: async (ctx, args) => {
-    const nodes = args.pageId
+    const rawNodes = args.pageId
       ? await ctx.db
           .query("nodes")
           .withIndex("by_page_archived", (query) =>
@@ -18,13 +18,15 @@ export const fallbackTextSearch = internalQuery({
           )
           .collect()
       : (await ctx.db.query("nodes").collect()).filter((node) => !node.archived);
-    const terms = args.query.toLowerCase().split(/\s+/).filter(Boolean);
-
-    const pageIds = [...new Set(nodes.map((node) => node.pageId))];
+    const pageIds = [...new Set(rawNodes.map((node) => node.pageId))];
     const pages = await Promise.all(pageIds.map((pageId) => ctx.db.get(pageId)));
     const pageMap = new Map(
-      pages.filter(Boolean).map((page) => [page!._id, page!]),
+      pages
+        .filter((page): page is Doc<"pages"> => Boolean(page) && !page!.archived)
+        .map((page) => [page._id, page]),
     );
+    const nodes = rawNodes.filter((node) => pageMap.has(node.pageId));
+    const terms = args.query.toLowerCase().split(/\s+/).filter(Boolean);
 
     return nodes
       .map((node: Doc<"nodes">) => {
@@ -68,13 +70,18 @@ export const hydrateEmbeddingMatches = internalQuery({
       presentNodes.map((node) => ctx.db.get(node!.pageId)),
     );
     const pageMap = new Map(
-      pages.filter(Boolean).map((page) => [page!._id, page!]),
+      pages
+        .filter((page): page is Doc<"pages"> => Boolean(page) && !page!.archived)
+        .map((page) => [page._id, page]),
     );
 
-    return presentNodes.map((node) => ({
-      node,
-      page: pageMap.get(node!.pageId) ?? null,
-    }));
+    return presentNodes
+      .filter((node): node is Doc<"nodes"> => Boolean(node) && !node!.archived)
+      .map((node) => ({
+        node,
+        page: pageMap.get(node.pageId) ?? null,
+      }))
+      .filter((entry) => entry.page !== null);
   },
 });
 
