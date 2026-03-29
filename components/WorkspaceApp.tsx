@@ -783,6 +783,28 @@ function findNodeContext(
   );
 }
 
+function isNodeWithinSelectedSubtree(
+  nodeId: string,
+  selectedNodeIds: Set<string>,
+  nodeMap: Map<string, Doc<"nodes">>,
+) {
+  if (selectedNodeIds.has(nodeId)) {
+    return true;
+  }
+
+  let currentNode = nodeMap.get(nodeId) ?? null;
+  while (currentNode?.parentNodeId) {
+    const parentNodeId = currentNode.parentNodeId as string;
+    if (selectedNodeIds.has(parentNodeId)) {
+      return true;
+    }
+
+    currentNode = nodeMap.get(parentNodeId) ?? null;
+  }
+
+  return false;
+}
+
 function findRevealTargetElement(
   targetNodeId: string,
   nodes: Doc<"nodes">[],
@@ -3586,7 +3608,7 @@ function OutlineNodeList({
           siblingIndex={index}
           depth={depth}
           isPageReadOnly={isPageReadOnly}
-          isSelected={selectedNodeIds.has(node._id)}
+          isSelected={isNodeWithinSelectedSubtree(node._id, selectedNodeIds, nodeMap)}
           selectedNodeIds={selectedNodeIds}
           onSelectSingleNode={onSelectSingleNode}
           onSelectNodeRange={onSelectNodeRange}
