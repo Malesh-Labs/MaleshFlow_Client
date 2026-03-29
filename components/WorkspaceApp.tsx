@@ -92,10 +92,12 @@ type LinkPreviewSegment =
     }
   | {
       key: string;
-      kind: "page";
+      kind: "link";
       text: string;
-      pageId: Id<"pages">;
+      pageId: Id<"pages"> | null;
       archived: boolean;
+      resolved: boolean;
+      linkKind: "page" | "node";
     };
 type KnowledgeChatResponse = {
   answer: string;
@@ -333,7 +335,7 @@ function buildLinkPreviewSegments(
 
   const segments: LinkPreviewSegment[] = [];
   let cursor = 0;
-  let hasResolvedPageLink = false;
+  let hasWikiLink = false;
 
   for (const match of matches) {
     if (match.start > cursor) {
@@ -344,29 +346,41 @@ function buildLinkPreviewSegments(
       });
     }
 
-    if (match.link.kind === "page") {
-      const page = pagesByTitle.get(normalizePageTitleKey(match.link.targetPageTitle));
-      if (page) {
-        hasResolvedPageLink = true;
-        segments.push({
-          key: `page:${match.start}`,
-          kind: "page",
-          text: page.title,
-          pageId: page._id,
-          archived: page.archived,
-        });
-      } else {
-        segments.push({
-          key: `text:${match.start}`,
-          kind: "text",
-          text: value.slice(match.start, match.end),
-        });
-      }
-    } else {
+    if (!match.link.label.startsWith("[[")) {
       segments.push({
         key: `text:${match.start}`,
         kind: "text",
         text: value.slice(match.start, match.end),
+      });
+      cursor = match.end;
+      continue;
+    }
+
+    hasWikiLink = true;
+    if (match.link.kind === "page") {
+      const page = pagesByTitle.get(normalizePageTitleKey(match.link.targetPageTitle));
+      segments.push({
+        key: `page:${match.start}`,
+        kind: "link",
+        text: match.link.targetPageTitle,
+        pageId: page?._id ?? null,
+        archived: page?.archived ?? false,
+        resolved: Boolean(page),
+        linkKind: "page",
+      });
+    } else {
+      const nodeLabel = match.link.label
+        .slice(2, -2)
+        .replace(/\|node:[a-zA-Z0-9_-]+$/, "")
+        .trim();
+      segments.push({
+        key: `node:${match.start}`,
+        kind: "link",
+        text: nodeLabel || "Linked node",
+        pageId: null,
+        archived: false,
+        resolved: false,
+        linkKind: "node",
       });
     }
 
@@ -381,7 +395,7 @@ function buildLinkPreviewSegments(
     });
   }
 
-  return hasResolvedPageLink ? segments : [];
+  return hasWikiLink ? segments : [];
 }
 
 function collectChildren(nodes: TreeNode[], excludedIds: Set<string>) {
@@ -2328,26 +2342,41 @@ function LinkedTextPreview({
         segment.kind === "text" ? (
           <span key={segment.key}>{segment.text}</span>
         ) : (
-          <button
-            key={segment.key}
-            type="button"
-            data-page-link-preview="true"
-            onMouseDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              onOpenPage(segment.pageId);
-            }}
-            className={clsx(
-              "inline cursor-pointer text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px] transition hover:text-[var(--workspace-brand-hover)]",
-              segment.archived ? "opacity-75" : "",
-            )}
-          >
-            {segment.text}
-          </button>
+          segment.pageId !== null ? (
+            <button
+              key={segment.key}
+              type="button"
+              data-page-link-preview="true"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                onOpenPage(segment.pageId!);
+              }}
+              className={clsx(
+                "inline cursor-pointer text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px] transition hover:text-[var(--workspace-brand-hover)]",
+                segment.archived ? "opacity-75" : "",
+              )}
+            >
+              {segment.text}
+            </button>
+          ) : (
+            <span
+              key={segment.key}
+              className={clsx(
+                "inline text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px]",
+                segment.linkKind === "node"
+                  ? "decoration-dotted"
+                  : "decoration-[var(--workspace-brand)]/70",
+                segment.resolved ? "" : "opacity-80",
+              )}
+            >
+              {segment.text}
+            </span>
+          )
         ),
       )}
     </div>
