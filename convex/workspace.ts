@@ -444,6 +444,45 @@ export const searchLinkTargets = query({
   },
 });
 
+export const resolveNodeLinks = query({
+  args: {
+    ownerKey: v.string(),
+    nodeIds: v.array(v.id("nodes")),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const uniqueNodeIds = [...new Set(args.nodeIds)];
+    const nodes = await Promise.all(uniqueNodeIds.map((nodeId) => ctx.db.get(nodeId)));
+    const pageIds = [
+      ...new Set(
+        nodes
+          .filter((node): node is Doc<"nodes"> => node !== null)
+          .map((node) => node.pageId),
+      ),
+    ];
+    const pages = await Promise.all(pageIds.map((pageId) => ctx.db.get(pageId)));
+    const pageMap = new Map(
+      pages
+        .filter((page): page is Doc<"pages"> => page !== null)
+        .map((page) => [page._id, page]),
+    );
+
+    return nodes
+      .filter((node): node is Doc<"nodes"> => node !== null)
+      .map((node) => {
+        const page = pageMap.get(node.pageId) ?? null;
+        return {
+          nodeId: node._id,
+          pageId: page?._id ?? null,
+          text: node.text,
+          archived: node.archived,
+          pageArchived: page?.archived ?? false,
+        };
+      });
+  },
+});
+
 export const listTasks = query({
   args: {
     ownerKey: v.string(),

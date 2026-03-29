@@ -69,6 +69,13 @@ type LinkTargetSearchResults = {
     page: PageDoc | null;
   }>;
 };
+type NodeLinkTargetResolution = {
+  nodeId: Id<"nodes">;
+  pageId: Id<"pages"> | null;
+  text: string;
+  archived: boolean;
+  pageArchived: boolean;
+};
 type LinkSuggestion =
   | {
       key: string;
@@ -95,6 +102,7 @@ type LinkPreviewSegment =
       kind: "link";
       text: string;
       pageId: Id<"pages"> | null;
+      nodeId: Id<"nodes"> | null;
       archived: boolean;
       resolved: boolean;
       linkKind: "page" | "node";
@@ -271,6 +279,37 @@ function normalizePageTitleKey(value: string) {
   return value.trim().toLowerCase();
 }
 
+function readPageIdFromLocation() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const url = new URL(window.location.href);
+  return url.searchParams.get("page");
+}
+
+function writePageIdToHistory(pageId: string | null, mode: "push" | "replace" = "push") {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.delete("node");
+  if (pageId) {
+    url.searchParams.set("page", pageId);
+  } else {
+    url.searchParams.delete("page");
+  }
+
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+  if (mode === "replace") {
+    window.history.replaceState({}, "", nextUrl);
+    return;
+  }
+
+  window.history.pushState({}, "", nextUrl);
+}
+
 function buildNodeLinkInsertText(node: Doc<"nodes">) {
   return `[[${sanitizeLinkLabel(node.text)}|node:${node._id}]]`;
 }
@@ -327,6 +366,7 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
 function buildLinkPreviewSegments(
   value: string,
   pagesByTitle: Map<string, PageDoc>,
+  nodeTargetsById: Map<string, NodeLinkTargetResolution>,
 ): LinkPreviewSegment[] {
   const matches = extractLinkMatches(value);
   if (matches.length === 0) {
@@ -335,7 +375,7 @@ function buildLinkPreviewSegments(
 
   const segments: LinkPreviewSegment[] = [];
   let cursor = 0;
-  let hasWikiLink = false;
+  let hasRenderableLink = false;
 
   for (const match of matches) {
     if (match.start > cursor) {
@@ -346,17 +386,7 @@ function buildLinkPreviewSegments(
       });
     }
 
-    if (!match.link.label.startsWith("[[")) {
-      segments.push({
-        key: `text:${match.start}`,
-        kind: "text",
-        text: value.slice(match.start, match.end),
-      });
-      cursor = match.end;
-      continue;
-    }
-
-    hasWikiLink = true;
+    hasRenderableLink = true;
     if (match.link.kind === "page") {
       const page = pagesByTitle.get(normalizePageTitleKey(match.link.targetPageTitle));
       segments.push({
@@ -364,22 +394,27 @@ function buildLinkPreviewSegments(
         kind: "link",
         text: match.link.targetPageTitle,
         pageId: page?._id ?? null,
+        nodeId: null,
         archived: page?.archived ?? false,
         resolved: Boolean(page),
         linkKind: "page",
       });
     } else {
-      const nodeLabel = match.link.label
-        .slice(2, -2)
-        .replace(/\|node:[a-zA-Z0-9_-]+$/, "")
-        .trim();
+      const targetNode = nodeTargetsById.get(match.link.targetNodeRef);
+      const nodeLabel = match.link.label.startsWith("[[")
+        ? match.link.label
+            .slice(2, -2)
+            .replace(/\|node:[a-zA-Z0-9_-]+$/, "")
+            .trim()
+        : targetNode?.text.trim() || "Linked node";
       segments.push({
         key: `node:${match.start}`,
         kind: "link",
         text: nodeLabel || "Linked node",
-        pageId: null,
-        archived: false,
-        resolved: false,
+        pageId: targetNode?.pageId ?? null,
+        nodeId: targetNode?.nodeId ?? null,
+        archived: targetNode?.pageArchived ?? false,
+        resolved: Boolean(targetNode?.pageId),
         linkKind: "node",
       });
     }
@@ -395,7 +430,7 @@ function buildLinkPreviewSegments(
     });
   }
 
-  return hasWikiLink ? segments : [];
+  return hasRenderableLink ? segments : [];
 }
 
 function collectChildren(nodes: TreeNode[], excludedIds: Set<string>) {
@@ -686,6 +721,7 @@ function ConfiguredWorkspace({
     anchorNodeId: string;
     currentNodeId: string;
   } | null>(null);
+  const [locationPageId, setLocationPageId] = useState<string | null>(null);
 
   const isOwnerKeyValid = useQuery(
     api.workspace.validateOwnerKey,
@@ -876,6 +912,17 @@ function ConfiguredWorkspace({
   }, [pageTitleDraft]);
 
   useEffect(() => {
+    setLocationPageId(readPageIdFromLocation());
+
+    const handlePopState = () => {
+      setLocationPageId(readPageIdFromLocation());
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
     if (isOwnerKeyValid === false) {
       setOwnerKey("");
     }
@@ -883,6 +930,30 @@ function ConfiguredWorkspace({
 
   useEffect(() => {
     if (!pages) {
+      return;
+    }
+
+    const matchingLocationPage =
+      locationPageId
+        ? pages.find((page) => page._id === locationPageId) ?? null
+        : null;
+
+    if (matchingLocationPage) {
+      hasResolvedInitialPageSelection.current = true;
+      if (selectedPageId !== matchingLocationPage._id) {
+        setSelectedPageId(matchingLocationPage._id);
+      }
+      return;
+    }
+
+    if (locationPageId) {
+      hasResolvedInitialPageSelection.current = true;
+      setSelectedPageId(null);
+      setLocationPageId(null);
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
+      }
+      writePageIdToHistory(null, "replace");
       return;
     }
 
@@ -897,9 +968,11 @@ function ConfiguredWorkspace({
         return;
       }
 
-      const matchingPage = pages.find((page) => page._id === storedPageId);
-      if (matchingPage) {
-        setSelectedPageId(matchingPage._id);
+      const matchingStoredPage = pages.find((page) => page._id === storedPageId);
+      if (matchingStoredPage) {
+        setSelectedPageId(matchingStoredPage._id);
+        setLocationPageId(matchingStoredPage._id);
+        writePageIdToHistory(matchingStoredPage._id, "replace");
       } else {
         window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
       }
@@ -908,11 +981,18 @@ function ConfiguredWorkspace({
 
     if (selectedPageId && !pages.some((page) => page._id === selectedPageId)) {
       setSelectedPageId(null);
+      setLocationPageId(null);
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
       }
+      writePageIdToHistory(null, "replace");
+      return;
     }
-  }, [pages, selectedPageId]);
+
+    if (!locationPageId && selectedPageId !== null) {
+      setSelectedPageId(null);
+    }
+  }, [locationPageId, pages, selectedPageId]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1212,6 +1292,9 @@ function ConfiguredWorkspace({
 
   const handleSelectPage = useCallback((pageId: Id<"pages">) => {
     setSelectedPageId(pageId);
+    setLocationPageId(pageId);
+    writePageIdToHistory(pageId, "push");
+    setPendingRevealNodeId(null);
     setPaletteOpen(false);
     setPaletteQuery("");
     setPaletteHighlightIndex(0);
@@ -1227,12 +1310,22 @@ function ConfiguredWorkspace({
     }
 
     setSelectedPageId(result.page._id);
+    setLocationPageId(result.page._id);
+    writePageIdToHistory(result.page._id, "push");
     setPendingRevealNodeId(result.node._id as string);
     setPaletteOpen(false);
     setPaletteQuery("");
     setPaletteHighlightIndex(0);
     setPaletteMode("nodes");
     setKnowledgeChatResponse(null);
+    clearNodeSelection();
+  }, [clearNodeSelection]);
+
+  const handleOpenLinkedNode = useCallback((pageId: Id<"pages">, nodeId: Id<"nodes">) => {
+    setSelectedPageId(pageId);
+    setLocationPageId(pageId);
+    writePageIdToHistory(pageId, "push");
+    setPendingRevealNodeId(nodeId as string);
     clearNodeSelection();
   }, [clearNodeSelection]);
 
@@ -1696,6 +1789,7 @@ function ConfiguredWorkspace({
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
+                      onOpenNode={handleOpenLinkedNode}
                       depthOffset={1}
                     />
                   </div>
@@ -1718,6 +1812,7 @@ function ConfiguredWorkspace({
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
+                      onOpenNode={handleOpenLinkedNode}
                       depthOffset={1}
                     />
                   </div>
@@ -1743,6 +1838,7 @@ function ConfiguredWorkspace({
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
+                      onOpenNode={handleOpenLinkedNode}
                       depthOffset={1}
                     />
                   </div>
@@ -1765,6 +1861,7 @@ function ConfiguredWorkspace({
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
+                      onOpenNode={handleOpenLinkedNode}
                       depthOffset={1}
                       statusMessage={journalFeedbackStatus}
                       action={
@@ -1799,6 +1896,7 @@ function ConfiguredWorkspace({
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
+                      onOpenNode={handleOpenLinkedNode}
                     />
                     <InlineComposer
                       ownerKey={ownerKey}
@@ -2114,6 +2212,7 @@ function PageSection({
   onSelectionExtend,
   pagesByTitle,
   onOpenPage,
+  onOpenNode,
   depthOffset = 0,
   action = null,
   statusMessage = "",
@@ -2135,6 +2234,7 @@ function PageSection({
   onSelectionExtend: (nodeId: string) => void;
   pagesByTitle: Map<string, PageDoc>;
   onOpenPage: (pageId: Id<"pages">) => void;
+  onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   depthOffset?: number;
   action?: ReactNode;
   statusMessage?: string;
@@ -2172,6 +2272,7 @@ function PageSection({
           onSelectionExtend={onSelectionExtend}
           pagesByTitle={pagesByTitle}
           onOpenPage={onOpenPage}
+          onOpenNode={onOpenNode}
         />
         <InlineComposer
           ownerKey={ownerKey}
@@ -2206,6 +2307,7 @@ function OutlineNodeList({
   onSelectionExtend,
   pagesByTitle,
   onOpenPage,
+  onOpenNode,
 }: {
   nodes: TreeNode[];
   ownerKey: string;
@@ -2225,6 +2327,7 @@ function OutlineNodeList({
   onSelectionExtend: (nodeId: string) => void;
   pagesByTitle: Map<string, PageDoc>;
   onOpenPage: (pageId: Id<"pages">) => void;
+  onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
 }) {
   return (
     <>
@@ -2251,6 +2354,7 @@ function OutlineNodeList({
           onSelectionExtend={onSelectionExtend}
           pagesByTitle={pagesByTitle}
           onOpenPage={onOpenPage}
+          onOpenNode={onOpenNode}
         />
       ))}
     </>
@@ -2310,12 +2414,14 @@ function LinkedTextPreview({
   segments,
   onFocusLine,
   onOpenPage,
+  onOpenNode,
   isDisabled,
   className,
 }: {
   segments: LinkPreviewSegment[];
   onFocusLine: () => void;
   onOpenPage: (pageId: Id<"pages">) => void;
+  onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   isDisabled: boolean;
   className?: string;
 }) {
@@ -2354,6 +2460,10 @@ function LinkedTextPreview({
               onClick={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
+                if (segment.linkKind === "node" && segment.nodeId) {
+                  onOpenNode(segment.pageId!, segment.nodeId);
+                  return;
+                }
                 onOpenPage(segment.pageId!);
               }}
               className={clsx(
@@ -2404,6 +2514,7 @@ function OutlineNodeEditor({
   onSelectionExtend,
   pagesByTitle,
   onOpenPage,
+  onOpenNode,
 }: {
   node: TreeNode;
   previousSibling: TreeNode | null;
@@ -2425,6 +2536,7 @@ function OutlineNodeEditor({
   onSelectionExtend: (nodeId: string) => void;
   pagesByTitle: Map<string, PageDoc>;
   onOpenPage: (pageId: Id<"pages">) => void;
+  onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
 }) {
   const history = useWorkspaceHistory();
   const [draft, setDraft] = useState(node.text);
@@ -2455,9 +2567,34 @@ function OutlineNodeEditor({
   const isVisualEmptyLine = normalizedDraft === ".";
   const isVisualSeparatorLine = normalizedDraft === "---";
   const shouldRevealVisualPlaceholder = isFocused || isSelected;
+  const nodeLinkTargetIds = useMemo(
+    () =>
+      extractLinkMatches(draft)
+        .flatMap((match) =>
+          match.link.kind === "node" ? [match.link.targetNodeRef as Id<"nodes">] : [],
+        )
+        .filter((value, index, collection) => collection.indexOf(value) === index),
+    [draft],
+  );
+  const resolvedNodeLinks = useQuery(
+    api.workspace.resolveNodeLinks,
+    ownerKey && !isFocused && nodeLinkTargetIds.length > 0
+      ? {
+          ownerKey,
+          nodeIds: nodeLinkTargetIds,
+        }
+      : SKIP,
+  ) as NodeLinkTargetResolution[] | undefined;
+  const nodeTargetsById = useMemo(() => {
+    const next = new Map<string, NodeLinkTargetResolution>();
+    for (const target of resolvedNodeLinks ?? []) {
+      next.set(target.nodeId, target);
+    }
+    return next;
+  }, [resolvedNodeLinks]);
   const linkPreviewSegments = useMemo(
-    () => buildLinkPreviewSegments(draft, pagesByTitle),
-    [draft, pagesByTitle],
+    () => buildLinkPreviewSegments(draft, pagesByTitle, nodeTargetsById),
+    [draft, nodeTargetsById, pagesByTitle],
   );
   const hasPageLinkPreview =
     !isFocused &&
@@ -3145,6 +3282,7 @@ function OutlineNodeEditor({
                 segments={linkPreviewSegments}
                 onFocusLine={focusLineEditor}
                 onOpenPage={onOpenPage}
+                onOpenNode={onOpenNode}
                 isDisabled={isDisabled}
                 className={clsx(
                   node.taskStatus === "done"
@@ -3183,6 +3321,7 @@ function OutlineNodeEditor({
         onSelectionExtend={onSelectionExtend}
         pagesByTitle={pagesByTitle}
         onOpenPage={onOpenPage}
+        onOpenNode={onOpenNode}
       />
     </div>
   );
