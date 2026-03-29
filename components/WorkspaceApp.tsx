@@ -733,6 +733,56 @@ function collectChildren(nodes: TreeNode[], excludedIds: Set<string>) {
   return nodes.filter((node) => !excludedIds.has(node._id));
 }
 
+function findNodeContextInTree(
+  nodes: TreeNode[],
+  targetNodeId: string,
+  parentNodeId: Id<"nodes"> | null = null,
+): {
+  node: TreeNode;
+  siblings: TreeNode[];
+  siblingIndex: number;
+  previousSibling: TreeNode | null;
+  parentNodeId: Id<"nodes"> | null;
+  pageId: Id<"pages">;
+} | null {
+  const siblingIndex = nodes.findIndex((node) => node._id === targetNodeId);
+  if (siblingIndex !== -1) {
+    const node = nodes[siblingIndex]!;
+    return {
+      node,
+      siblings: nodes,
+      siblingIndex,
+      previousSibling: siblingIndex > 0 ? nodes[siblingIndex - 1]! : null,
+      parentNodeId,
+      pageId: node.pageId as Id<"pages">,
+    };
+  }
+
+  for (const node of nodes) {
+    const match = findNodeContextInTree(
+      node.children,
+      targetNodeId,
+      node._id as Id<"nodes">,
+    );
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+function findNodeContext(
+  sidebarNodes: TreeNode[],
+  pageNodes: TreeNode[],
+  targetNodeId: string,
+) {
+  return (
+    findNodeContextInTree(sidebarNodes, targetNodeId) ??
+    findNodeContextInTree(pageNodes, targetNodeId)
+  );
+}
+
 function parseNodeDraft(draft: string) {
   const trimmed = draft.trim();
 
@@ -1137,11 +1187,17 @@ function ConfiguredWorkspace({
         : null,
     [selectedPage],
   );
-  const tree = activePageTree ? toTreeNodes(activePageTree.nodes) : [];
+  const tree = useMemo(
+    () => (activePageTree ? toTreeNodes(activePageTree.nodes) : []),
+    [activePageTree],
+  );
   const nodeMap = new Map(
     (activePageTree?.nodes ?? []).map((node) => [node._id as string, node]),
   );
-  const sidebarNodes = sidebarTree ? toTreeNodes(sidebarTree.nodes) : [];
+  const sidebarNodes = useMemo(
+    () => (sidebarTree ? toTreeNodes(sidebarTree.nodes) : []),
+    [sidebarTree],
+  );
   const sidebarNodeMap = new Map(
     (sidebarTree?.nodes ?? []).map((node) => [node._id as string, node]),
   );
@@ -1494,6 +1550,88 @@ function ConfiguredWorkspace({
     setDragSelection(null);
   }, [visibleNodeOrder]);
 
+  const moveHighlightedNodeByKeyboard = useCallback(
+    async (direction: -1 | 1) => {
+      if (selectedNodeIds.size !== 1) {
+        return;
+      }
+
+      const nodeId = [...selectedNodeIds][0];
+      if (!nodeId) {
+        return;
+      }
+
+      const context = findNodeContext(sidebarNodes, tree, nodeId);
+      if (!context || getNodeMeta(context.node).locked === true) {
+        return;
+      }
+
+      const beforePlacement = buildNodePlacement(
+        context.pageId,
+        context.parentNodeId,
+        (context.previousSibling?._id as Id<"nodes"> | undefined) ?? null,
+      );
+
+      let afterPlacement: NodePlacement | null = null;
+
+      if (direction === -1) {
+        if (context.siblingIndex === 0) {
+          return;
+        }
+
+        const afterNodeId =
+          context.siblingIndex > 1
+            ? ((context.siblings[context.siblingIndex - 2]?._id as Id<"nodes"> | undefined) ??
+              null)
+            : null;
+
+        afterPlacement = buildNodePlacement(
+          context.pageId,
+          context.parentNodeId,
+          afterNodeId,
+        );
+
+        await moveNode({
+          ownerKey,
+          nodeId: context.node._id as Id<"nodes">,
+          pageId: context.pageId,
+          parentNodeId: context.parentNodeId,
+          afterNodeId,
+        });
+      } else {
+        const nextSibling = context.siblings[context.siblingIndex + 1];
+        if (!nextSibling) {
+          return;
+        }
+
+        afterPlacement = buildNodePlacement(
+          context.pageId,
+          context.parentNodeId,
+          nextSibling._id as Id<"nodes">,
+        );
+
+        await moveNode({
+          ownerKey,
+          nodeId: context.node._id as Id<"nodes">,
+          pageId: context.pageId,
+          parentNodeId: context.parentNodeId,
+          afterNodeId: nextSibling._id as Id<"nodes">,
+        });
+      }
+
+      history.pushUndoEntry({
+        type: "move_node",
+        pageId: context.pageId,
+        nodeId: context.node._id as Id<"nodes">,
+        beforePlacement,
+        afterPlacement,
+        focusEditorId: getNodeEditorId(context.node._id as Id<"nodes">),
+      });
+      selectSingleNode(context.node._id);
+    },
+    [history, moveNode, ownerKey, selectSingleNode, selectedNodeIds, sidebarNodes, tree],
+  );
+
   const openInsertedComposer = useCallback(
     (pageId: Id<"pages">, parentNodeId: Id<"nodes"> | null, afterNodeId: Id<"nodes">) => {
       setPendingInsertedComposer((current) => ({
@@ -1722,6 +1860,12 @@ function ConfiguredWorkspace({
         if (event.key === "ArrowUp" || event.key === "ArrowDown") {
           event.preventDefault();
           const direction = event.key === "ArrowDown" ? 1 : -1;
+
+          if (isModifier) {
+            void moveHighlightedNodeByKeyboard(direction);
+            return;
+          }
+
           const selectedIndices = [...selectedNodeIds]
             .map((nodeId) => visibleNodeOrder.indexOf(nodeId))
             .filter((index) => index >= 0)
@@ -1776,6 +1920,7 @@ function ConfiguredWorkspace({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    moveHighlightedNodeByKeyboard,
     openPalette,
     paletteOpen,
     selectNodeRange,
@@ -3767,11 +3912,6 @@ function OutlineNodeEditor({
     focusElementAtEnd(textareaRef.current);
   };
 
-  const getVisibleNodeIds = () =>
-    Array.from(document.querySelectorAll<HTMLElement>("[data-node-shell][data-node-id]"))
-      .map((shell) => shell.dataset.nodeId ?? "")
-      .filter((value) => value.length > 0);
-
   const focusAdjacentVisibleNode = (direction: -1 | 1) => {
     const shells = Array.from(
       document.querySelectorAll<HTMLElement>("[data-node-shell][data-node-id]"),
@@ -3792,41 +3932,6 @@ function OutlineNodeEditor({
     window.setTimeout(() => {
       focusElementAtEnd(targetInput);
     }, 0);
-    return true;
-  };
-
-  const extendWholeItemSelection = (direction: -1 | 1) => {
-    const visibleNodeIds = getVisibleNodeIds();
-    const currentIndex = visibleNodeIds.indexOf(node._id);
-    if (currentIndex === -1) {
-      return false;
-    }
-
-    const selectedIndices = [...selectedNodeIds]
-      .map((nodeId) => visibleNodeIds.indexOf(nodeId))
-      .filter((index) => index >= 0)
-      .sort((left, right) => left - right);
-
-    const anchorNodeId = visibleNodeIds[currentIndex];
-    const selectionEdgeIndex =
-      selectedIndices.length > 1 && selectedNodeIds.has(node._id)
-        ? direction === 1
-          ? selectedIndices[selectedIndices.length - 1]!
-          : selectedIndices[0]!
-        : currentIndex;
-    const nextIndex = selectionEdgeIndex + direction;
-    const nextNodeId = visibleNodeIds[nextIndex];
-
-    if (!anchorNodeId) {
-      return false;
-    }
-
-    if (!nextNodeId) {
-      onSelectSingleNode(node._id);
-      return true;
-    }
-
-    onSelectNodeRange(anchorNodeId, nextNodeId);
     return true;
   };
 
@@ -4384,7 +4489,8 @@ function OutlineNodeEditor({
       (event.key === "ArrowUp" || event.key === "ArrowDown")
     ) {
       event.preventDefault();
-      extendWholeItemSelection(event.key === "ArrowDown" ? 1 : -1);
+      onSelectSingleNode(node._id);
+      textareaRef.current?.blur();
       return;
     }
 
