@@ -120,9 +120,29 @@ export const rebuildEmbeddings = mutation({
     const nodes = (await ctx.db.query("nodes").collect()).filter(
       (node) => !node.archived,
     );
+    const existingJobs = await ctx.db.query("embeddingJobs").collect();
+    const jobsByNodeId = new Map(existingJobs.map((job) => [job.nodeId, job]));
+    const now = getTimestamp();
     const uniqueNodeIds = [...new Set(nodes.map((node) => node._id))];
 
     for (const nodeId of uniqueNodeIds) {
+      const existingJob = jobsByNodeId.get(nodeId);
+      if (existingJob) {
+        await ctx.db.patch(existingJob._id, {
+          status: "queued",
+          lastQueuedAt: now,
+          updatedAt: now,
+        });
+      } else {
+        await ctx.db.insert("embeddingJobs", {
+          nodeId,
+          status: "queued",
+          attempts: 0,
+          lastQueuedAt: now,
+          updatedAt: now,
+        });
+      }
+
       await ctx.scheduler.runAfter(0, internal.ai.generateEmbeddingForNode, {
         nodeId,
       });
@@ -130,6 +150,65 @@ export const rebuildEmbeddings = mutation({
 
     return {
       queuedCount: uniqueNodeIds.length,
+    };
+  },
+});
+
+export const getEmbeddingRebuildStatus = query({
+  args: {
+    ownerKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const activeNodes = (await ctx.db.query("nodes").collect()).filter(
+      (node) => !node.archived,
+    );
+    const activeNodeIds = new Set(activeNodes.map((node) => node._id));
+    const jobs = (await ctx.db.query("embeddingJobs").collect()).filter((job) =>
+      activeNodeIds.has(job.nodeId),
+    );
+    const jobsByNodeId = new Map(jobs.map((job) => [job.nodeId, job]));
+
+    let queued = 0;
+    let running = 0;
+    let completed = 0;
+    let error = 0;
+    let pending = 0;
+
+    for (const node of activeNodes) {
+      const job = jobsByNodeId.get(node._id);
+      if (!job) {
+        pending += 1;
+        continue;
+      }
+
+      if (job.status === "queued") {
+        queued += 1;
+      } else if (job.status === "running") {
+        running += 1;
+      } else if (job.status === "completed") {
+        completed += 1;
+      } else if (job.status === "error") {
+        error += 1;
+      }
+    }
+
+    const total = activeNodes.length;
+
+    return {
+      total,
+      queued,
+      running,
+      completed,
+      error,
+      pending,
+      idle: queued === 0 && running === 0,
+      complete: total === 0 ? true : completed === total && queued === 0 && running === 0 && pending === 0 && error === 0,
+      lastQueuedAt:
+        jobs.length > 0
+          ? Math.max(...jobs.map((job) => job.lastQueuedAt))
+          : null,
     };
   },
 });

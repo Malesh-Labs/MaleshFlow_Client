@@ -521,6 +521,10 @@ function ConfiguredWorkspace({
     api.workspace.listPages,
     ownerKey && isOwnerKeyValid ? { ownerKey, includeArchived: true } : SKIP,
   );
+  const embeddingRebuildProgress = useQuery(
+    api.workspace.getEmbeddingRebuildStatus,
+    ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
+  );
   const pageTree = useQuery(
     api.workspace.getPageTree,
     ownerKey && isOwnerKeyValid && selectedPageId
@@ -658,6 +662,29 @@ function ConfiguredWorkspace({
       : paletteMode === "nodes"
         ? nodeSearchResults.length
         : 0;
+  const embeddingProgressLabel = useMemo(() => {
+    if (!embeddingRebuildProgress) {
+      return "Embedding status unavailable.";
+    }
+
+    if (embeddingRebuildProgress.total === 0) {
+      return "No active nodes to embed.";
+    }
+
+    if (embeddingRebuildProgress.queued > 0 || embeddingRebuildProgress.running > 0) {
+      return `Embeddings: ${embeddingRebuildProgress.completed}/${embeddingRebuildProgress.total} complete • ${embeddingRebuildProgress.queued} queued • ${embeddingRebuildProgress.running} running${embeddingRebuildProgress.error > 0 ? ` • ${embeddingRebuildProgress.error} errors` : ""}`;
+    }
+
+    if (embeddingRebuildProgress.error > 0) {
+      return `Embeddings: ${embeddingRebuildProgress.completed}/${embeddingRebuildProgress.total} complete • ${embeddingRebuildProgress.error} errors`;
+    }
+
+    if (embeddingRebuildProgress.complete) {
+      return `Embeddings: ${embeddingRebuildProgress.completed}/${embeddingRebuildProgress.total} complete`;
+    }
+
+    return `Embeddings: ${embeddingRebuildProgress.completed}/${embeddingRebuildProgress.total} complete • ${embeddingRebuildProgress.pending} pending`;
+  }, [embeddingRebuildProgress]);
 
   useEffect(() => {
     pageTitleDraftRef.current = pageTitleDraft;
@@ -1338,6 +1365,9 @@ function ConfiguredWorkspace({
                   {embeddingRebuildStatus}
                 </p>
               ) : null}
+              <p className="text-xs leading-5 text-[var(--workspace-text-faint)]">
+                {embeddingProgressLabel}
+              </p>
               <button
                 type="button"
                 onClick={() => setOwnerKey("")}
