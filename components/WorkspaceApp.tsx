@@ -1736,22 +1736,6 @@ function ConfiguredWorkspace({
                     >
                       Redo
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => selectedPage && void handleArchivePage(selectedPage, !isPageArchived)}
-                      className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                    >
-                      {isPageArchived ? "Restore" : "Archive"}
-                    </button>
-                    {isPageArchived ? (
-                      <button
-                        type="button"
-                        onClick={() => selectedPage && void handleDeletePageForever(selectedPage)}
-                        className="border border-[var(--workspace-danger)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-danger)] transition hover:bg-[var(--workspace-danger)] hover:text-[var(--workspace-inverse-text)]"
-                      >
-                        Delete Forever
-                      </button>
-                    ) : null}
                   </div>
                 </div>
                 <div className="mt-6 h-px bg-[var(--workspace-border-subtle)]" />
@@ -1768,6 +1752,31 @@ function ConfiguredWorkspace({
                   }
                 }}
               >
+                {pageMeta.pageType === "model" ? (
+                  <div className="mb-8 border-b border-[var(--workspace-border-subtle)] pb-6">
+                    <form onSubmit={(event) => void handleRunModelChat(event)} className="space-y-3">
+                      <input
+                        value={modelChatInput}
+                        onChange={(event) => setModelChatInput(event.target.value)}
+                        placeholder="Ask AI..."
+                        disabled={isPageArchived}
+                        className="w-full border-0 border-b border-[var(--workspace-border)] bg-transparent px-0 py-2 text-sm outline-none disabled:text-[var(--workspace-text-muted)]"
+                      />
+                      <div className="flex items-center justify-between gap-4">
+                        <p className="text-sm text-[var(--workspace-text-subtle)]">
+                          {isPageArchived ? "Archived pages are read-only." : chatStatus}
+                        </p>
+                        <button
+                          type="submit"
+                          disabled={isSendingChat || modelChatInput.trim().length === 0 || isPageArchived}
+                          className="border border-[var(--workspace-brand)] px-4 py-2 text-sm font-semibold text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {isSendingChat ? "Thinking…" : "Send"}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                ) : null}
                 {pageMeta.pageType === "model" ? (
                   <div className="divide-y divide-[var(--workspace-border-subtle)]">
                     <div className="pb-8">
@@ -1911,31 +1920,26 @@ function ConfiguredWorkspace({
                 )}
               </div>
 
-              {pageMeta.pageType === "model" ? (
-                <div className="border-t border-[var(--workspace-border-subtle)] px-10 py-5 md:px-14">
-                  <form onSubmit={(event) => void handleRunModelChat(event)} className="space-y-3">
-                    <input
-                      value={modelChatInput}
-                      onChange={(event) => setModelChatInput(event.target.value)}
-                      placeholder="Ask AI..."
-                      disabled={isPageArchived}
-                      className="w-full border-0 border-b border-[var(--workspace-border)] bg-transparent px-0 py-2 text-sm outline-none disabled:text-[var(--workspace-text-muted)]"
-                    />
-                    <div className="flex items-center justify-between gap-4">
-                      <p className="text-sm text-[var(--workspace-text-subtle)]">
-                        {isPageArchived ? "Archived pages are read-only." : chatStatus}
-                      </p>
-                      <button
-                        type="submit"
-                        disabled={isSendingChat || modelChatInput.trim().length === 0 || isPageArchived}
-                        className="border border-[var(--workspace-brand)] px-4 py-2 text-sm font-semibold text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)] disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {isSendingChat ? "Thinking…" : "Send"}
-                      </button>
-                    </div>
-                  </form>
+              <div className="border-t border-[var(--workspace-border-subtle)] px-10 py-5 md:px-14">
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => selectedPage && void handleArchivePage(selectedPage, !isPageArchived)}
+                    className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                  >
+                    {isPageArchived ? "Restore" : "Archive"}
+                  </button>
+                  {isPageArchived ? (
+                    <button
+                      type="button"
+                      onClick={() => selectedPage && void handleDeletePageForever(selectedPage)}
+                      className="border border-[var(--workspace-danger)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-danger)] transition hover:bg-[var(--workspace-danger)] hover:text-[var(--workspace-inverse-text)]"
+                    >
+                      Delete Forever
+                    </button>
+                  ) : null}
                 </div>
-              ) : null}
+              </div>
             </div>
           )}
         </section>
