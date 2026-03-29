@@ -127,6 +127,13 @@ type PendingInsertedComposer = {
   afterNodeId: string;
   focusToken: number;
 };
+type NodeDropTarget = {
+  placement: "before" | "after" | "nest";
+  parentNodeId: Id<"nodes"> | null;
+  afterNodeId: Id<"nodes"> | null;
+  lineSide: "top" | "bottom";
+  lineIndentOffset: number;
+};
 type UpdateNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.updateNode>>;
 type CreateNodesBatchMutation = ReturnType<typeof useMutation<typeof api.workspace.createNodesBatch>>;
 type MoveNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.moveNode>>;
@@ -803,6 +810,7 @@ function ConfiguredWorkspace({
     null,
   );
   const [isKnowledgeChatLoading, setIsKnowledgeChatLoading] = useState(false);
+  const [activeDraggedNodeId, setActiveDraggedNodeId] = useState<string | null>(null);
   const [pendingRevealNodeId, setPendingRevealNodeId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -1235,6 +1243,22 @@ function ConfiguredWorkspace({
       document.body.style.userSelect = previousUserSelect;
     };
   }, [dragSelection]);
+
+  useEffect(() => {
+    if (!activeDraggedNodeId || typeof document === "undefined") {
+      return;
+    }
+
+    const previousUserSelect = document.body.style.userSelect;
+    const previousCursor = document.body.style.cursor;
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "grabbing";
+
+    return () => {
+      document.body.style.userSelect = previousUserSelect;
+      document.body.style.cursor = previousCursor;
+    };
+  }, [activeDraggedNodeId]);
 
   useEffect(() => {
     if (!paletteOpen) {
@@ -1960,6 +1984,8 @@ function ConfiguredWorkspace({
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
+                      activeDraggedNodeId={activeDraggedNodeId}
+                      onSetActiveDraggedNodeId={setActiveDraggedNodeId}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2217,6 +2243,8 @@ function ConfiguredWorkspace({
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
+                      activeDraggedNodeId={activeDraggedNodeId}
+                      onSetActiveDraggedNodeId={setActiveDraggedNodeId}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2245,6 +2273,8 @@ function ConfiguredWorkspace({
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
+                      activeDraggedNodeId={activeDraggedNodeId}
+                      onSetActiveDraggedNodeId={setActiveDraggedNodeId}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2276,6 +2306,8 @@ function ConfiguredWorkspace({
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
+                      activeDraggedNodeId={activeDraggedNodeId}
+                      onSetActiveDraggedNodeId={setActiveDraggedNodeId}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2304,6 +2336,8 @@ function ConfiguredWorkspace({
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
+                      activeDraggedNodeId={activeDraggedNodeId}
+                      onSetActiveDraggedNodeId={setActiveDraggedNodeId}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2344,6 +2378,8 @@ function ConfiguredWorkspace({
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
+                      activeDraggedNodeId={activeDraggedNodeId}
+                      onSetActiveDraggedNodeId={setActiveDraggedNodeId}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2720,6 +2756,8 @@ function PageSection({
   pendingInsertedComposer,
   onOpenInsertedComposer,
   onClearInsertedComposer,
+  activeDraggedNodeId,
+  onSetActiveDraggedNodeId,
   onSelectionStart,
   onSelectionExtend,
   pagesByTitle,
@@ -2751,6 +2789,8 @@ function PageSection({
     afterNodeId: Id<"nodes">,
   ) => void;
   onClearInsertedComposer: () => void;
+  activeDraggedNodeId: string | null;
+  onSetActiveDraggedNodeId: (nodeId: string | null) => void;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
   pagesByTitle: Map<string, PageDoc>;
@@ -2794,6 +2834,8 @@ function PageSection({
           pendingInsertedComposer={pendingInsertedComposer}
           onOpenInsertedComposer={onOpenInsertedComposer}
           onClearInsertedComposer={onClearInsertedComposer}
+          activeDraggedNodeId={activeDraggedNodeId}
+          onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
           onSelectionStart={onSelectionStart}
           onSelectionExtend={onSelectionExtend}
           pagesByTitle={pagesByTitle}
@@ -2834,6 +2876,8 @@ function OutlineNodeList({
   pendingInsertedComposer,
   onOpenInsertedComposer,
   onClearInsertedComposer,
+  activeDraggedNodeId,
+  onSetActiveDraggedNodeId,
   onSelectionStart,
   onSelectionExtend,
   pagesByTitle,
@@ -2863,6 +2907,8 @@ function OutlineNodeList({
     afterNodeId: Id<"nodes">,
   ) => void;
   onClearInsertedComposer: () => void;
+  activeDraggedNodeId: string | null;
+  onSetActiveDraggedNodeId: (nodeId: string | null) => void;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
   pagesByTitle: Map<string, PageDoc>;
@@ -2897,6 +2943,8 @@ function OutlineNodeList({
           pendingInsertedComposer={pendingInsertedComposer}
           onOpenInsertedComposer={onOpenInsertedComposer}
           onClearInsertedComposer={onClearInsertedComposer}
+          activeDraggedNodeId={activeDraggedNodeId}
+          onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
           onSelectionStart={onSelectionStart}
           onSelectionExtend={onSelectionExtend}
           pagesByTitle={pagesByTitle}
@@ -3069,6 +3117,8 @@ function OutlineNodeEditor({
   pendingInsertedComposer,
   onOpenInsertedComposer,
   onClearInsertedComposer,
+  activeDraggedNodeId,
+  onSetActiveDraggedNodeId,
   onSelectionStart,
   onSelectionExtend,
   pagesByTitle,
@@ -3102,6 +3152,8 @@ function OutlineNodeEditor({
     afterNodeId: Id<"nodes">,
   ) => void;
   onClearInsertedComposer: () => void;
+  activeDraggedNodeId: string | null;
+  onSetActiveDraggedNodeId: (nodeId: string | null) => void;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
   pagesByTitle: Map<string, PageDoc>;
@@ -3113,7 +3165,7 @@ function OutlineNodeEditor({
   const [isFocused, setIsFocused] = useState(false);
   const [caretPosition, setCaretPosition] = useState<number | null>(null);
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
-  const [dropPosition, setDropPosition] = useState<"before" | "after" | null>(null);
+  const [dropTarget, setDropTarget] = useState<NodeDropTarget | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRef = useRef(draft);
 
@@ -3199,6 +3251,7 @@ function OutlineNodeEditor({
     pendingInsertedComposer?.afterNodeId === node._id;
   const pendingSiblingComposerFocusToken =
     pendingSiblingComposerVisible ? pendingInsertedComposer?.focusToken ?? 0 : 0;
+  const isDraggingAnotherNode = activeDraggedNodeId !== null && activeDraggedNodeId !== node._id;
 
   useEffect(() => {
     draftRef.current = draft;
@@ -3316,9 +3369,56 @@ function OutlineNodeEditor({
     return true;
   };
 
-  const getDropPositionFromEvent = (event: ReactDragEvent<HTMLElement>) => {
+  const isDescendantOfNode = (candidateNodeId: string, potentialAncestorNodeId: string) => {
+    let currentNode = nodeMap.get(candidateNodeId);
+    while (currentNode?.parentNodeId) {
+      if (currentNode.parentNodeId === potentialAncestorNodeId) {
+        return true;
+      }
+      currentNode = nodeMap.get(currentNode.parentNodeId as string);
+    }
+    return false;
+  };
+
+  const getDropTargetFromEvent = (
+    event: ReactDragEvent<HTMLElement>,
+    payload: DraggedNodePayload,
+  ): NodeDropTarget | null => {
+    if (
+      payload.nodeId === node._id ||
+      payload.pageId !== pageId ||
+      isDescendantOfNode(node._id, payload.nodeId)
+    ) {
+      return null;
+    }
+
     const bounds = event.currentTarget.getBoundingClientRect();
-    return event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+    const relativeY = event.clientY - bounds.top;
+    const relativeX = event.clientX - bounds.left;
+    const upperZone = relativeY < bounds.height * 0.35;
+    const nestingThreshold = 54 + depth * 18;
+    const wantsNest = !upperZone && relativeX > nestingThreshold;
+
+    if (wantsNest) {
+      return {
+        placement: "nest",
+        parentNodeId: node._id as Id<"nodes">,
+        afterNodeId:
+          ((node.children[node.children.length - 1]?._id as Id<"nodes"> | undefined) ?? null),
+        lineSide: "bottom",
+        lineIndentOffset: 44,
+      };
+    }
+
+    return {
+      placement: upperZone ? "before" : "after",
+      parentNodeId,
+      afterNodeId: upperZone
+        ? (((siblings[siblingIndex - 1]?._id as Id<"nodes"> | undefined) ?? null))
+        : (node._id as Id<"nodes">),
+      lineSide: upperZone ? "top" : "bottom",
+      lineIndentOffset: 26,
+    };
   };
 
   const handleDragHandleStart = (event: ReactDragEvent<HTMLButtonElement>) => {
@@ -3337,6 +3437,7 @@ function OutlineNodeEditor({
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData(NODE_DRAG_MIME_TYPE, JSON.stringify(payload));
     event.dataTransfer.setData("text/plain", JSON.stringify(payload));
+    onSetActiveDraggedNodeId(node._id);
     onSelectSingleNode(node._id);
   };
 
@@ -3348,17 +3449,21 @@ function OutlineNodeEditor({
 
     if (
       !payload ||
-      payload.nodeId === node._id ||
-      payload.pageId !== pageId ||
-      payload.parentNodeId !== parentNodeId
+      payload.pageId !== pageId
     ) {
-      setDropPosition(null);
+      setDropTarget(null);
+      return;
+    }
+
+    const nextDropTarget = getDropTargetFromEvent(event, payload);
+    if (!nextDropTarget) {
+      setDropTarget(null);
       return;
     }
 
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
-    setDropPosition(getDropPositionFromEvent(event));
+    setDropTarget(nextDropTarget);
   };
 
   const handleDrop = async (event: ReactDragEvent<HTMLDivElement>) => {
@@ -3366,41 +3471,29 @@ function OutlineNodeEditor({
       event.dataTransfer.getData(NODE_DRAG_MIME_TYPE) ||
         event.dataTransfer.getData("text/plain"),
     );
-    setDropPosition(null);
+    const nextDropTarget = payload ? getDropTargetFromEvent(event, payload) : null;
+    setDropTarget(null);
+    onSetActiveDraggedNodeId(null);
 
     if (
       !payload ||
-      payload.nodeId === node._id ||
       payload.pageId !== pageId ||
-      payload.parentNodeId !== parentNodeId
+      !nextDropTarget
     ) {
       return;
     }
 
     event.preventDefault();
-    const nextDropPosition = getDropPositionFromEvent(event);
-    const siblingOrderWithoutDragged = siblings.filter(
-      (sibling) => sibling._id !== payload.nodeId,
-    );
-    const targetIndex = siblingOrderWithoutDragged.findIndex(
-      (sibling) => sibling._id === node._id,
-    );
-    if (targetIndex === -1) {
-      return;
-    }
-
-    const afterNodeId =
-      nextDropPosition === "before"
-        ? ((siblingOrderWithoutDragged[targetIndex - 1]?._id as Id<"nodes"> | undefined) ??
-          null)
-        : (node._id as Id<"nodes">);
-
     const beforePlacement = buildNodePlacement(
       payload.pageId as Id<"pages">,
       (payload.parentNodeId as Id<"nodes"> | null) ?? null,
       (payload.previousSiblingId as Id<"nodes"> | null) ?? null,
     );
-    const afterPlacement = buildNodePlacement(pageId, parentNodeId, afterNodeId);
+    const afterPlacement = buildNodePlacement(
+      pageId,
+      nextDropTarget.parentNodeId,
+      nextDropTarget.afterNodeId,
+    );
 
     if (
       beforePlacement.pageId === afterPlacement.pageId &&
@@ -3414,8 +3507,8 @@ function OutlineNodeEditor({
       ownerKey,
       nodeId: payload.nodeId as Id<"nodes">,
       pageId,
-      parentNodeId,
-      afterNodeId,
+      parentNodeId: nextDropTarget.parentNodeId,
+      afterNodeId: nextDropTarget.afterNodeId,
     });
 
     history.pushUndoEntry({
@@ -4068,7 +4161,7 @@ function OutlineNodeEditor({
             return;
           }
 
-          setDropPosition(null);
+          setDropTarget(null);
         }}
         onDrop={(event) => void handleDrop(event)}
         className={clsx(
@@ -4079,11 +4172,17 @@ function OutlineNodeEditor({
         )}
         style={{ marginLeft: `${depth * 18}px` }}
       >
-        {dropPosition === "before" ? (
-          <div className="pointer-events-none absolute inset-x-0 top-0 border-t-2 border-[var(--workspace-accent)]" />
+        {dropTarget?.lineSide === "top" ? (
+          <div
+            className="pointer-events-none absolute right-0 top-0 border-t-2 border-[var(--workspace-accent)]"
+            style={{ left: `${dropTarget.lineIndentOffset}px` }}
+          />
         ) : null}
-        {dropPosition === "after" ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 border-t-2 border-[var(--workspace-accent)]" />
+        {dropTarget?.lineSide === "bottom" ? (
+          <div
+            className="pointer-events-none absolute right-0 bottom-0 border-t-2 border-[var(--workspace-accent)]"
+            style={{ left: `${dropTarget.lineIndentOffset}px` }}
+          />
         ) : null}
         <div className="flex min-h-8 items-center gap-2">
           <button
@@ -4093,7 +4192,10 @@ function OutlineNodeEditor({
             draggable={!isDisabled}
             onClick={() => onSelectSingleNode(node._id)}
             onDragStart={handleDragHandleStart}
-            onDragEnd={() => setDropPosition(null)}
+            onDragEnd={() => {
+              setDropTarget(null);
+              onSetActiveDraggedNodeId(null);
+            }}
             className={clsx(
               "flex h-8 w-5 flex-none items-center justify-center border-r transition",
               isSelected
@@ -4163,6 +4265,7 @@ function OutlineNodeEditor({
               rows={1}
               className={clsx(
                 "w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-1 text-[15px] leading-6 outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]",
+                isDraggingAnotherNode ? "pointer-events-none select-none" : "",
                 node.taskStatus === "done" ? "text-[var(--workspace-text-faint)] line-through" : "",
                 (isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder
                   ? "text-transparent"
@@ -4176,7 +4279,7 @@ function OutlineNodeEditor({
                 onFocusLine={focusLineEditor}
                 onOpenPage={onOpenPage}
                 onOpenNode={onOpenNode}
-                isDisabled={isDisabled}
+                isDisabled={isDisabled || activeDraggedNodeId !== null}
                 className={clsx(
                   node.taskStatus === "done"
                     ? "text-[var(--workspace-text-faint)] line-through"
@@ -4215,6 +4318,8 @@ function OutlineNodeEditor({
         pendingInsertedComposer={pendingInsertedComposer}
         onOpenInsertedComposer={onOpenInsertedComposer}
         onClearInsertedComposer={onClearInsertedComposer}
+        activeDraggedNodeId={activeDraggedNodeId}
+        onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
         onSelectionStart={onSelectionStart}
         onSelectionExtend={onSelectionExtend}
         pagesByTitle={pagesByTitle}
