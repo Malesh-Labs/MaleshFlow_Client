@@ -1726,12 +1726,6 @@ function ConfiguredWorkspace({
             }
 
             selectNodeRange(anchorNodeId, nextNodeId);
-            window.setTimeout(() => {
-              const target = document.querySelector<HTMLElement>(
-                `[data-node-id="${nextNodeId}"] textarea`,
-              );
-              focusElementAtEnd(target as HTMLTextAreaElement | null);
-            }, 0);
             return;
           }
 
@@ -3762,14 +3756,14 @@ function OutlineNodeEditor({
       .filter((index) => index >= 0)
       .sort((left, right) => left - right);
 
-    const anchorIndex =
+    const anchorNodeId = visibleNodeIds[currentIndex];
+    const selectionEdgeIndex =
       selectedIndices.length > 1 && selectedNodeIds.has(node._id)
         ? direction === 1
-          ? selectedIndices[0]!
-          : selectedIndices[selectedIndices.length - 1]!
+          ? selectedIndices[selectedIndices.length - 1]!
+          : selectedIndices[0]!
         : currentIndex;
-    const nextIndex = currentIndex + direction;
-    const anchorNodeId = visibleNodeIds[anchorIndex];
+    const nextIndex = selectionEdgeIndex + direction;
     const nextNodeId = visibleNodeIds[nextIndex];
 
     if (!anchorNodeId) {
@@ -3782,10 +3776,6 @@ function OutlineNodeEditor({
     }
 
     onSelectNodeRange(anchorNodeId, nextNodeId);
-    window.setTimeout(() => {
-      const target = document.querySelector<HTMLElement>(`[data-node-id="${nextNodeId}"] textarea`);
-      focusElementAtEnd(target as HTMLTextAreaElement | null);
-    }, 0);
     return true;
   };
 
