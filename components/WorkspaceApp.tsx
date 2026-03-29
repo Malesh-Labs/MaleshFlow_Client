@@ -2734,7 +2734,7 @@ function LinkedTextPreview({
   return (
     <div
       className={clsx(
-        "absolute inset-0 z-10 whitespace-pre-wrap break-words px-0 py-0.5 text-[15px] leading-6",
+        "absolute inset-0 z-10 whitespace-pre-wrap break-words px-0 py-1 text-[15px] leading-6",
         isDisabled ? "cursor-default" : "cursor-text",
         className,
       )}
@@ -3864,7 +3864,7 @@ function OutlineNodeEditor({
         {dropPosition === "after" ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 border-t-2 border-[var(--workspace-accent)]" />
         ) : null}
-        <div className="flex items-start gap-2">
+        <div className="flex min-h-8 items-center gap-2">
           <button
             type="button"
             data-selection-gutter="true"
@@ -3874,16 +3874,23 @@ function OutlineNodeEditor({
             onDragStart={handleDragHandleStart}
             onDragEnd={() => setDropPosition(null)}
             className={clsx(
-              "mt-0.5 flex h-6 w-4 flex-none items-center justify-center border-r transition",
+              "flex h-8 w-5 flex-none items-center justify-center border-r transition",
               isSelected
                 ? "border-[var(--workspace-accent)] text-[var(--workspace-accent)]"
                 : "border-transparent text-[var(--workspace-text-faint)] opacity-60 hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-accent)] group-hover:opacity-100",
               isDisabled ? "cursor-not-allowed opacity-40" : "cursor-grab active:cursor-grabbing",
             )}
           >
-            <span className="text-[10px] leading-none">::</span>
+            <span className="grid grid-cols-2 gap-[2px]">
+              {Array.from({ length: 6 }).map((_, index) => (
+                <span
+                  key={index}
+                  className="h-[2px] w-[2px] rounded-full bg-current"
+                />
+              ))}
+            </span>
           </button>
-          <div className="flex h-6 w-5 flex-none items-center justify-center text-[var(--workspace-accent)]">
+          <div className="flex h-8 w-5 flex-none items-center justify-center text-[var(--workspace-accent)]">
             {isLocked ||
             ((isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder) ? null : node.kind === "task" ? (
               <button
@@ -3905,7 +3912,7 @@ function OutlineNodeEditor({
               <span className="text-base leading-none text-[var(--workspace-accent)]">•</span>
             )}
           </div>
-          <div className="relative min-w-0 flex-1">
+          <div className="relative flex min-h-8 min-w-0 flex-1 items-center">
             {isVisualSeparatorLine && !shouldRevealVisualPlaceholder ? (
               <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 border-t border-[var(--workspace-border)]" />
             ) : null}
@@ -3934,7 +3941,7 @@ function OutlineNodeEditor({
               disabled={isDisabled}
               rows={1}
               className={clsx(
-                "w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-0.5 text-[15px] leading-6 outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]",
+                "w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-1 text-[15px] leading-6 outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]",
                 node.taskStatus === "done" ? "text-[var(--workspace-text-faint)] line-through" : "",
                 (isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder
                   ? "text-transparent"
