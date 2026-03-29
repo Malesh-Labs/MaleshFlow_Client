@@ -3669,6 +3669,18 @@ function InlineComposer({
     await submitLines(pastedText);
   };
 
+  const handleBlur = () => {
+    setIsFocused(false);
+
+    const currentDraft = draftRef.current;
+    if (readOnly || currentDraft.trim().length === 0) {
+      history.flushDraftCheckpoint(editorId);
+      return;
+    }
+
+    void submitLines(currentDraft);
+  };
+
   return (
     <div className="relative" style={{ marginLeft: `${depth * 18 + 26}px` }}>
       <textarea
@@ -3683,10 +3695,7 @@ function InlineComposer({
           setIsFocused(true);
           setCaretPosition(event.target.selectionStart ?? event.target.value.length);
         }}
-        onBlur={() => {
-          setIsFocused(false);
-          history.flushDraftCheckpoint(editorId);
-        }}
+        onBlur={handleBlur}
         onSelect={(event) => {
           setCaretPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length);
         }}
