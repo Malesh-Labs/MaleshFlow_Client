@@ -2243,8 +2243,10 @@ function OutlineNodeEditor({
     previousSibling?._id
       ? getNodeEditorId(previousSibling._id as Id<"nodes">)
       : getComposerEditorId(pageId, parentNodeId);
-  const isVisualEmptyLine = draft.trim() === ".";
-  const shouldRevealVisualEmptyLine = isFocused || isSelected;
+  const normalizedDraft = draft.trim();
+  const isVisualEmptyLine = normalizedDraft === ".";
+  const isVisualSeparatorLine = normalizedDraft === "---";
+  const shouldRevealVisualPlaceholder = isFocused || isSelected;
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
   const linkTargetResults = useQuery(
     api.workspace.searchLinkTargets,
@@ -2859,7 +2861,8 @@ function OutlineNodeEditor({
             |
           </button>
           <div className="flex h-6 w-5 flex-none items-center justify-center text-[var(--workspace-accent)]">
-            {isLocked || (isVisualEmptyLine && !shouldRevealVisualEmptyLine) ? null : node.kind === "task" ? (
+            {isLocked ||
+            ((isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder) ? null : node.kind === "task" ? (
               <button
                 type="button"
                 onMouseDown={(event) => event.preventDefault()}
@@ -2880,6 +2883,9 @@ function OutlineNodeEditor({
             )}
           </div>
           <div className="relative min-w-0 flex-1">
+            {isVisualSeparatorLine && !shouldRevealVisualPlaceholder ? (
+              <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 border-t border-[var(--workspace-border)]" />
+            ) : null}
             <textarea
               ref={textareaRef}
               value={draft}
@@ -2907,7 +2913,9 @@ function OutlineNodeEditor({
               className={clsx(
                 "w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-0.5 text-[15px] leading-6 outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]",
                 node.taskStatus === "done" ? "text-[var(--workspace-text-faint)] line-through" : "",
-                isVisualEmptyLine && !shouldRevealVisualEmptyLine ? "text-transparent" : "",
+                (isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder
+                  ? "text-transparent"
+                  : "",
               )}
             />
             {isFocused && activeLinkToken ? (
