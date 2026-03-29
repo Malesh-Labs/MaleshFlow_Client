@@ -1090,6 +1090,19 @@ function ConfiguredWorkspace({
   }, []);
 
   useEffect(() => {
+    if (!dragSelection || typeof document === "undefined") {
+      return;
+    }
+
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+
+    return () => {
+      document.body.style.userSelect = previousUserSelect;
+    };
+  }, [dragSelection]);
+
+  useEffect(() => {
     if (!paletteOpen) {
       return;
     }
@@ -1861,7 +1874,11 @@ function ConfiguredWorkspace({
                 onMouseDownCapture={(event) => {
                   if (
                     selectedNodeIds.size > 0 &&
-                    !(event.target instanceof HTMLElement && event.target.closest("[data-selection-gutter='true']"))
+                    !(event.target instanceof HTMLElement && (
+                      event.target.closest("[data-selection-gutter='true']") ||
+                      event.target.closest("[data-item-selection-surface='true']") ||
+                      event.altKey
+                    ))
                   ) {
                     clearNodeSelection();
                   }
@@ -3540,7 +3557,22 @@ function OutlineNodeEditor({
       <div
         data-node-shell
         data-node-id={node._id}
-        className={clsx("rounded-sm transition", isSelected ? "bg-[var(--workspace-sidebar-bg)]" : "")}
+        data-item-selection-surface="true"
+        onMouseDownCapture={(event) => {
+          if (event.button !== 0 || !event.altKey) {
+            return;
+          }
+
+          event.preventDefault();
+          onSelectionStart(node._id);
+        }}
+        onMouseEnter={() => onSelectionExtend(node._id)}
+        className={clsx(
+          "group rounded-sm transition",
+          isSelected
+            ? "bg-[var(--workspace-sidebar-bg)] ring-1 ring-[var(--workspace-border-soft)]"
+            : "",
+        )}
         style={{ marginLeft: `${depth * 18}px` }}
       >
         <div className="flex items-start gap-2">
@@ -3552,10 +3584,14 @@ function OutlineNodeEditor({
               event.preventDefault();
               onSelectionStart(node._id);
             }}
-            onMouseEnter={() => onSelectionExtend(node._id)}
-            className="mt-1 h-5 w-3 flex-none cursor-default border-r border-transparent text-transparent"
+            className={clsx(
+              "mt-0.5 flex h-6 w-4 flex-none items-center justify-center border-r transition",
+              isSelected
+                ? "border-[var(--workspace-accent)] text-[var(--workspace-accent)]"
+                : "border-transparent text-[var(--workspace-text-faint)] opacity-60 hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-accent)] group-hover:opacity-100",
+            )}
           >
-            |
+            <span className="text-[10px] leading-none">::</span>
           </button>
           <div className="flex h-6 w-5 flex-none items-center justify-center text-[var(--workspace-accent)]">
             {isLocked ||
