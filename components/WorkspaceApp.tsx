@@ -13,6 +13,7 @@ import {
   type ReactNode,
   type KeyboardEvent as TextareaKeyboardEvent,
   type ClipboardEvent as TextareaClipboardEvent,
+  type DragEvent as ReactDragEvent,
 } from "react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
@@ -49,6 +50,7 @@ const ARCHIVE_SECTION_LABEL = "Archive";
 const OWNER_KEY_STORAGE_KEY = "maleshflow-owner-key";
 const OWNER_KEY_EVENT = "maleshflow-owner-key-change";
 const LAST_PAGE_STORAGE_KEY = "maleshflow-last-page-id";
+const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
 type SidebarGroupKey = SidebarSection | typeof ARCHIVE_SECTION_LABEL;
@@ -112,6 +114,12 @@ type KnowledgeChatResponse = {
   sources: NodeSearchResult[];
   model: string;
   error: string | null;
+};
+type DraggedNodePayload = {
+  nodeId: string;
+  pageId: string;
+  parentNodeId: string | null;
+  previousSiblingId: string | null;
 };
 type UpdateNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.updateNode>>;
 type CreateNodesBatchMutation = ReturnType<typeof useMutation<typeof api.workspace.createNodesBatch>>;
@@ -232,6 +240,33 @@ function isTextEntryElement(target: EventTarget | null) {
     target instanceof HTMLTextAreaElement ||
     target.closest("input, textarea, [contenteditable='true']") !== null
   );
+}
+
+function parseDraggedNodePayload(rawValue: string | null | undefined) {
+  if (!rawValue) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(rawValue) as Partial<DraggedNodePayload>;
+    if (
+      typeof parsed.nodeId !== "string" ||
+      typeof parsed.pageId !== "string" ||
+      (parsed.parentNodeId !== null && typeof parsed.parentNodeId !== "string") ||
+      (parsed.previousSiblingId !== null && typeof parsed.previousSiblingId !== "string")
+    ) {
+      return null;
+    }
+
+    return {
+      nodeId: parsed.nodeId,
+      pageId: parsed.pageId,
+      parentNodeId: parsed.parentNodeId ?? null,
+      previousSiblingId: parsed.previousSiblingId ?? null,
+    } satisfies DraggedNodePayload;
+  } catch {
+    return null;
+  }
 }
 
 function flattenTreeNodes(nodes: TreeNode[]): TreeNode[] {
@@ -1080,6 +1115,13 @@ function ConfiguredWorkspace({
     );
   }, [dragSelection, visibleNodeOrder]);
 
+  const selectNodeRange = useCallback((anchorNodeId: string, currentNodeId: string) => {
+    setSelectedNodeIds(
+      buildNodeSelectionIds(visibleNodeOrder, anchorNodeId, currentNodeId),
+    );
+    setDragSelection(null);
+  }, [visibleNodeOrder]);
+
   useEffect(() => {
     const handleMouseUp = () => {
       setDragSelection(null);
@@ -1266,20 +1308,51 @@ function ConfiguredWorkspace({
         return;
       }
 
-      if (selectedNodeIds.size === 1 && !isTextEntryElement(event.target)) {
-        const currentNodeId = [...selectedNodeIds][0];
-        if (!currentNodeId) {
-          return;
-        }
-
+      if (selectedNodeIds.size > 0 && !isTextEntryElement(event.target)) {
         if (event.key === "ArrowUp" || event.key === "ArrowDown") {
           event.preventDefault();
           const direction = event.key === "ArrowDown" ? 1 : -1;
-          const currentIndex = visibleNodeOrder.indexOf(currentNodeId);
-          if (currentIndex === -1) {
+          const selectedIndices = [...selectedNodeIds]
+            .map((nodeId) => visibleNodeOrder.indexOf(nodeId))
+            .filter((index) => index >= 0)
+            .sort((left, right) => left - right);
+
+          if (selectedIndices.length === 0) {
             return;
           }
 
+          if (event.shiftKey) {
+            const edgeIndex =
+              direction === 1
+                ? selectedIndices[selectedIndices.length - 1]!
+                : selectedIndices[0]!;
+            const anchorIndex =
+              direction === 1
+                ? selectedIndices[0]!
+                : selectedIndices[selectedIndices.length - 1]!;
+            const nextIndex = edgeIndex + direction;
+            const nextNodeId = visibleNodeOrder[nextIndex];
+            const anchorNodeId = visibleNodeOrder[anchorIndex];
+
+            if (!nextNodeId || !anchorNodeId) {
+              return;
+            }
+
+            selectNodeRange(anchorNodeId, nextNodeId);
+            window.setTimeout(() => {
+              const target = document.querySelector<HTMLElement>(
+                `[data-node-id="${nextNodeId}"] textarea`,
+              );
+              focusElementAtEnd(target as HTMLTextAreaElement | null);
+            }, 0);
+            return;
+          }
+
+          if (selectedIndices.length !== 1) {
+            return;
+          }
+
+          const currentIndex = selectedIndices[0]!;
           const nextNodeId = visibleNodeOrder[currentIndex + direction];
           if (!nextNodeId) {
             return;
@@ -1287,7 +1360,9 @@ function ConfiguredWorkspace({
 
           selectSingleNode(nextNodeId);
           window.setTimeout(() => {
-            const target = document.querySelector<HTMLElement>(`[data-node-id="${nextNodeId}"] textarea`);
+            const target = document.querySelector<HTMLElement>(
+              `[data-node-id="${nextNodeId}"] textarea`,
+            );
             focusElementAtEnd(target as HTMLTextAreaElement | null);
           }, 0);
         }
@@ -1296,7 +1371,14 @@ function ConfiguredWorkspace({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [openPalette, paletteOpen, selectSingleNode, selectedNodeIds, visibleNodeOrder]);
+  }, [
+    openPalette,
+    paletteOpen,
+    selectNodeRange,
+    selectSingleNode,
+    selectedNodeIds,
+    visibleNodeOrder,
+  ]);
 
   useEffect(() => {
     if (selectedNodeIds.size === 0) {
@@ -1927,6 +2009,7 @@ function ConfiguredWorkspace({
                       isPageReadOnly={isPageArchived}
                       selectedNodeIds={selectedNodeIds}
                       onSelectSingleNode={selectSingleNode}
+                      onSelectNodeRange={selectNodeRange}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -1951,6 +2034,7 @@ function ConfiguredWorkspace({
                       isPageReadOnly={isPageArchived}
                       selectedNodeIds={selectedNodeIds}
                       onSelectSingleNode={selectSingleNode}
+                      onSelectNodeRange={selectNodeRange}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -1978,6 +2062,7 @@ function ConfiguredWorkspace({
                       isPageReadOnly={isPageArchived}
                       selectedNodeIds={selectedNodeIds}
                       onSelectSingleNode={selectSingleNode}
+                      onSelectNodeRange={selectNodeRange}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2002,6 +2087,7 @@ function ConfiguredWorkspace({
                       isPageReadOnly={isPageArchived}
                       selectedNodeIds={selectedNodeIds}
                       onSelectSingleNode={selectSingleNode}
+                      onSelectNodeRange={selectNodeRange}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2038,6 +2124,7 @@ function ConfiguredWorkspace({
                       isPageReadOnly={isPageArchived}
                       selectedNodeIds={selectedNodeIds}
                       onSelectSingleNode={selectSingleNode}
+                      onSelectNodeRange={selectNodeRange}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       pagesByTitle={pagesByTitle}
@@ -2414,6 +2501,7 @@ function PageSection({
   isPageReadOnly,
   selectedNodeIds,
   onSelectSingleNode,
+  onSelectNodeRange,
   onSelectionStart,
   onSelectionExtend,
   pagesByTitle,
@@ -2437,6 +2525,7 @@ function PageSection({
   isPageReadOnly: boolean;
   selectedNodeIds: Set<string>;
   onSelectSingleNode: (nodeId: string) => void;
+  onSelectNodeRange: (anchorNodeId: string, currentNodeId: string) => void;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
   pagesByTitle: Map<string, PageDoc>;
@@ -2476,6 +2565,7 @@ function PageSection({
           isPageReadOnly={isPageReadOnly}
           selectedNodeIds={selectedNodeIds}
           onSelectSingleNode={onSelectSingleNode}
+          onSelectNodeRange={onSelectNodeRange}
           onSelectionStart={onSelectionStart}
           onSelectionExtend={onSelectionExtend}
           pagesByTitle={pagesByTitle}
@@ -2512,6 +2602,7 @@ function OutlineNodeList({
   isPageReadOnly,
   selectedNodeIds,
   onSelectSingleNode,
+  onSelectNodeRange,
   onSelectionStart,
   onSelectionExtend,
   pagesByTitle,
@@ -2533,6 +2624,7 @@ function OutlineNodeList({
   isPageReadOnly: boolean;
   selectedNodeIds: Set<string>;
   onSelectSingleNode: (nodeId: string) => void;
+  onSelectNodeRange: (anchorNodeId: string, currentNodeId: string) => void;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
   pagesByTitle: Map<string, PageDoc>;
@@ -2563,6 +2655,7 @@ function OutlineNodeList({
           isSelected={selectedNodeIds.has(node._id)}
           selectedNodeIds={selectedNodeIds}
           onSelectSingleNode={onSelectSingleNode}
+          onSelectNodeRange={onSelectNodeRange}
           onSelectionStart={onSelectionStart}
           onSelectionExtend={onSelectionExtend}
           pagesByTitle={pagesByTitle}
@@ -2726,6 +2819,7 @@ function OutlineNodeEditor({
   isSelected,
   selectedNodeIds,
   onSelectSingleNode,
+  onSelectNodeRange,
   onSelectionStart,
   onSelectionExtend,
   pagesByTitle,
@@ -2751,6 +2845,7 @@ function OutlineNodeEditor({
   isSelected: boolean;
   selectedNodeIds: Set<string>;
   onSelectSingleNode: (nodeId: string) => void;
+  onSelectNodeRange: (anchorNodeId: string, currentNodeId: string) => void;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
   pagesByTitle: Map<string, PageDoc>;
@@ -2762,6 +2857,7 @@ function OutlineNodeEditor({
   const [isFocused, setIsFocused] = useState(false);
   const [caretPosition, setCaretPosition] = useState<number | null>(null);
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
+  const [dropPosition, setDropPosition] = useState<"before" | "after" | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRef = useRef(draft);
 
@@ -2891,6 +2987,11 @@ function OutlineNodeEditor({
     focusElementAtEnd(textareaRef.current);
   };
 
+  const getVisibleNodeIds = () =>
+    Array.from(document.querySelectorAll<HTMLElement>("[data-node-shell][data-node-id]"))
+      .map((shell) => shell.dataset.nodeId ?? "")
+      .filter((value) => value.length > 0);
+
   const focusAdjacentVisibleNode = (direction: -1 | 1) => {
     const shells = Array.from(
       document.querySelectorAll<HTMLElement>("[data-node-shell][data-node-id]"),
@@ -2912,6 +3013,165 @@ function OutlineNodeEditor({
       focusElementAtEnd(targetInput);
     }, 0);
     return true;
+  };
+
+  const extendWholeItemSelection = (direction: -1 | 1) => {
+    const visibleNodeIds = getVisibleNodeIds();
+    const currentIndex = visibleNodeIds.indexOf(node._id);
+    if (currentIndex === -1) {
+      return false;
+    }
+
+    const selectedIndices = [...selectedNodeIds]
+      .map((nodeId) => visibleNodeIds.indexOf(nodeId))
+      .filter((index) => index >= 0)
+      .sort((left, right) => left - right);
+
+    const anchorIndex =
+      selectedIndices.length > 1 && selectedNodeIds.has(node._id)
+        ? direction === 1
+          ? selectedIndices[0]!
+          : selectedIndices[selectedIndices.length - 1]!
+        : currentIndex;
+    const nextIndex = currentIndex + direction;
+    const anchorNodeId = visibleNodeIds[anchorIndex];
+    const nextNodeId = visibleNodeIds[nextIndex];
+
+    if (!anchorNodeId) {
+      return false;
+    }
+
+    if (!nextNodeId) {
+      onSelectSingleNode(node._id);
+      return true;
+    }
+
+    onSelectNodeRange(anchorNodeId, nextNodeId);
+    window.setTimeout(() => {
+      const target = document.querySelector<HTMLElement>(`[data-node-id="${nextNodeId}"] textarea`);
+      focusElementAtEnd(target as HTMLTextAreaElement | null);
+    }, 0);
+    return true;
+  };
+
+  const getDropPositionFromEvent = (event: ReactDragEvent<HTMLElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+  };
+
+  const handleDragHandleStart = (event: ReactDragEvent<HTMLButtonElement>) => {
+    if (isDisabled) {
+      event.preventDefault();
+      return;
+    }
+
+    const payload: DraggedNodePayload = {
+      nodeId: node._id,
+      pageId,
+      parentNodeId,
+      previousSiblingId: previousSibling?._id ?? null,
+    };
+
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(NODE_DRAG_MIME_TYPE, JSON.stringify(payload));
+    event.dataTransfer.setData("text/plain", JSON.stringify(payload));
+    onSelectSingleNode(node._id);
+  };
+
+  const handleDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
+    const payload = parseDraggedNodePayload(
+      event.dataTransfer.getData(NODE_DRAG_MIME_TYPE) ||
+        event.dataTransfer.getData("text/plain"),
+    );
+
+    if (
+      !payload ||
+      payload.nodeId === node._id ||
+      payload.pageId !== pageId ||
+      payload.parentNodeId !== parentNodeId
+    ) {
+      setDropPosition(null);
+      return;
+    }
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropPosition(getDropPositionFromEvent(event));
+  };
+
+  const handleDrop = async (event: ReactDragEvent<HTMLDivElement>) => {
+    const payload = parseDraggedNodePayload(
+      event.dataTransfer.getData(NODE_DRAG_MIME_TYPE) ||
+        event.dataTransfer.getData("text/plain"),
+    );
+    setDropPosition(null);
+
+    if (
+      !payload ||
+      payload.nodeId === node._id ||
+      payload.pageId !== pageId ||
+      payload.parentNodeId !== parentNodeId
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    const nextDropPosition = getDropPositionFromEvent(event);
+    const siblingOrderWithoutDragged = siblings.filter(
+      (sibling) => sibling._id !== payload.nodeId,
+    );
+    const targetIndex = siblingOrderWithoutDragged.findIndex(
+      (sibling) => sibling._id === node._id,
+    );
+    if (targetIndex === -1) {
+      return;
+    }
+
+    const afterNodeId =
+      nextDropPosition === "before"
+        ? ((siblingOrderWithoutDragged[targetIndex - 1]?._id as Id<"nodes"> | undefined) ??
+          null)
+        : (node._id as Id<"nodes">);
+
+    const beforePlacement = buildNodePlacement(
+      payload.pageId as Id<"pages">,
+      (payload.parentNodeId as Id<"nodes"> | null) ?? null,
+      (payload.previousSiblingId as Id<"nodes"> | null) ?? null,
+    );
+    const afterPlacement = buildNodePlacement(pageId, parentNodeId, afterNodeId);
+
+    if (
+      beforePlacement.pageId === afterPlacement.pageId &&
+      beforePlacement.parentNodeId === afterPlacement.parentNodeId &&
+      beforePlacement.afterNodeId === afterPlacement.afterNodeId
+    ) {
+      return;
+    }
+
+    await moveNode({
+      ownerKey,
+      nodeId: payload.nodeId as Id<"nodes">,
+      pageId,
+      parentNodeId,
+      afterNodeId,
+    });
+
+    history.pushUndoEntry({
+      type: "move_node",
+      pageId,
+      nodeId: payload.nodeId as Id<"nodes">,
+      beforePlacement,
+      afterPlacement,
+      focusEditorId: getNodeEditorId(payload.nodeId as Id<"nodes">),
+    });
+
+    onSelectSingleNode(payload.nodeId);
+    window.setTimeout(() => {
+      const target = document.querySelector<HTMLElement>(
+        `[data-node-id="${payload.nodeId}"] textarea`,
+      );
+      focusElementAtEnd(target as HTMLTextAreaElement | null);
+    }, 0);
   };
 
   const buildUpdateEntry = (
@@ -3306,6 +3566,17 @@ function OutlineNodeEditor({
     }
 
     if (
+      event.shiftKey &&
+      !event.altKey &&
+      !isModifier &&
+      (event.key === "ArrowUp" || event.key === "ArrowDown")
+    ) {
+      event.preventDefault();
+      extendWholeItemSelection(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+
+    if (
       !event.shiftKey &&
       !event.altKey &&
       (event.key === "ArrowUp" || event.key === "ArrowDown")
@@ -3567,28 +3838,47 @@ function OutlineNodeEditor({
           onSelectionStart(node._id);
         }}
         onMouseEnter={() => onSelectionExtend(node._id)}
+        onDragOver={handleDragOver}
+        onDragLeave={(event) => {
+          if (
+            event.relatedTarget instanceof Node &&
+            event.currentTarget.contains(event.relatedTarget)
+          ) {
+            return;
+          }
+
+          setDropPosition(null);
+        }}
+        onDrop={(event) => void handleDrop(event)}
         className={clsx(
-          "group rounded-sm transition",
+          "group relative rounded-sm transition",
           isSelected
             ? "bg-[var(--workspace-sidebar-bg)] ring-1 ring-[var(--workspace-border-soft)]"
             : "",
         )}
         style={{ marginLeft: `${depth * 18}px` }}
       >
+        {dropPosition === "before" ? (
+          <div className="pointer-events-none absolute inset-x-0 top-0 border-t-2 border-[var(--workspace-accent)]" />
+        ) : null}
+        {dropPosition === "after" ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 border-t-2 border-[var(--workspace-accent)]" />
+        ) : null}
         <div className="flex items-start gap-2">
           <button
             type="button"
             data-selection-gutter="true"
-            aria-label="Select line"
-            onMouseDown={(event) => {
-              event.preventDefault();
-              onSelectionStart(node._id);
-            }}
+            aria-label="Drag line"
+            draggable={!isDisabled}
+            onClick={() => onSelectSingleNode(node._id)}
+            onDragStart={handleDragHandleStart}
+            onDragEnd={() => setDropPosition(null)}
             className={clsx(
               "mt-0.5 flex h-6 w-4 flex-none items-center justify-center border-r transition",
               isSelected
                 ? "border-[var(--workspace-accent)] text-[var(--workspace-accent)]"
                 : "border-transparent text-[var(--workspace-text-faint)] opacity-60 hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-accent)] group-hover:opacity-100",
+              isDisabled ? "cursor-not-allowed opacity-40" : "cursor-grab active:cursor-grabbing",
             )}
           >
             <span className="text-[10px] leading-none">::</span>
@@ -3693,6 +3983,7 @@ function OutlineNodeEditor({
         isPageReadOnly={isPageReadOnly}
         selectedNodeIds={selectedNodeIds}
         onSelectSingleNode={onSelectSingleNode}
+        onSelectNodeRange={onSelectNodeRange}
         onSelectionStart={onSelectionStart}
         onSelectionExtend={onSelectionExtend}
         pagesByTitle={pagesByTitle}
