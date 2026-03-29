@@ -1162,6 +1162,7 @@ function ConfiguredWorkspace({
   const pageTitleInputRef = useRef<HTMLInputElement>(null);
   const pageTitleDraftRef = useRef(pageTitleDraft);
   const paletteInputRef = useRef<HTMLInputElement>(null);
+  const lastPaletteModeRef = useRef<PaletteMode>("pages");
   const hasResolvedInitialPageSelection = useRef(false);
   const hasRequestedSidebarPage = useRef(false);
 
@@ -1175,7 +1176,8 @@ function ConfiguredWorkspace({
     setDragSelection(null);
   }, []);
 
-  const openPalette = useCallback((mode: PaletteMode) => {
+  const switchPaletteMode = useCallback((mode: PaletteMode) => {
+    lastPaletteModeRef.current = mode;
     setPaletteMode(mode);
     setPaletteQuery("");
     setPaletteHighlightIndex(0);
@@ -1183,8 +1185,12 @@ function ConfiguredWorkspace({
     setNodeSearchResults([]);
     setKnowledgeChatResponse(null);
     setIsKnowledgeChatLoading(false);
-    setPaletteOpen(true);
   }, []);
+
+  const openPalette = useCallback((mode: PaletteMode) => {
+    switchPaletteMode(mode);
+    setPaletteOpen(true);
+  }, [switchPaletteMode]);
 
   const isSidebarQueryLoading =
     Boolean(ownerKey) && isOwnerKeyValid === true && typeof sidebarTree === "undefined";
@@ -1886,13 +1892,33 @@ function ConfiguredWorkspace({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const isModifier = event.metaKey || event.ctrlKey;
-      if (isModifier && event.key.toLowerCase() === "k") {
+      const normalizedKey = event.key.toLowerCase();
+
+      if (isModifier && event.shiftKey && normalizedKey === "f") {
+        event.preventDefault();
+        openPalette("find");
+        return;
+      }
+
+      if (isModifier && event.shiftKey && normalizedKey === "p") {
+        event.preventDefault();
+        openPalette(lastPaletteModeRef.current);
+        return;
+      }
+
+      if (isModifier && event.shiftKey && normalizedKey === "l") {
+        event.preventDefault();
+        openPalette("chat");
+        return;
+      }
+
+      if (isModifier && normalizedKey === "k") {
         event.preventDefault();
         openPalette("pages");
         return;
       }
 
-      if (isModifier && event.key.toLowerCase() === "o") {
+      if (isModifier && normalizedKey === "o") {
         event.preventDefault();
         openPalette(event.shiftKey ? "nodes" : "pages");
         return;
@@ -2262,12 +2288,7 @@ function ConfiguredWorkspace({
         (currentIndex + direction + PALETTE_MODE_ORDER.length) % PALETTE_MODE_ORDER.length;
       const nextMode = PALETTE_MODE_ORDER[nextIndex] ?? "pages";
 
-      setPaletteMode(nextMode);
-      setPaletteQuery("");
-      setPaletteHighlightIndex(0);
-      setNodeSearchResults([]);
-      setKnowledgeChatResponse(null);
-      setIsKnowledgeChatLoading(false);
+      switchPaletteMode(nextMode);
       return;
     }
 
@@ -3071,9 +3092,7 @@ function ConfiguredWorkspace({
                 <button
                   type="button"
                   onClick={() => {
-                    setPaletteMode("pages");
-                    setPaletteQuery("");
-                    setPaletteHighlightIndex(0);
+                    switchPaletteMode("pages");
                   }}
                   className={clsx(
                     "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
@@ -3087,13 +3106,7 @@ function ConfiguredWorkspace({
                 <button
                   type="button"
                   onClick={() => {
-                    setPaletteMode("find");
-                    setPaletteQuery("");
-                    setPaletteHighlightIndex(0);
-                    setTextSearchResults([]);
-                    setNodeSearchResults([]);
-                    setKnowledgeChatResponse(null);
-                    setIsKnowledgeChatLoading(false);
+                    switchPaletteMode("find");
                   }}
                   className={clsx(
                     "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
@@ -3107,13 +3120,7 @@ function ConfiguredWorkspace({
                 <button
                   type="button"
                   onClick={() => {
-                    setPaletteMode("nodes");
-                    setPaletteQuery("");
-                    setPaletteHighlightIndex(0);
-                    setTextSearchResults([]);
-                    setNodeSearchResults([]);
-                    setKnowledgeChatResponse(null);
-                    setIsKnowledgeChatLoading(false);
+                    switchPaletteMode("nodes");
                   }}
                   className={clsx(
                     "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
@@ -3127,13 +3134,7 @@ function ConfiguredWorkspace({
                 <button
                   type="button"
                   onClick={() => {
-                    setPaletteMode("chat");
-                    setPaletteQuery("");
-                    setPaletteHighlightIndex(0);
-                    setTextSearchResults([]);
-                    setNodeSearchResults([]);
-                    setKnowledgeChatResponse(null);
-                    setIsKnowledgeChatLoading(false);
+                    switchPaletteMode("chat");
                   }}
                   className={clsx(
                     "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
