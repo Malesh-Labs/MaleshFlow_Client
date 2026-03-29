@@ -46,14 +46,13 @@ const SIDEBAR_SECTIONS = [
   "Journal",
   "Scratchpads",
 ] as const;
-const ARCHIVE_SECTION_LABEL = "Archive";
 const OWNER_KEY_STORAGE_KEY = "maleshflow-owner-key";
 const OWNER_KEY_EVENT = "maleshflow-owner-key-change";
 const LAST_PAGE_STORAGE_KEY = "maleshflow-last-page-id";
+const SIDEBAR_COLLAPSE_STORAGE_KEY = "maleshflow-sidebar-collapsed";
 const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
-type SidebarGroupKey = SidebarSection | typeof ARCHIVE_SECTION_LABEL;
 type PageType = "default" | "model" | "journal";
 type PageDoc = Doc<"pages">;
 type PaletteMode = "pages" | "find" | "nodes" | "chat";
@@ -108,6 +107,7 @@ type LinkPreviewSegment =
       archived: boolean;
       resolved: boolean;
       linkKind: "page" | "node";
+      pageTypeLabel?: string | null;
     };
 type KnowledgeChatResponse = {
   answer: string;
@@ -230,6 +230,27 @@ function getPageMeta(page: Doc<"pages"> | null | undefined) {
         : "default";
 
   return { sidebarSection, pageType };
+}
+
+function getPageTypeLabel(page: Doc<"pages"> | null | undefined) {
+  return getPageTypeLabelForSection(getPageMeta(page).sidebarSection);
+}
+
+function getPageTypeLabelForSection(sidebarSection: SidebarSection) {
+  switch (sidebarSection) {
+    case "Models":
+      return "Model";
+    case "Tasks":
+      return "Task";
+    case "Templates":
+      return "Template";
+    case "Journal":
+      return "Journal";
+    case "Scratchpads":
+      return "Scratchpad";
+    default:
+      return "Page";
+  }
 }
 
 function isTextEntryElement(target: EventTarget | null) {
@@ -455,6 +476,7 @@ function buildLinkPreviewSegments(
         archived: page?.archived ?? false,
         resolved: Boolean(page),
         linkKind: "page",
+        pageTypeLabel: page ? getPageTypeLabel(page) : null,
       });
     } else {
       const targetNode = nodeTargetsById.get(match.link.targetNodeRef);
@@ -473,6 +495,7 @@ function buildLinkPreviewSegments(
         archived: targetNode?.pageArchived ?? false,
         resolved: Boolean(targetNode?.pageId),
         linkKind: "node",
+        pageTypeLabel: null,
       });
     }
 
@@ -773,9 +796,7 @@ function ConfiguredWorkspace({
   const [isKnowledgeChatLoading, setIsKnowledgeChatLoading] = useState(false);
   const [pendingRevealNodeId, setPendingRevealNodeId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
-  const [collapsedSidebarSections, setCollapsedSidebarSections] = useState<Set<SidebarGroupKey>>(
-    () => new Set<SidebarGroupKey>([...SIDEBAR_SECTIONS, ARCHIVE_SECTION_LABEL]),
-  );
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [dragSelection, setDragSelection] = useState<{
     anchorNodeId: string;
     currentNodeId: string;
@@ -802,8 +823,13 @@ function ConfiguredWorkspace({
       ? { ownerKey, pageId: selectedPageId }
       : SKIP,
   );
+  const sidebarTree = useQuery(
+    api.workspace.getSidebarTree,
+    ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
+  );
 
   const createPage = useMutation(api.workspace.createPage);
+  const ensureSidebarPage = useMutation(api.workspace.ensureSidebarPage);
   const renamePage = useMutation(api.workspace.renamePage);
   const archivePage = useMutation(api.workspace.archivePage);
   const deletePageForever = useMutation(api.workspace.deletePageForever);
@@ -825,6 +851,7 @@ function ConfiguredWorkspace({
   const pageTitleDraftRef = useRef(pageTitleDraft);
   const paletteInputRef = useRef<HTMLInputElement>(null);
   const hasResolvedInitialPageSelection = useRef(false);
+  const hasRequestedSidebarPage = useRef(false);
 
   const clearNodeSelection = useCallback(() => {
     setSelectedNodeIds(new Set());
@@ -834,18 +861,6 @@ function ConfiguredWorkspace({
   const selectSingleNode = useCallback((nodeId: string) => {
     setSelectedNodeIds(new Set([nodeId]));
     setDragSelection(null);
-  }, []);
-
-  const toggleSidebarSection = useCallback((section: SidebarGroupKey) => {
-    setCollapsedSidebarSections((current) => {
-      const next = new Set(current);
-      if (next.has(section)) {
-        next.delete(section);
-      } else {
-        next.add(section);
-      }
-      return next;
-    });
   }, []);
 
   const openPalette = useCallback((mode: PaletteMode) => {
@@ -863,6 +878,7 @@ function ConfiguredWorkspace({
     ownerKey,
     selectedPageId,
     setSelectedPageId,
+    auxiliaryPageIds: sidebarTree?.page ? [sidebarTree.page._id] : [],
     renamePage,
     updateNode,
     moveNode,
@@ -887,6 +903,10 @@ function ConfiguredWorkspace({
   const tree = pageTree ? toTreeNodes(pageTree.nodes) : [];
   const nodeMap = new Map(
     (pageTree?.nodes ?? []).map((node) => [node._id as string, node]),
+  );
+  const sidebarNodes = sidebarTree ? toTreeNodes(sidebarTree.nodes) : [];
+  const sidebarNodeMap = new Map(
+    (sidebarTree?.nodes ?? []).map((node) => [node._id as string, node]),
   );
 
   const modelSection = findSectionNode(tree, "model");
@@ -913,22 +933,14 @@ function ConfiguredWorkspace({
   const journalVisibleRoots = [journalThoughtsSection, journalFeedbackSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
-  const visibleRows =
+  const pageVisibleRows =
     pageMeta.pageType === "model"
       ? flattenTreeNodes([...modelVisibleRoots, ...genericRoots])
       : pageMeta.pageType === "journal"
         ? flattenTreeNodes([...journalVisibleRoots, ...genericRoots])
         : flattenTreeNodes(genericRoots);
-  const visibleNodeOrder = visibleRows.map((node) => node._id);
-
-  const groupedPages = SIDEBAR_SECTIONS.map((section) => ({
-    section,
-    pages:
-      pages?.filter(
-        (page) => !page.archived && getPageMeta(page).sidebarSection === section,
-      ) ?? [],
-  }));
-  const archivedPages = pages?.filter((page) => page.archived) ?? [];
+  const sidebarVisibleRows = flattenTreeNodes(sidebarNodes);
+  const visibleNodeOrder = [...sidebarVisibleRows, ...pageVisibleRows].map((node) => node._id);
   const pagesByTitle = useMemo(() => {
     const next = new Map<string, PageDoc>();
     for (const page of pages ?? []) {
@@ -982,6 +994,25 @@ function ConfiguredWorkspace({
   }, [pageTitleDraft]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    setIsSidebarCollapsed(window.localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY) === "true");
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      SIDEBAR_COLLAPSE_STORAGE_KEY,
+      isSidebarCollapsed ? "true" : "false",
+    );
+  }, [isSidebarCollapsed]);
+
+  useEffect(() => {
     setLocationPageId(readPageIdFromLocation());
 
     const handlePopState = () => {
@@ -997,6 +1028,23 @@ function ConfiguredWorkspace({
       setOwnerKey("");
     }
   }, [isOwnerKeyValid, setOwnerKey]);
+
+  useEffect(() => {
+    if (!ownerKey || !isOwnerKeyValid) {
+      hasRequestedSidebarPage.current = false;
+      return;
+    }
+
+    if (sidebarTree === null && !hasRequestedSidebarPage.current) {
+      hasRequestedSidebarPage.current = true;
+      void ensureSidebarPage({ ownerKey });
+      return;
+    }
+
+    if (sidebarTree) {
+      hasRequestedSidebarPage.current = false;
+    }
+  }, [ensureSidebarPage, isOwnerKeyValid, ownerKey, sidebarTree]);
 
   useEffect(() => {
     if (!pages) {
@@ -1757,162 +1805,210 @@ function ConfiguredWorkspace({
   return (
     <WorkspaceHistoryProvider value={history}>
       <main className="min-h-screen bg-[var(--workspace-bg)] text-[var(--workspace-text)]">
-      <div className="mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)]">
-        <aside className="flex flex-col border-b border-[var(--workspace-border)] bg-[var(--workspace-sidebar-bg)] p-6 lg:border-b-0 lg:border-r">
-          <div className="flex items-start justify-end gap-4">
-                <button
-                  type="button"
-                  onClick={() => {
-                    openPalette("pages");
-              }}
-              className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-            >
-              Pages
-            </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    openPalette("find");
-                  }}
-              className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                >
-                  Find
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    openPalette("nodes");
-                  }}
-              className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                >
-                  Semantic
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    openPalette("chat");
-                  }}
-                  className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                >
-                  Ask
-                </button>
-          </div>
-
-          <div className="mt-10 flex-1 space-y-6">
-            {groupedPages.map(({ section, pages: sectionPages }) => (
-              <section
-                key={section}
-                className="border-t border-[var(--workspace-border-soft)] pt-6 first:border-t-0 first:pt-0"
+      <div
+        className={clsx(
+          "mx-auto grid min-h-screen max-w-[1600px] grid-cols-1",
+          isSidebarCollapsed
+            ? "lg:grid-cols-[56px_minmax(0,1fr)]"
+            : "lg:grid-cols-[320px_minmax(0,1fr)]",
+        )}
+      >
+        <aside
+          className={clsx(
+            "flex flex-col border-b border-[var(--workspace-border)] bg-[var(--workspace-sidebar-bg)] lg:border-b-0 lg:border-r",
+            isSidebarCollapsed ? "px-2 py-4" : "p-6",
+          )}
+        >
+          {isSidebarCollapsed ? (
+            <div className="flex h-full flex-col items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setIsSidebarCollapsed(false)}
+                className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
               >
+                &gt;
+              </button>
+              <button
+                type="button"
+                onClick={() => openPalette("pages")}
+                className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+              >
+                P
+              </button>
+              <button
+                type="button"
+                onClick={() => openPalette("find")}
+                className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+              >
+                F
+              </button>
+              <button
+                type="button"
+                onClick={() => openPalette("nodes")}
+                className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+              >
+                S
+              </button>
+              <button
+                type="button"
+                onClick={() => openPalette("chat")}
+                className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+              >
+                AI
+              </button>
+              <div className="mt-auto flex flex-col items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => toggleSidebarSection(section)}
-                  className="flex w-full items-center justify-between text-left text-sm font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]"
+                  onClick={() => void handleRebuildEmbeddings()}
+                  disabled={isRebuildingEmbeddings}
+                  className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
                 >
-                  <span>{section}</span>
-                  <span className="text-xs text-[var(--workspace-accent)]">
-                    {collapsedSidebarSections.has(section) ? "+" : "-"}
-                  </span>
+                  Emb
                 </button>
-                {!collapsedSidebarSections.has(section) ? (
-                  <>
-                    <div className="mt-3 space-y-2">
-                      {sectionPages.map((page) => (
-                        <button
-                          key={page._id}
-                          type="button"
-                          onClick={() => handleSelectPage(page._id)}
-                          className={clsx(
-                            "block w-full border-l-2 px-3 py-2 text-left text-sm transition",
-                            selectedPageId === page._id
-                              ? "border-[var(--workspace-brand)] bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
-                              : "border-transparent text-[var(--workspace-text-strong)] hover:border-[var(--workspace-border-hover)] hover:bg-[var(--workspace-surface-accent)]",
-                          )}
-                        >
-                          {page.title}
-                        </button>
-                      ))}
-                    </div>
+                <button
+                  type="button"
+                  onClick={() => setOwnerKey("")}
+                  className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                >
+                  Lock
+                </button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-start justify-between gap-4">
+                <button
+                  type="button"
+                  onClick={() => setIsSidebarCollapsed(true)}
+                  className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                >
+                  &lt;
+                </button>
+                <div className="flex items-start justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openPalette("pages")}
+                    className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                  >
+                    Pages
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openPalette("find")}
+                    className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                  >
+                    Find
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openPalette("nodes")}
+                    className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                  >
+                    Semantic
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openPalette("chat")}
+                    className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                  >
+                    Ask
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-6 flex-1 overflow-y-auto">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
+                    Sidebar
+                  </p>
+                  <p className="text-[11px] text-[var(--workspace-text-faint)]">
+                    Use `[[Page]]` links to build your map.
+                  </p>
+                </div>
+                {!sidebarTree ? (
+                  <p className="text-sm text-[var(--workspace-text-faint)]">Preparing sidebar…</p>
+                ) : (
+                  <div className="space-y-1">
+                    <OutlineNodeList
+                      nodes={sidebarNodes}
+                      ownerKey={ownerKey}
+                      pageId={sidebarTree?.page._id as Id<"pages">}
+                      nodeMap={sidebarNodeMap}
+                      createNodesBatch={createNodesBatch}
+                      updateNode={updateNode}
+                      moveNode={moveNode}
+                      splitNode={splitNode}
+                      replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                      setNodeTreeArchived={setNodeTreeArchived}
+                      isPageReadOnly={false}
+                      selectedNodeIds={selectedNodeIds}
+                      onSelectSingleNode={selectSingleNode}
+                      onSelectNodeRange={selectNodeRange}
+                      pendingInsertedComposer={pendingInsertedComposer}
+                      onOpenInsertedComposer={openInsertedComposer}
+                      onClearInsertedComposer={clearInsertedComposer}
+                      onSelectionStart={beginNodeSelection}
+                      onSelectionExtend={extendNodeSelection}
+                      pagesByTitle={pagesByTitle}
+                      onOpenPage={handleSelectPage}
+                      onOpenNode={handleOpenLinkedNode}
+                    />
+                    <InlineComposer
+                      ownerKey={ownerKey}
+                      pageId={sidebarTree?.page._id as Id<"pages">}
+                      parentNodeId={null}
+                      afterNodeId={sidebarNodes[sidebarNodes.length - 1]?._id as Id<"nodes"> | undefined}
+                      createNodesBatch={createNodesBatch}
+                      readOnly={false}
+                      depth={0}
+                      placeholder="New sidebar line…"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 border-t border-[var(--workspace-border-soft)] pt-4">
+                <div className="flex flex-wrap gap-2">
+                  {SIDEBAR_SECTIONS.map((section) => (
                     <button
+                      key={section}
                       type="button"
                       onClick={() => void handleCreatePage(section)}
                       disabled={isCreatingPage === section}
-                      className="mt-3 w-full border border-dashed border-[var(--workspace-border-hover)] px-3 py-2 text-left text-sm font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:bg-[var(--workspace-surface-accent)] disabled:cursor-wait disabled:opacity-60"
+                      className="border border-[var(--workspace-border-control)] px-2.5 py-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
                     >
-                      {isCreatingPage === section ? "Creating page…" : `New ${section.slice(0, -1)}`}
+                      {isCreatingPage === section ? "Creating…" : `+ ${getPageTypeLabelForSection(section)}`}
                     </button>
-                  </>
-                ) : null}
-              </section>
-            ))}
-            <section className="border-t border-[var(--workspace-border-soft)] pt-6">
-              <button
-                type="button"
-                onClick={() => toggleSidebarSection(ARCHIVE_SECTION_LABEL)}
-                className="flex w-full items-center justify-between text-left text-sm font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]"
-              >
-                <span>{ARCHIVE_SECTION_LABEL}</span>
-                <span className="text-xs text-[var(--workspace-accent)]">
-                  {collapsedSidebarSections.has(ARCHIVE_SECTION_LABEL) ? "+" : "-"}
-                </span>
-              </button>
-              {!collapsedSidebarSections.has(ARCHIVE_SECTION_LABEL) ? (
-                <div className="mt-3 space-y-2">
-                  {archivedPages.length === 0 ? (
-                    <p className="px-3 py-2 text-sm text-[var(--workspace-text-faint)]">
-                      No archived pages
-                    </p>
-                  ) : (
-                    archivedPages.map((page) => (
-                      <button
-                        key={page._id}
-                        type="button"
-                        onClick={() => handleSelectPage(page._id)}
-                        className={clsx(
-                          "block w-full border-l-2 px-3 py-2 text-left text-sm transition",
-                          selectedPageId === page._id
-                            ? "border-[var(--workspace-brand)] bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
-                            : "border-transparent text-[var(--workspace-text-strong)] hover:border-[var(--workspace-border-hover)] hover:bg-[var(--workspace-surface-accent)]",
-                        )}
-                      >
-                        <span>{page.title}</span>
-                        <span className="ml-2 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
-                          Archived
-                        </span>
-                      </button>
-                    ))
-                  )}
+                  ))}
                 </div>
-              ) : null}
-            </section>
-          </div>
-          <div className="mt-6 pt-4">
-            <div className="space-y-3">
-              <button
-                type="button"
-                onClick={() => void handleRebuildEmbeddings()}
-                disabled={isRebuildingEmbeddings}
-                className="w-full border border-[var(--workspace-border-control)] px-3 py-2 text-left text-xs font-medium uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
-              >
-                {isRebuildingEmbeddings ? "Rebuilding…" : "Rebuild Embeddings"}
-              </button>
-              {embeddingRebuildStatus ? (
-                <p className="text-xs leading-5 text-[var(--workspace-text-faint)]">
-                  {embeddingRebuildStatus}
-                </p>
-              ) : null}
-              <p className="text-xs leading-5 text-[var(--workspace-text-faint)]">
-                {embeddingProgressLabel}
-              </p>
-              <button
-                type="button"
-                onClick={() => setOwnerKey("")}
-                className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-              >
-                Lock
-              </button>
-            </div>
-          </div>
+                <div className="mt-4 space-y-3">
+                  <button
+                    type="button"
+                    onClick={() => void handleRebuildEmbeddings()}
+                    disabled={isRebuildingEmbeddings}
+                    className="w-full border border-[var(--workspace-border-control)] px-3 py-2 text-left text-xs font-medium uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {isRebuildingEmbeddings ? "Rebuilding…" : "Rebuild Embeddings"}
+                  </button>
+                  {embeddingRebuildStatus ? (
+                    <p className="text-xs leading-5 text-[var(--workspace-text-faint)]">
+                      {embeddingRebuildStatus}
+                    </p>
+                  ) : null}
+                  <p className="text-xs leading-5 text-[var(--workspace-text-faint)]">
+                    {embeddingProgressLabel}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setOwnerKey("")}
+                    className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                  >
+                    Lock
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </aside>
 
         <section className="p-6 md:p-10">
@@ -1933,7 +2029,7 @@ function ConfiguredWorkspace({
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.3em] text-[var(--workspace-accent)]">
-                      <span>{pageMeta.sidebarSection}</span>
+                      <span>{getPageTypeLabel(selectedPage)}</span>
                       {isPageArchived ? (
                         <span className="rounded-full border border-[var(--workspace-border)] px-2 py-1 text-[10px] tracking-[0.2em] text-[var(--workspace-text-faint)]">
                           Archived
@@ -2351,7 +2447,6 @@ function ConfiguredWorkspace({
                   <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">No matching pages.</p>
                 ) : (
                 paletteResults.map((page, index) => {
-                  const pageInfo = getPageMeta(page);
                   return (
                     <button
                       key={page._id}
@@ -2370,7 +2465,7 @@ function ConfiguredWorkspace({
                           {page.title}
                         </span>
                         <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                          {pageInfo.sidebarSection}
+                          {getPageTypeLabel(page)}
                         </span>
                       </span>
                       <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
@@ -2394,7 +2489,6 @@ function ConfiguredWorkspace({
                 <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">No matching text.</p>
               ) : (
                 textSearchResults.map((result, index) => {
-                  const pageInfo = getPageMeta(result.page);
                   return (
                     <button
                       key={`${result.node._id}:${result.page?._id ?? "page"}:find`}
@@ -2414,7 +2508,7 @@ function ConfiguredWorkspace({
                         </span>
                         <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
                           {result.page?.title ?? "Unknown page"}
-                          {result.page ? ` • ${pageInfo.sidebarSection}` : ""}
+                          {result.page ? ` • ${getPageTypeLabel(result.page)}` : ""}
                         </span>
                       </span>
                       <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
@@ -2433,7 +2527,6 @@ function ConfiguredWorkspace({
                 <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">No matching notes.</p>
               ) : (
                 nodeSearchResults.map((result, index) => {
-                  const pageInfo = getPageMeta(result.page);
                   return (
                     <button
                       key={`${result.node._id}:${result.page?._id ?? "page"}`}
@@ -2453,7 +2546,7 @@ function ConfiguredWorkspace({
                         </span>
                         <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
                           {result.page?.title ?? "Unknown page"}
-                          {result.page ? ` • ${pageInfo.sidebarSection}` : ""}
+                          {result.page ? ` • ${getPageTypeLabel(result.page)}` : ""}
                         </span>
                       </span>
                       <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
@@ -2487,7 +2580,6 @@ function ConfiguredWorkspace({
                         <p className="text-sm text-[var(--workspace-text-subtle)]">No source snippets available.</p>
                       ) : (
                         knowledgeChatResponse.sources.map((result, index) => {
-                          const pageInfo = getPageMeta(result.page);
                           return (
                             <button
                               key={`${result.node._id}:${index}`}
@@ -2500,7 +2592,7 @@ function ConfiguredWorkspace({
                               </span>
                               <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
                                 {result.page?.title ?? "Unknown page"}
-                                {result.page ? ` • ${pageInfo.sidebarSection}` : ""}
+                                {result.page ? ` • ${getPageTypeLabel(result.page)}` : ""}
                               </span>
                               {result.content && result.content.trim() !== result.node.text.trim() ? (
                                 <span className="mt-2 block whitespace-pre-wrap text-xs leading-6 text-[var(--workspace-text-subtle)]">
@@ -2845,11 +2937,16 @@ function LinkedTextPreview({
                 onOpenPage(segment.pageId!);
               }}
               className={clsx(
-                "inline cursor-pointer text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px] transition hover:text-[var(--workspace-brand-hover)]",
+                "inline-flex items-center cursor-pointer text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px] transition hover:text-[var(--workspace-brand-hover)]",
                 segment.archived ? "opacity-75" : "",
               )}
             >
-              {segment.text}
+              <span>{segment.text}</span>
+              {segment.pageTypeLabel ? (
+                <span className="ml-1 text-[10px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)] no-underline">
+                  {segment.pageTypeLabel}
+                </span>
+              ) : null}
             </button>
           ) : (
             <span

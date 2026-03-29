@@ -139,6 +139,7 @@ type UseWorkspaceHistoryArgs = {
   ownerKey: string;
   selectedPageId: Id<"pages"> | null;
   setSelectedPageId: (pageId: Id<"pages"> | null) => void;
+  auxiliaryPageIds?: Id<"pages">[];
   renamePage: RenamePageFn;
   updateNode: UpdateNodeFn;
   moveNode: MoveNodeFn;
@@ -254,6 +255,7 @@ export function useWorkspaceHistoryController({
   ownerKey,
   selectedPageId,
   setSelectedPageId,
+  auxiliaryPageIds = [],
   renamePage,
   updateNode,
   moveNode,
@@ -269,10 +271,15 @@ export function useWorkspaceHistoryController({
   const draftSessionsRef = useRef(new Map<string, DraftSession>());
   const pendingFocusEditorIdRef = useRef<string | null>(null);
   const selectedPageIdRef = useRef(selectedPageId);
+  const auxiliaryPageIdsRef = useRef(new Set(auxiliaryPageIds));
 
   useEffect(() => {
     selectedPageIdRef.current = selectedPageId;
   }, [selectedPageId]);
+
+  useEffect(() => {
+    auxiliaryPageIdsRef.current = new Set(auxiliaryPageIds);
+  }, [auxiliaryPageIds]);
 
   const refreshHistoryState = useCallback(() => {
     setHistoryState({
@@ -523,7 +530,10 @@ export function useWorkspaceHistoryController({
     async (entry: HistoryEntry, direction: "undo" | "redo") => {
       const isUndo = direction === "undo";
       const entryPageId = getEntryPageId(entry);
-      if (selectedPageIdRef.current !== entryPageId) {
+      if (
+        selectedPageIdRef.current !== entryPageId &&
+        !auxiliaryPageIdsRef.current.has(entryPageId)
+      ) {
         setSelectedPage(entryPageId);
       }
 

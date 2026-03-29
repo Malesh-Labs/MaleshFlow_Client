@@ -3,6 +3,14 @@ import { internalMutation, internalQuery } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { priorityValidator, taskStatusValidator } from "./lib/validators";
 
+function isSidebarSpecialPage(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
+  if (!page || typeof page.sourceMeta !== "object" || !page.sourceMeta) {
+    return false;
+  }
+
+  return (page.sourceMeta as Record<string, unknown>).specialPage === "sidebar";
+}
+
 export const fallbackTextSearch = internalQuery({
   args: {
     query: v.string(),
@@ -22,7 +30,10 @@ export const fallbackTextSearch = internalQuery({
     const pages = await Promise.all(pageIds.map((pageId) => ctx.db.get(pageId)));
     const pageMap = new Map(
       pages
-        .filter((page): page is Doc<"pages"> => Boolean(page) && !page!.archived)
+        .filter(
+          (page): page is Doc<"pages"> =>
+            Boolean(page) && !page!.archived && !isSidebarSpecialPage(page),
+        )
         .map((page) => [page._id, page]),
     );
     const nodes = rawNodes.filter((node) => pageMap.has(node.pageId));
@@ -76,7 +87,10 @@ export const hydrateEmbeddingMatches = internalQuery({
     );
     const pageMap = new Map(
       pages
-        .filter((page): page is Doc<"pages"> => Boolean(page) && !page!.archived)
+        .filter(
+          (page): page is Doc<"pages"> =>
+            Boolean(page) && !page!.archived && !isSidebarSpecialPage(page),
+        )
         .map((page) => [page._id, page]),
     );
 

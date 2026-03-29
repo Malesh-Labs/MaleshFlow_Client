@@ -20,6 +20,16 @@ function getTimestamp() {
   return Date.now();
 }
 
+function getPageSourceMeta(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
+  return page && typeof page.sourceMeta === "object" && page.sourceMeta
+    ? (page.sourceMeta as Record<string, unknown>)
+    : {};
+}
+
+function isSidebarSpecialPage(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
+  return getPageSourceMeta(page).specialPage === "sidebar";
+}
+
 function normalizeLinkSearchQuery(value: string) {
   return value.trim().toLowerCase();
 }
@@ -115,15 +125,69 @@ export const listPages = query({
           .collect(),
       ]);
 
-      return [...activePages, ...archivedPages];
+      return [...activePages, ...archivedPages].filter((page) => !isSidebarSpecialPage(page));
     }
 
-    return await ctx.db
+    return (await ctx.db
       .query("pages")
       .withIndex("by_archived_position", (query) =>
         query.eq("archived", false),
       )
-      .collect();
+      .collect()).filter((page) => !isSidebarSpecialPage(page));
+  },
+});
+
+export const getSidebarTree = query({
+  args: {
+    ownerKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const pages = await ctx.db.query("pages").collect();
+    const sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
+    if (!sidebarPage) {
+      return null;
+    }
+
+    const nodes = await listPageNodes(ctx.db, sidebarPage._id);
+    return {
+      page: sidebarPage,
+      nodes,
+    };
+  },
+});
+
+export const ensureSidebarPage = mutation({
+  args: {
+    ownerKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const pages = await ctx.db.query("pages").collect();
+    const existingSidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
+    if (existingSidebarPage) {
+      return existingSidebarPage._id;
+    }
+
+    const now = getTimestamp();
+    const slug = await buildUniquePageSlug(ctx.db, "Sidebar");
+    return await ctx.db.insert("pages", {
+      title: "Sidebar",
+      slug,
+      icon: null,
+      archived: false,
+      position: -1024,
+      sourceMeta: {
+        sourceType: "system",
+        specialPage: "sidebar",
+        hidden: true,
+        pageType: "default",
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
   },
 });
 
@@ -279,6 +343,10 @@ export const archivePage = mutation({
       throw new Error("Page not found.");
     }
 
+    if (isSidebarSpecialPage(page)) {
+      throw new Error("The sidebar outline cannot be archived.");
+    }
+
     await ctx.db.patch(args.pageId, {
       archived: args.archived,
       updatedAt: getTimestamp(),
@@ -296,6 +364,10 @@ export const deletePageForever = mutation({
     const page = await ctx.db.get(args.pageId);
     if (!page) {
       throw new Error("Page not found.");
+    }
+
+    if (isSidebarSpecialPage(page)) {
+      throw new Error("The sidebar outline cannot be deleted.");
     }
 
     if (!page.archived) {
@@ -396,8 +468,9 @@ export const searchLinkTargets = query({
       .query("pages")
       .withIndex("by_archived_position", (query) => query.eq("archived", false))
       .collect();
+    const visiblePages = pages.filter((page) => !isSidebarSpecialPage(page));
 
-    const pageResults = [...pages]
+    const pageResults = [...visiblePages]
       .filter((page) => linkSearchScore(page.title, normalizedQuery) !== Number.POSITIVE_INFINITY)
       .sort((left, right) => {
         const leftScore = linkSearchScore(left.title, normalizedQuery);
@@ -409,7 +482,7 @@ export const searchLinkTargets = query({
       })
       .slice(0, limit);
 
-    const activePageIds = new Set(pages.map((page) => page._id));
+    const activePageIds = new Set(visiblePages.map((page) => page._id));
     const nodes = (await ctx.db.query("nodes").collect()).filter(
       (node) =>
         !node.archived &&
@@ -418,7 +491,7 @@ export const searchLinkTargets = query({
         node.text.trim().length > 0 &&
         node.text.trim() !== ".",
     );
-    const pageMap = new Map(pages.map((page) => [page._id, page]));
+    const pageMap = new Map(visiblePages.map((page) => [page._id, page]));
 
     const nodeResults = nodes
       .filter((node) => linkSearchScore(node.text, normalizedQuery) !== Number.POSITIVE_INFINITY)
