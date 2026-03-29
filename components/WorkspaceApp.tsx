@@ -2253,6 +2253,7 @@ function ConfiguredWorkspace({
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
+                      onBeginTextEditing={clearNodeSelection}
                       activeDraggedNodeId={activeDraggedNodeId}
                       activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
@@ -2272,6 +2273,7 @@ function ConfiguredWorkspace({
                       readOnly={false}
                       depth={0}
                       placeholder="New sidebar line…"
+                      onBeginTextEditing={clearNodeSelection}
                     />
                   </div>
                 ) : (
@@ -2601,6 +2603,7 @@ function ConfiguredWorkspace({
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
+                      onBeginTextEditing={clearNodeSelection}
                       activeDraggedNodeId={activeDraggedNodeId}
                       activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
@@ -2633,6 +2636,7 @@ function ConfiguredWorkspace({
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
+                      onBeginTextEditing={clearNodeSelection}
                       activeDraggedNodeId={activeDraggedNodeId}
                       activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
@@ -2668,6 +2672,7 @@ function ConfiguredWorkspace({
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
+                      onBeginTextEditing={clearNodeSelection}
                       activeDraggedNodeId={activeDraggedNodeId}
                       activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
@@ -2700,6 +2705,7 @@ function ConfiguredWorkspace({
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
+                      onBeginTextEditing={clearNodeSelection}
                       activeDraggedNodeId={activeDraggedNodeId}
                       activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
@@ -2744,6 +2750,7 @@ function ConfiguredWorkspace({
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
+                      onBeginTextEditing={clearNodeSelection}
                       activeDraggedNodeId={activeDraggedNodeId}
                       activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
@@ -2762,6 +2769,7 @@ function ConfiguredWorkspace({
                       createNodesBatch={createNodesBatch}
                       readOnly={isPageArchived}
                       depth={0}
+                      onBeginTextEditing={clearNodeSelection}
                     />
                   </div>
                 )}
@@ -3124,6 +3132,7 @@ function PageSection({
   pendingInsertedComposer,
   onOpenInsertedComposer,
   onClearInsertedComposer,
+  onBeginTextEditing,
   activeDraggedNodeId,
   activeDraggedNodePayload,
   onSetActiveDraggedNodeId,
@@ -3159,6 +3168,7 @@ function PageSection({
     afterNodeId: Id<"nodes">,
   ) => void;
   onClearInsertedComposer: () => void;
+  onBeginTextEditing: () => void;
   activeDraggedNodeId: string | null;
   activeDraggedNodePayload: DraggedNodePayload | null;
   onSetActiveDraggedNodeId: (nodeId: string | null) => void;
@@ -3206,6 +3216,7 @@ function PageSection({
           pendingInsertedComposer={pendingInsertedComposer}
           onOpenInsertedComposer={onOpenInsertedComposer}
           onClearInsertedComposer={onClearInsertedComposer}
+          onBeginTextEditing={onBeginTextEditing}
           activeDraggedNodeId={activeDraggedNodeId}
           activeDraggedNodePayload={activeDraggedNodePayload}
           onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
@@ -3224,6 +3235,7 @@ function PageSection({
           createNodesBatch={createNodesBatch}
           readOnly={isPageReadOnly}
           depth={depthOffset}
+          onBeginTextEditing={onBeginTextEditing}
         />
       </div>
     </div>
@@ -3250,6 +3262,7 @@ function OutlineNodeList({
   pendingInsertedComposer,
   onOpenInsertedComposer,
   onClearInsertedComposer,
+  onBeginTextEditing,
   activeDraggedNodeId,
   activeDraggedNodePayload,
   onSetActiveDraggedNodeId,
@@ -3283,6 +3296,7 @@ function OutlineNodeList({
     afterNodeId: Id<"nodes">,
   ) => void;
   onClearInsertedComposer: () => void;
+  onBeginTextEditing: () => void;
   activeDraggedNodeId: string | null;
   activeDraggedNodePayload: DraggedNodePayload | null;
   onSetActiveDraggedNodeId: (nodeId: string | null) => void;
@@ -3321,6 +3335,7 @@ function OutlineNodeList({
         pendingInsertedComposer={pendingInsertedComposer}
         onOpenInsertedComposer={onOpenInsertedComposer}
         onClearInsertedComposer={onClearInsertedComposer}
+        onBeginTextEditing={onBeginTextEditing}
         activeDraggedNodeId={activeDraggedNodeId}
         activeDraggedNodePayload={activeDraggedNodePayload}
         onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
@@ -3514,6 +3529,7 @@ function OutlineNodeEditor({
   pendingInsertedComposer,
   onOpenInsertedComposer,
   onClearInsertedComposer,
+  onBeginTextEditing,
   activeDraggedNodeId,
   activeDraggedNodePayload,
   onSetActiveDraggedNodeId,
@@ -3551,6 +3567,7 @@ function OutlineNodeEditor({
     afterNodeId: Id<"nodes">,
   ) => void;
   onClearInsertedComposer: () => void;
+  onBeginTextEditing: () => void;
   activeDraggedNodeId: string | null;
   activeDraggedNodePayload: DraggedNodePayload | null;
   onSetActiveDraggedNodeId: (nodeId: string | null) => void;
@@ -3700,6 +3717,7 @@ function OutlineNodeEditor({
   };
 
   const focusLineEditor = () => {
+    onBeginTextEditing();
     focusElementAtEnd(textareaRef.current);
   };
 
@@ -4640,12 +4658,17 @@ function OutlineNodeEditor({
             <textarea
               ref={textareaRef}
               value={draft}
+              onMouseDown={() => {
+                onBeginTextEditing();
+              }}
               onChange={(event) => {
+                onBeginTextEditing();
                 setDraft(event.target.value);
                 history.updateDraftValue(editorId, editorTarget, event.target.value);
                 setCaretPosition(event.target.selectionStart ?? event.target.value.length);
               }}
               onFocus={(event) => {
+                onBeginTextEditing();
                 setIsFocused(true);
                 setCaretPosition(event.target.selectionStart ?? event.target.value.length);
               }}
@@ -4717,6 +4740,7 @@ function OutlineNodeEditor({
         pendingInsertedComposer={pendingInsertedComposer}
         onOpenInsertedComposer={onOpenInsertedComposer}
         onClearInsertedComposer={onClearInsertedComposer}
+        onBeginTextEditing={onBeginTextEditing}
         activeDraggedNodeId={activeDraggedNodeId}
         activeDraggedNodePayload={activeDraggedNodePayload}
         onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
@@ -4739,6 +4763,7 @@ function OutlineNodeEditor({
           autoFocusToken={pendingSiblingComposerFocusToken}
           persistWhenEmpty
           placeholder="Write a line…"
+          onBeginTextEditing={onBeginTextEditing}
           onSubmitted={() => {
             onClearInsertedComposer();
           }}
@@ -4762,6 +4787,7 @@ function InlineComposer({
   autoFocusToken = 0,
   persistWhenEmpty = false,
   placeholder = "New line…",
+  onBeginTextEditing,
   onSubmitted,
   onCancel,
 }: {
@@ -4775,6 +4801,7 @@ function InlineComposer({
   autoFocusToken?: number;
   persistWhenEmpty?: boolean;
   placeholder?: string;
+  onBeginTextEditing?: () => void;
   onSubmitted?: () => void;
   onCancel?: () => void;
 }) {
@@ -5004,12 +5031,17 @@ function InlineComposer({
       <textarea
         ref={textareaRef}
         value={draft}
+        onMouseDown={() => {
+          onBeginTextEditing?.();
+        }}
         onChange={(event) => {
+          onBeginTextEditing?.();
           setDraft(event.target.value);
           history.updateDraftValue(editorId, editorTarget, event.target.value);
           setCaretPosition(event.target.selectionStart ?? event.target.value.length);
         }}
         onFocus={(event) => {
+          onBeginTextEditing?.();
           setIsFocused(true);
           setCaretPosition(event.target.selectionStart ?? event.target.value.length);
         }}
