@@ -20,6 +20,32 @@ function getTimestamp() {
   return Date.now();
 }
 
+function normalizeLinkSearchQuery(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function linkSearchScore(text: string, query: string) {
+  const normalizedText = text.toLowerCase();
+  if (query.length === 0) {
+    return 0;
+  }
+
+  if (normalizedText.startsWith(query)) {
+    return 0;
+  }
+
+  const wordStartPattern = new RegExp(`\\b${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
+  if (wordStartPattern.test(normalizedText)) {
+    return 1;
+  }
+
+  if (normalizedText.includes(query)) {
+    return 2;
+  }
+
+  return Number.POSITIVE_INFINITY;
+}
+
 const nodeCreateInputValidator = v.object({
   parentNodeId: v.optional(nullableNodeIdValidator),
   afterNodeId: v.optional(nullableNodeIdValidator),
@@ -350,6 +376,71 @@ export const getBacklinks = query({
     }
 
     return [];
+  },
+});
+
+export const searchLinkTargets = query({
+  args: {
+    ownerKey: v.string(),
+    query: v.string(),
+    limit: v.optional(v.number()),
+    excludeNodeId: v.optional(v.id("nodes")),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const normalizedQuery = normalizeLinkSearchQuery(args.query);
+    const limit = Math.max(1, Math.min(args.limit ?? 8, 12));
+
+    const pages = await ctx.db
+      .query("pages")
+      .withIndex("by_archived_position", (query) => query.eq("archived", false))
+      .collect();
+
+    const pageResults = [...pages]
+      .filter((page) => linkSearchScore(page.title, normalizedQuery) !== Number.POSITIVE_INFINITY)
+      .sort((left, right) => {
+        const leftScore = linkSearchScore(left.title, normalizedQuery);
+        const rightScore = linkSearchScore(right.title, normalizedQuery);
+        if (leftScore !== rightScore) {
+          return leftScore - rightScore;
+        }
+        return left.position - right.position;
+      })
+      .slice(0, limit);
+
+    const activePageIds = new Set(pages.map((page) => page._id));
+    const nodes = (await ctx.db.query("nodes").collect()).filter(
+      (node) =>
+        !node.archived &&
+        activePageIds.has(node.pageId) &&
+        node._id !== args.excludeNodeId &&
+        node.text.trim().length > 0 &&
+        node.text.trim() !== ".",
+    );
+    const pageMap = new Map(pages.map((page) => [page._id, page]));
+
+    const nodeResults = nodes
+      .filter((node) => linkSearchScore(node.text, normalizedQuery) !== Number.POSITIVE_INFINITY)
+      .sort((left, right) => {
+        const leftScore = linkSearchScore(left.text, normalizedQuery);
+        const rightScore = linkSearchScore(right.text, normalizedQuery);
+        if (leftScore !== rightScore) {
+          return leftScore - rightScore;
+        }
+        return right.updatedAt - left.updatedAt;
+      })
+      .slice(0, limit)
+      .map((node) => ({
+        node,
+        page: pageMap.get(node.pageId) ?? null,
+      }))
+      .filter((entry) => entry.page !== null);
+
+    return {
+      pages: pageResults,
+      nodes: nodeResults,
+    };
   },
 });
 

@@ -9,7 +9,9 @@ import {
 } from "../lib/domain/embeddings";
 
 test("extractLinks finds wiki links and node refs", () => {
-  const links = extractLinks("Plan [[Launch Page]] after reviewing ((node_123)).");
+  const links = extractLinks(
+    "Plan [[Launch Page]] after reviewing ((node_123)) and [[Attachment note|node:node_456]].",
+  );
   assert.deepEqual(links, [
     {
       kind: "page",
@@ -20,6 +22,11 @@ test("extractLinks finds wiki links and node refs", () => {
       kind: "node",
       label: "((node_123))",
       targetNodeRef: "node_123",
+    },
+    {
+      kind: "node",
+      label: "[[Attachment note|node:node_456]]",
+      targetNodeRef: "node_456",
     },
   ]);
 });

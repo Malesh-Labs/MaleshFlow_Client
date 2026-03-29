@@ -61,6 +61,28 @@ type NodeSearchResult = {
   score?: number;
   content?: string;
 };
+type LinkTargetSearchResults = {
+  pages: PageDoc[];
+  nodes: Array<{
+    node: Doc<"nodes">;
+    page: PageDoc | null;
+  }>;
+};
+type LinkSuggestion =
+  | {
+      key: string;
+      kind: "page";
+      title: string;
+      subtitle: string;
+      insertText: string;
+    }
+  | {
+      key: string;
+      kind: "node";
+      title: string;
+      subtitle: string;
+      insertText: string;
+    };
 type KnowledgeChatResponse = {
   answer: string;
   sources: NodeSearchResult[];
@@ -223,6 +245,63 @@ function normalizeNodeSearchResults(results: unknown[]): NodeSearchResult[] {
   return normalizedResults.filter(
     (result): result is NodeSearchResult => result !== null,
   );
+}
+
+function sanitizeLinkLabel(value: string) {
+  return value.replace(/\|/g, "/").replace(/\]\]/g, "] ]").trim() || "Untitled node";
+}
+
+function buildNodeLinkInsertText(node: Doc<"nodes">) {
+  return `[[${sanitizeLinkLabel(node.text)}|node:${node._id}]]`;
+}
+
+function getActiveLinkToken(value: string, caretPosition: number | null) {
+  if (caretPosition === null) {
+    return null;
+  }
+
+  const beforeCaret = value.slice(0, caretPosition);
+  const startIndex = beforeCaret.lastIndexOf("[[");
+  if (startIndex === -1) {
+    return null;
+  }
+
+  const inner = beforeCaret.slice(startIndex + 2);
+  if (inner.includes("]]") || inner.includes("\n") || inner.includes("|node:")) {
+    return null;
+  }
+
+  return {
+    startIndex,
+    endIndex: caretPosition,
+    query: inner,
+  };
+}
+
+function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): LinkSuggestion[] {
+  if (!results) {
+    return [];
+  }
+
+  const pageSuggestions: LinkSuggestion[] = results.pages.map((page) => ({
+    key: `page:${page._id}`,
+    kind: "page",
+    title: page.title,
+    subtitle: "Page",
+    insertText: `[[${page.title}]]`,
+  }));
+
+  const nodeSuggestions: LinkSuggestion[] = results.nodes
+    .filter((entry) => entry.page !== null)
+    .map((entry) => ({
+      key: `node:${entry.node._id}`,
+      kind: "node",
+      title: sanitizeLinkLabel(entry.node.text),
+      subtitle: entry.page ? `Node • ${entry.page.title}` : "Node",
+      insertText: buildNodeLinkInsertText(entry.node),
+    }));
+
+  return [...pageSuggestions, ...nodeSuggestions];
 }
 
 function collectChildren(nodes: TreeNode[], excludedIds: Set<string>) {
@@ -2051,6 +2130,55 @@ function OutlineNodeList({
   );
 }
 
+function LinkAutocompleteMenu({
+  suggestions,
+  highlightIndex,
+  onHover,
+  onSelect,
+}: {
+  suggestions: LinkSuggestion[];
+  highlightIndex: number;
+  onHover: (index: number) => void;
+  onSelect: (suggestion: LinkSuggestion) => void;
+}) {
+  return (
+    <div className="mt-2 w-full max-w-xl border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_16px_40px_-28px_rgba(53,41,24,0.55)]">
+      {suggestions.length === 0 ? (
+        <p className="px-3 py-2 text-sm text-[var(--workspace-text-subtle)]">
+          No matching pages or nodes.
+        </p>
+      ) : (
+        <div className="py-1">
+          {suggestions.map((suggestion, index) => (
+            <button
+              key={suggestion.key}
+              type="button"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                onSelect(suggestion);
+              }}
+              onMouseEnter={() => onHover(index)}
+              className={clsx(
+                "block w-full px-3 py-2 text-left transition",
+                index === highlightIndex
+                  ? "bg-[var(--workspace-sidebar-bg)]"
+                  : "hover:bg-[var(--workspace-surface-hover)]",
+              )}
+            >
+              <div className="text-sm text-[var(--workspace-text-strong)]">
+                {suggestion.title}
+              </div>
+              <div className="text-xs text-[var(--workspace-text-subtle)]">
+                {suggestion.subtitle}
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OutlineNodeEditor({
   node,
   previousSibling,
@@ -2093,6 +2221,8 @@ function OutlineNodeEditor({
   const history = useWorkspaceHistory();
   const [draft, setDraft] = useState(node.text);
   const [isFocused, setIsFocused] = useState(false);
+  const [caretPosition, setCaretPosition] = useState<number | null>(null);
+  const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRef = useRef(draft);
 
@@ -2115,6 +2245,26 @@ function OutlineNodeEditor({
       : getComposerEditorId(pageId, parentNodeId);
   const isVisualEmptyLine = draft.trim() === ".";
   const shouldRevealVisualEmptyLine = isFocused || isSelected;
+  const activeLinkToken = getActiveLinkToken(draft, caretPosition);
+  const linkTargetResults = useQuery(
+    api.workspace.searchLinkTargets,
+    ownerKey && isFocused && activeLinkToken
+      ? {
+          ownerKey,
+          query: activeLinkToken.query,
+          limit: 6,
+          excludeNodeId: node._id as Id<"nodes">,
+        }
+      : SKIP,
+  ) as LinkTargetSearchResults | undefined;
+  const linkSuggestions = useMemo(
+    () => buildLinkSuggestions(linkTargetResults),
+    [linkTargetResults],
+  );
+  const activeLinkHighlightIndex =
+    linkSuggestions.length === 0
+      ? 0
+      : Math.min(linkHighlightIndex, linkSuggestions.length - 1);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -2140,6 +2290,26 @@ function OutlineNodeEditor({
   useEffect(() => {
     return () => history.flushDraftCheckpoint(editorId);
   }, [editorId, history]);
+
+  const applyLinkSuggestion = (suggestion: LinkSuggestion) => {
+    if (!activeLinkToken) {
+      return;
+    }
+
+    const nextValue =
+      draft.slice(0, activeLinkToken.startIndex) +
+      suggestion.insertText +
+      draft.slice(activeLinkToken.endIndex);
+    const nextCaretPosition = activeLinkToken.startIndex + suggestion.insertText.length;
+
+    setDraft(nextValue);
+    history.updateDraftValue(editorId, editorTarget, nextValue);
+    setCaretPosition(nextCaretPosition);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCaretPosition, nextCaretPosition);
+    });
+  };
 
   const buildUpdateEntry = (
     beforeValue: string,
@@ -2403,6 +2573,32 @@ function OutlineNodeEditor({
   };
 
   const handleKeyDown = async (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
+    if (activeLinkToken && linkSuggestions.length > 0) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setLinkHighlightIndex((current) => (current + 1) % linkSuggestions.length);
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setLinkHighlightIndex((current) =>
+          (current - 1 + linkSuggestions.length) % linkSuggestions.length,
+        );
+        return;
+      }
+
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        const suggestion =
+          linkSuggestions[activeLinkHighlightIndex] ?? linkSuggestions[0];
+        if (suggestion) {
+          applyLinkSuggestion(suggestion);
+        }
+        return;
+      }
+    }
+
     if (event.key === "Backspace" && draft.length === 0 && !isDisabled) {
       event.preventDefault();
       await setNodeTreeArchived({
@@ -2683,17 +2879,26 @@ function OutlineNodeEditor({
               <span className="text-base leading-none text-[var(--workspace-accent)]">•</span>
             )}
           </div>
-          <div className="min-w-0 flex-1">
+          <div className="relative min-w-0 flex-1">
             <textarea
               ref={textareaRef}
               value={draft}
               onChange={(event) => {
                 setDraft(event.target.value);
                 history.updateDraftValue(editorId, editorTarget, event.target.value);
+                setCaretPosition(event.target.selectionStart ?? event.target.value.length);
               }}
-              onFocus={() => setIsFocused(true)}
-              onBlur={() => void handleSave()}
-              onBlurCapture={() => setIsFocused(false)}
+              onFocus={(event) => {
+                setIsFocused(true);
+                setCaretPosition(event.target.selectionStart ?? event.target.value.length);
+              }}
+              onBlur={() => {
+                setIsFocused(false);
+                void handleSave();
+              }}
+              onSelect={(event) => {
+                setCaretPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length);
+              }}
               onPaste={(event) => void handlePaste(event)}
               onKeyDown={(event) => void handleKeyDown(event)}
               placeholder="Write a line…"
@@ -2705,6 +2910,14 @@ function OutlineNodeEditor({
                 isVisualEmptyLine && !shouldRevealVisualEmptyLine ? "text-transparent" : "",
               )}
             />
+            {isFocused && activeLinkToken ? (
+              <LinkAutocompleteMenu
+                suggestions={linkSuggestions}
+                highlightIndex={activeLinkHighlightIndex}
+                onHover={setLinkHighlightIndex}
+                onSelect={applyLinkSuggestion}
+              />
+            ) : null}
           </div>
         </div>
       </div>
@@ -2749,6 +2962,9 @@ function InlineComposer({
 }) {
   const history = useWorkspaceHistory();
   const [draft, setDraft] = useState("");
+  const [isFocused, setIsFocused] = useState(false);
+  const [caretPosition, setCaretPosition] = useState<number | null>(null);
+  const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRef = useRef(draft);
   const editorId = getComposerEditorId(pageId, parentNodeId ?? null);
@@ -2761,6 +2977,25 @@ function InlineComposer({
       } satisfies TrackedEditorTarget),
     [pageId, parentNodeId],
   );
+  const activeLinkToken = getActiveLinkToken(draft, caretPosition);
+  const linkTargetResults = useQuery(
+    api.workspace.searchLinkTargets,
+    ownerKey && isFocused && activeLinkToken
+      ? {
+          ownerKey,
+          query: activeLinkToken.query,
+          limit: 6,
+        }
+      : SKIP,
+  ) as LinkTargetSearchResults | undefined;
+  const linkSuggestions = useMemo(
+    () => buildLinkSuggestions(linkTargetResults),
+    [linkTargetResults],
+  );
+  const activeLinkHighlightIndex =
+    linkSuggestions.length === 0
+      ? 0
+      : Math.min(linkHighlightIndex, linkSuggestions.length - 1);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -2782,6 +3017,26 @@ function InlineComposer({
   useEffect(() => {
     return () => history.flushDraftCheckpoint(editorId);
   }, [editorId, history]);
+
+  const applyLinkSuggestion = (suggestion: LinkSuggestion) => {
+    if (!activeLinkToken) {
+      return;
+    }
+
+    const nextValue =
+      draft.slice(0, activeLinkToken.startIndex) +
+      suggestion.insertText +
+      draft.slice(activeLinkToken.endIndex);
+    const nextCaretPosition = activeLinkToken.startIndex + suggestion.insertText.length;
+
+    setDraft(nextValue);
+    history.updateDraftValue(editorId, editorTarget, nextValue);
+    setCaretPosition(nextCaretPosition);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCaretPosition, nextCaretPosition);
+    });
+  };
 
   const submitLines = async (value: string) => {
     if (readOnly) {
@@ -2847,6 +3102,32 @@ function InlineComposer({
       return;
     }
 
+    if (activeLinkToken && linkSuggestions.length > 0) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setLinkHighlightIndex((current) => (current + 1) % linkSuggestions.length);
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setLinkHighlightIndex((current) =>
+          (current - 1 + linkSuggestions.length) % linkSuggestions.length,
+        );
+        return;
+      }
+
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        const suggestion =
+          linkSuggestions[activeLinkHighlightIndex] ?? linkSuggestions[0];
+        if (suggestion) {
+          applyLinkSuggestion(suggestion);
+        }
+        return;
+      }
+    }
+
     if (event.key !== "Enter") {
       return;
     }
@@ -2871,15 +3152,26 @@ function InlineComposer({
   };
 
   return (
-    <div style={{ marginLeft: `${depth * 18 + 26}px` }}>
+    <div className="relative" style={{ marginLeft: `${depth * 18 + 26}px` }}>
       <textarea
         ref={textareaRef}
         value={draft}
         onChange={(event) => {
           setDraft(event.target.value);
           history.updateDraftValue(editorId, editorTarget, event.target.value);
+          setCaretPosition(event.target.selectionStart ?? event.target.value.length);
         }}
-        onBlur={() => history.flushDraftCheckpoint(editorId)}
+        onFocus={(event) => {
+          setIsFocused(true);
+          setCaretPosition(event.target.selectionStart ?? event.target.value.length);
+        }}
+        onBlur={() => {
+          setIsFocused(false);
+          history.flushDraftCheckpoint(editorId);
+        }}
+        onSelect={(event) => {
+          setCaretPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length);
+        }}
         onPaste={(event) => void handlePaste(event)}
         onKeyDown={(event) => void handleKeyDown(event)}
         placeholder="New line…"
@@ -2887,6 +3179,14 @@ function InlineComposer({
         rows={1}
         className="w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-0.5 text-[15px] leading-6 outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]"
       />
+      {isFocused && activeLinkToken ? (
+        <LinkAutocompleteMenu
+          suggestions={linkSuggestions}
+          highlightIndex={activeLinkHighlightIndex}
+          onHover={setLinkHighlightIndex}
+          onSelect={applyLinkSuggestion}
+        />
+      ) : null}
     </div>
   );
 }
