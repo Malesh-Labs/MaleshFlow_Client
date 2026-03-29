@@ -47,6 +47,7 @@ const SIDEBAR_SECTIONS = [
 const ARCHIVE_SECTION_LABEL = "Archive";
 const OWNER_KEY_STORAGE_KEY = "maleshflow-owner-key";
 const OWNER_KEY_EVENT = "maleshflow-owner-key-change";
+const LAST_PAGE_STORAGE_KEY = "maleshflow-last-page-id";
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
 type SidebarGroupKey = SidebarSection | typeof ARCHIVE_SECTION_LABEL;
@@ -541,6 +542,7 @@ function ConfiguredWorkspace({
   const pageTitleInputRef = useRef<HTMLInputElement>(null);
   const pageTitleDraftRef = useRef(pageTitleDraft);
   const paletteInputRef = useRef<HTMLInputElement>(null);
+  const hasResolvedInitialPageSelection = useRef(false);
 
   const clearNodeSelection = useCallback(() => {
     setSelectedNodeIds(new Set());
@@ -662,14 +664,49 @@ function ConfiguredWorkspace({
   }, [isOwnerKeyValid, setOwnerKey]);
 
   useEffect(() => {
-    if (!pages || pages.length === 0) {
+    if (!pages) {
       return;
     }
 
-    if (!selectedPageId || !pages.some((page) => page._id === selectedPageId)) {
-      setSelectedPageId(pages[0]!._id);
+    if (!hasResolvedInitialPageSelection.current) {
+      hasResolvedInitialPageSelection.current = true;
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      const storedPageId = window.localStorage.getItem(LAST_PAGE_STORAGE_KEY);
+      if (!storedPageId) {
+        return;
+      }
+
+      const matchingPage = pages.find((page) => page._id === storedPageId);
+      if (matchingPage) {
+        setSelectedPageId(matchingPage._id);
+      } else {
+        window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
+      }
+      return;
+    }
+
+    if (selectedPageId && !pages.some((page) => page._id === selectedPageId)) {
+      setSelectedPageId(null);
+      if (typeof window !== "undefined") {
+        window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
+      }
     }
   }, [pages, selectedPageId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (selectedPageId) {
+      window.localStorage.setItem(LAST_PAGE_STORAGE_KEY, selectedPageId);
+    } else {
+      window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
+    }
+  }, [selectedPageId]);
 
   useEffect(() => {
     setPageTitleDraft(pageTree?.page?.title ?? "");
