@@ -3871,7 +3871,7 @@ function OutlineNodeList({
     <>
       {nodes.map((node, index) => (
         <OutlineNodeEditor
-          key={`${node._id}:${node.updatedAt}`}
+          key={node._id}
           node={node}
           previousSibling={index > 0 ? nodes[index - 1]! : null}
           ownerKey={ownerKey}
@@ -5410,11 +5410,13 @@ function OutlineNodeEditor({
       ) : null}
       {pendingSiblingComposerVisible ? (
         <InlineComposer
+          key={`inserted-composer:${pageId}:${parentNodeId ?? "root"}:${node._id}`}
           ownerKey={ownerKey}
           pageId={pageId}
           parentNodeId={parentNodeId}
           afterNodeId={node._id as Id<"nodes">}
           createNodesBatch={createNodesBatch}
+          historyInstanceKey={`inserted:${node._id}`}
           readOnly={isPageReadOnly}
           depth={depth}
           autoFocusToken={pendingSiblingComposerFocusToken}
@@ -5439,6 +5441,7 @@ function InlineComposer({
   parentNodeId,
   afterNodeId,
   createNodesBatch,
+  historyInstanceKey,
   readOnly = false,
   depth = 0,
   autoFocusToken = 0,
@@ -5453,6 +5456,7 @@ function InlineComposer({
   parentNodeId: Id<"nodes"> | null | undefined;
   afterNodeId?: Id<"nodes">;
   createNodesBatch: CreateNodesBatchMutation;
+  historyInstanceKey?: string;
   readOnly?: boolean;
   depth?: number;
   autoFocusToken?: number;
@@ -5469,7 +5473,11 @@ function InlineComposer({
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRef = useRef(draft);
-  const editorId = getComposerEditorId(pageId, parentNodeId ?? null);
+  const editorId = getComposerEditorId(
+    pageId,
+    parentNodeId ?? null,
+    historyInstanceKey,
+  );
   const editorTarget = useMemo(
     () =>
       ({

@@ -224,8 +224,9 @@ export function getNodeEditorId(nodeId: Id<"nodes">) {
 export function getComposerEditorId(
   pageId: Id<"pages">,
   parentNodeId: Id<"nodes"> | null | undefined,
+  instanceKey?: string,
 ) {
-  return `composer:${pageId}:${parentNodeId ?? "root"}`;
+  return `composer:${pageId}:${parentNodeId ?? "root"}${instanceKey ? `:${instanceKey}` : ""}`;
 }
 
 export function WorkspaceHistoryProvider({
