@@ -2351,6 +2351,17 @@ function ConfiguredWorkspace({
           return;
         }
 
+        if (isTextEntryElement(event.target)) {
+          event.preventDefault();
+          clearNodeSelection();
+
+          const activeElement = document.activeElement;
+          if (activeElement instanceof HTMLElement) {
+            activeElement.blur();
+          }
+          return;
+        }
+
         if (selectedNodeIds.size > 0) {
           setSelectedNodeIds(new Set());
           setDragSelection(null);
@@ -2439,6 +2450,7 @@ function ConfiguredWorkspace({
     moveHighlightedNodeByKeyboard,
     openPalette,
     paletteOpen,
+    clearNodeSelection,
     selectNodeRange,
     selectSingleNode,
     selectedNodeIds,
