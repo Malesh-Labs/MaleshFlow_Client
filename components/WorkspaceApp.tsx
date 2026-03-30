@@ -1920,6 +1920,109 @@ function ConfiguredWorkspace({
     selectSingleNode(nodeId);
   }, [history, ownerKey, pagesById, selectSingleNode, selectedNodeIds, updateNode, workspaceNodeMap]);
 
+  const deleteHighlightedNodes = useCallback(async () => {
+    if (selectedNodeIds.size === 0) {
+      return;
+    }
+
+    const orderedSelectedNodeIds = visibleNodeOrder.filter((nodeId) =>
+      selectedNodeIds.has(nodeId),
+    );
+    const selectedRootNodeIds = orderedSelectedNodeIds.filter((nodeId) => {
+      let currentNode = workspaceNodeMap.get(nodeId) ?? null;
+      while (currentNode?.parentNodeId) {
+        const parentNodeId = currentNode.parentNodeId as string;
+        if (selectedNodeIds.has(parentNodeId)) {
+          return false;
+        }
+        currentNode = workspaceNodeMap.get(parentNodeId) ?? null;
+      }
+
+      return true;
+    });
+
+    const deletableNodes = selectedRootNodeIds
+      .map((nodeId) => workspaceNodeMap.get(nodeId) ?? null)
+      .filter((node): node is Doc<"nodes"> => {
+        if (!node) {
+          return false;
+        }
+
+        if (getNodeMeta(node).locked === true) {
+          return false;
+        }
+
+        const page = pagesById.get(node.pageId as string);
+        return !page?.archived;
+      });
+
+    if (deletableNodes.length === 0) {
+      return;
+    }
+
+    if (deletableNodes.length > 1) {
+      const confirmed = window.confirm(
+        `Delete ${deletableNodes.length} selected items?`,
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
+    const historyEntries: Array<Extract<HistoryEntry, { type: "archive_node_tree" }>> = [];
+
+    for (const node of deletableNodes) {
+      const context = findNodeContext(sidebarNodes, tree, node._id as string);
+      const focusAfterRedoId =
+        context?.previousSibling?._id
+          ? getNodeEditorId(context.previousSibling._id as Id<"nodes">)
+          : getComposerEditorId(
+              node.pageId as Id<"pages">,
+              (node.parentNodeId as Id<"nodes"> | null) ?? null,
+            );
+
+      await setNodeTreeArchived({
+        ownerKey,
+        nodeId: node._id as Id<"nodes">,
+        archived: true,
+      });
+
+      historyEntries.push({
+        type: "archive_node_tree",
+        pageId: node.pageId as Id<"pages">,
+        nodeId: node._id as Id<"nodes">,
+        focusAfterUndoId: getNodeEditorId(node._id as Id<"nodes">),
+        focusAfterRedoId,
+      });
+    }
+
+    clearNodeSelection();
+
+    if (historyEntries.length === 1) {
+      history.pushUndoEntry(historyEntries[0]!);
+      return;
+    }
+
+    history.pushUndoEntry({
+      type: "compound",
+      pageId: historyEntries[0]!.pageId,
+      entries: historyEntries,
+      focusAfterUndoId: historyEntries[0]!.focusAfterUndoId,
+      focusAfterRedoId: historyEntries[historyEntries.length - 1]!.focusAfterRedoId,
+    });
+  }, [
+    clearNodeSelection,
+    history,
+    ownerKey,
+    pagesById,
+    selectedNodeIds,
+    setNodeTreeArchived,
+    sidebarNodes,
+    tree,
+    visibleNodeOrder,
+    workspaceNodeMap,
+  ]);
+
   const openInsertedComposer = useCallback(
     (pageId: Id<"pages">, parentNodeId: Id<"nodes"> | null, afterNodeId: Id<"nodes">) => {
       setPendingInsertedComposer((current) => ({
@@ -2226,6 +2329,12 @@ function ConfiguredWorkspace({
       }
 
       if (selectedNodeIds.size > 0 && !isTextEntryElement(event.target)) {
+        if (event.key === "Delete" || event.key === "Backspace") {
+          event.preventDefault();
+          void deleteHighlightedNodes();
+          return;
+        }
+
         if (event.key === "Tab") {
           event.preventDefault();
           void indentHighlightedNodeByKeyboard(event.shiftKey);
@@ -2295,6 +2404,7 @@ function ConfiguredWorkspace({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    deleteHighlightedNodes,
     indentHighlightedNodeByKeyboard,
     moveHighlightedNodeByKeyboard,
     openPalette,
