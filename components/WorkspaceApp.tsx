@@ -59,6 +59,7 @@ const COLLAPSED_NODES_STORAGE_KEY = "maleshflow-collapsed-node-ids";
 const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
 const MODEL_REGENERATE_PROMPT =
   "Regenerate the Model section using the current Model lines and the Recent section as context. Refine it into a concise, useful model while preserving important intent and signal.";
+const SIDEBAR_MOBILE_INDENT_STEP = 12;
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
 type PageType = "default" | "model" | "journal";
@@ -2958,6 +2959,7 @@ function ConfiguredWorkspace({
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
+                      mobileIndentStep={SIDEBAR_MOBILE_INDENT_STEP}
                     />
                     <InlineComposer
                       ownerKey={ownerKey}
@@ -2967,6 +2969,7 @@ function ConfiguredWorkspace({
                       createNodesBatch={createNodesBatch}
                       readOnly={false}
                       depth={0}
+                      mobileIndentStep={SIDEBAR_MOBILE_INDENT_STEP}
                       placeholder="New sidebar line…"
                       onBeginTextEditing={clearNodeSelection}
                     />
@@ -3834,6 +3837,7 @@ function PageSection({
   onOpenPage,
   onOpenNode,
   depthOffset = 0,
+  mobileIndentStep = 0,
   action = null,
   statusMessage = "",
 }: {
@@ -3872,6 +3876,7 @@ function PageSection({
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   depthOffset?: number;
+  mobileIndentStep?: number;
   action?: ReactNode;
   statusMessage?: string;
 }) {
@@ -3928,6 +3933,7 @@ function PageSection({
           pagesByTitle={pagesByTitle}
           onOpenPage={onOpenPage}
           onOpenNode={onOpenNode}
+          mobileIndentStep={mobileIndentStep}
         />
         <InlineComposer
           ownerKey={ownerKey}
@@ -3937,6 +3943,7 @@ function PageSection({
           createNodesBatch={createNodesBatch}
           readOnly={isPageReadOnly}
           depth={depthOffset}
+          mobileIndentStep={mobileIndentStep}
           onBeginTextEditing={onBeginTextEditing}
         />
       </div>
@@ -3976,6 +3983,7 @@ function OutlineNodeList({
   pagesByTitle,
   onOpenPage,
   onOpenNode,
+  mobileIndentStep = 0,
 }: {
   nodes: TreeNode[];
   ownerKey: string;
@@ -4012,6 +4020,7 @@ function OutlineNodeList({
   pagesByTitle: Map<string, PageDoc>;
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
+  mobileIndentStep?: number;
 }) {
   return (
     <>
@@ -4048,11 +4057,12 @@ function OutlineNodeList({
         activeDraggedNodePayload={activeDraggedNodePayload}
         onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
         onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
-        onSelectionStart={onSelectionStart}
-        onSelectionExtend={onSelectionExtend}
-        pagesByTitle={pagesByTitle}
+          onSelectionStart={onSelectionStart}
+          onSelectionExtend={onSelectionExtend}
+          pagesByTitle={pagesByTitle}
           onOpenPage={onOpenPage}
           onOpenNode={onOpenNode}
+          mobileIndentStep={mobileIndentStep}
         />
       ))}
     </>
@@ -4249,6 +4259,7 @@ function OutlineNodeEditor({
   pagesByTitle,
   onOpenPage,
   onOpenNode,
+  mobileIndentStep = 0,
 }: {
   node: TreeNode;
   siblings: TreeNode[];
@@ -4289,6 +4300,7 @@ function OutlineNodeEditor({
   pagesByTitle: Map<string, PageDoc>;
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
+  mobileIndentStep?: number;
 }) {
   const history = useWorkspaceHistory();
   const [draft, setDraft] = useState(node.text);
@@ -5344,7 +5356,12 @@ function OutlineNodeEditor({
             ? "bg-[var(--workspace-sidebar-bg)] ring-1 ring-[var(--workspace-border-soft)]"
             : "",
         )}
-        style={{ "--outline-depth": depth } as CSSProperties}
+        style={
+          {
+            "--outline-depth": depth,
+            "--outline-mobile-indent-step": `${mobileIndentStep}px`,
+          } as CSSProperties
+        }
       >
         {dropTarget ? (
           <div
@@ -5409,7 +5426,7 @@ function OutlineNodeEditor({
               ))}
             </span>
           </button>
-          <div className="flex h-8 w-5 flex-none items-center justify-center text-[var(--workspace-accent)]">
+          <div className="flex h-8 w-5 flex-none items-center justify-center text-[var(--workspace-text-faint)]">
             {isLocked ||
             ((isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder) ? null : node.kind === "task" ? (
               <button
@@ -5446,7 +5463,7 @@ function OutlineNodeEditor({
                   isDisabled ? "cursor-not-allowed opacity-60" : "",
                 )}
               >
-                <span className="h-2.5 w-2.5 rounded-full bg-current" />
+                <span className="h-2 w-2 rounded-full bg-current" />
               </button>
             )}
           </div>
@@ -5552,6 +5569,7 @@ function OutlineNodeEditor({
           pagesByTitle={pagesByTitle}
           onOpenPage={onOpenPage}
           onOpenNode={onOpenNode}
+          mobileIndentStep={mobileIndentStep}
         />
       ) : null}
       {pendingSiblingComposerVisible ? (
@@ -5565,6 +5583,7 @@ function OutlineNodeEditor({
           historyInstanceKey={`inserted:${node._id}`}
           readOnly={isPageReadOnly}
           depth={depth}
+          mobileIndentStep={mobileIndentStep}
           autoFocusToken={pendingSiblingComposerFocusToken}
           persistWhenEmpty
           placeholder="Write a line…"
@@ -5590,6 +5609,7 @@ function InlineComposer({
   historyInstanceKey,
   readOnly = false,
   depth = 0,
+  mobileIndentStep = 0,
   autoFocusToken = 0,
   persistWhenEmpty = false,
   placeholder = "New line…",
@@ -5605,6 +5625,7 @@ function InlineComposer({
   historyInstanceKey?: string;
   readOnly?: boolean;
   depth?: number;
+  mobileIndentStep?: number;
   autoFocusToken?: number;
   persistWhenEmpty?: boolean;
   placeholder?: string;
@@ -5840,7 +5861,12 @@ function InlineComposer({
   return (
     <div
       className="outline-depth-composer relative"
-      style={{ "--outline-depth": depth } as CSSProperties}
+      style={
+        {
+          "--outline-depth": depth,
+          "--outline-mobile-indent-step": `${mobileIndentStep}px`,
+        } as CSSProperties
+      }
     >
       <textarea
         ref={textareaRef}
