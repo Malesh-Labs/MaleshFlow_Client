@@ -93,6 +93,21 @@ body {
   animation: workspace-fade-in 180ms ease-out;
 }
 
+.outline-depth-shell {
+  margin-left: calc(var(--outline-depth, 0) * 18px);
+}
+
+.outline-depth-composer {
+  margin-left: calc(var(--outline-depth, 0) * 18px + 26px);
+}
+
+@media (max-width: 767px) {
+  .outline-depth-shell,
+  .outline-depth-composer {
+    margin-left: 0;
+  }
+}
+
 * {
   box-sizing: border-box;
 }

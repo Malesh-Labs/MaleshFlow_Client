@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type ErrorInfo,
   type RefObject,
   type ReactNode,
@@ -5310,12 +5311,12 @@ function OutlineNodeEditor({
         }}
         onDrop={(event) => void handleDrop(event)}
         className={clsx(
-          "group relative rounded-sm transition",
+          "outline-depth-shell group relative rounded-sm transition",
           isSelected
             ? "bg-[var(--workspace-sidebar-bg)] ring-1 ring-[var(--workspace-border-soft)]"
             : "",
         )}
-        style={{ marginLeft: `${depth * 18}px` }}
+        style={{ "--outline-depth": depth } as CSSProperties}
       >
         {dropTarget ? (
           <div
@@ -5336,7 +5337,7 @@ function OutlineNodeEditor({
             disabled={!hasChildren}
             aria-label={isCollapsed ? "Expand nested items" : "Collapse nested items"}
             className={clsx(
-              "flex h-8 w-4 flex-none items-center justify-center text-[11px] transition",
+              "flex h-10 w-8 flex-none items-center justify-center text-base leading-none transition",
               hasChildren
                 ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text)]"
                 : "cursor-default text-transparent",
@@ -5413,11 +5414,11 @@ function OutlineNodeEditor({
                 disabled={isDisabled}
                 title="Convert this note into a task."
                 className={clsx(
-                  "flex h-4 w-4 items-center justify-center text-base leading-none transition hover:text-[var(--workspace-brand)]",
+                  "flex h-4 w-4 items-center justify-center transition hover:text-[var(--workspace-brand)]",
                   isDisabled ? "cursor-not-allowed opacity-60" : "",
                 )}
               >
-                •
+                <span className="h-2.5 w-2.5 rounded-full bg-current" />
               </button>
             )}
           </div>
@@ -5809,7 +5810,10 @@ function InlineComposer({
   };
 
   return (
-    <div className="relative" style={{ marginLeft: `${depth * 18 + 26}px` }}>
+    <div
+      className="outline-depth-composer relative"
+      style={{ "--outline-depth": depth } as CSSProperties}
+    >
       <textarea
         ref={textareaRef}
         value={draft}
