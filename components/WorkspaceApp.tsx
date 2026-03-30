@@ -1896,6 +1896,35 @@ function ConfiguredWorkspace({
     [history, moveNode, ownerKey, pagesById, selectSingleNode, selectedNodeIds, sidebarNodes, tree, workspaceNodeMap],
   );
 
+  const setHighlightedNodeCollapsedByKeyboard = useCallback(
+    (nextCollapsed: boolean) => {
+      if (selectedNodeIds.size !== 1) {
+        return;
+      }
+
+      const nodeId = [...selectedNodeIds][0];
+      if (!nodeId) {
+        return;
+      }
+
+      const context = findNodeContext(sidebarNodes, tree, nodeId);
+      if (!context || context.node.children.length === 0) {
+        return;
+      }
+
+      setCollapsedNodeIds((current) => {
+        const next = new Set(current);
+        if (nextCollapsed) {
+          next.add(nodeId);
+        } else {
+          next.delete(nodeId);
+        }
+        return next;
+      });
+    },
+    [selectedNodeIds, sidebarNodes, tree],
+  );
+
   const toggleHighlightedNodeKind = useCallback(async () => {
     if (selectedNodeIds.size !== 1) {
       return;
@@ -2370,6 +2399,12 @@ function ConfiguredWorkspace({
       }
 
       if (selectedNodeIds.size > 0 && !isTextEntryElement(event.target)) {
+        if (isModifier && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+          event.preventDefault();
+          setHighlightedNodeCollapsedByKeyboard(event.key === "ArrowLeft");
+          return;
+        }
+
         if (event.key === "Delete" || event.key === "Backspace") {
           event.preventDefault();
           void deleteHighlightedNodes();
@@ -2454,6 +2489,7 @@ function ConfiguredWorkspace({
     selectNodeRange,
     selectSingleNode,
     selectedNodeIds,
+    setHighlightedNodeCollapsedByKeyboard,
     toggleHighlightedNodeKind,
     visibleNodeOrder,
   ]);
@@ -4462,6 +4498,18 @@ function OutlineNodeEditor({
     onToggleNodeCollapsed(node._id);
   };
 
+  const setCollapsedState = (nextCollapsed: boolean) => {
+    if (!hasChildren) {
+      return;
+    }
+
+    if (nextCollapsed === isCollapsed) {
+      return;
+    }
+
+    handleToggleCollapsed();
+  };
+
   const getDropTargetFromEvent = (
     event: ReactDragEvent<HTMLElement>,
     payload: DraggedNodePayload,
@@ -4963,6 +5011,12 @@ function OutlineNodeEditor({
     if (isModifier && event.shiftKey && normalizedKey === "c") {
       event.preventDefault();
       await handleToggleNodeKind();
+      return;
+    }
+
+    if (isModifier && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+      event.preventDefault();
+      setCollapsedState(event.key === "ArrowLeft");
       return;
     }
 
