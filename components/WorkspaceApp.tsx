@@ -1731,6 +1731,28 @@ function ConfiguredWorkspace({
     setDragSelection(null);
   }, [visibleNodeOrder]);
 
+  const focusLastVisiblePageNode = useCallback(() => {
+    if (!selectedPage || isPageArchived) {
+      return;
+    }
+
+    const targetNode = [...pageVisibleRows]
+      .reverse()
+      .find((node) => getNodeMeta(node).locked !== true);
+
+    if (!targetNode) {
+      return;
+    }
+
+    selectSingleNode(targetNode._id);
+    window.setTimeout(() => {
+      const target = document.querySelector<HTMLElement>(
+        `[data-node-id="${targetNode._id}"] textarea`,
+      );
+      focusElementAtEnd(target as HTMLTextAreaElement | null);
+    }, 0);
+  }, [isPageArchived, pageVisibleRows, selectSingleNode, selectedPage]);
+
   const moveHighlightedNodeByKeyboard = useCallback(
     async (direction: -1 | 1) => {
       if (selectedNodeIds.size !== 1) {
@@ -2398,6 +2420,19 @@ function ConfiguredWorkspace({
         return;
       }
 
+      if (
+        selectedNodeIds.size === 0 &&
+        !isTextEntryElement(event.target) &&
+        !event.shiftKey &&
+        !event.altKey &&
+        !isModifier &&
+        event.key === "ArrowUp"
+      ) {
+        event.preventDefault();
+        focusLastVisiblePageNode();
+        return;
+      }
+
       if (selectedNodeIds.size > 0 && !isTextEntryElement(event.target)) {
         if (isModifier && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
           event.preventDefault();
@@ -2481,6 +2516,7 @@ function ConfiguredWorkspace({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     deleteHighlightedNodes,
+    focusLastVisiblePageNode,
     indentHighlightedNodeByKeyboard,
     moveHighlightedNodeByKeyboard,
     openPalette,
