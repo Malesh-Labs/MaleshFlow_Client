@@ -1132,6 +1132,7 @@ function ConfiguredWorkspace({
   const [isSendingChat, setIsSendingChat] = useState(false);
   const [isGeneratingJournalFeedback, setIsGeneratingJournalFeedback] = useState(false);
   const [isRebuildingEmbeddings, setIsRebuildingEmbeddings] = useState(false);
+  const [isRefreshingSidebarLinks, setIsRefreshingSidebarLinks] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("pages");
   const [paletteQuery, setPaletteQuery] = useState("");
@@ -1191,6 +1192,7 @@ function ConfiguredWorkspace({
   const archivePage = useMutation(api.workspace.archivePage);
   const deletePageForever = useMutation(api.workspace.deletePageForever);
   const rebuildEmbeddings = useMutation(api.workspace.rebuildEmbeddings);
+  const refreshSidebarLinks = useMutation(api.workspace.refreshSidebarLinks);
   const createNodesBatch = useMutation(api.workspace.createNodesBatch);
   const updateNode = useMutation(api.workspace.updateNode);
   const moveNode = useMutation(api.workspace.moveNode);
@@ -1642,6 +1644,17 @@ function ConfiguredWorkspace({
       );
     } finally {
       setIsRebuildingEmbeddings(false);
+    }
+  };
+
+  const handleRefreshSidebarLinks = async () => {
+    setIsRefreshingSidebarLinks(true);
+    try {
+      await refreshSidebarLinks({
+        ownerKey,
+      });
+    } finally {
+      setIsRefreshingSidebarLinks(false);
     }
   };
 
@@ -2899,9 +2912,19 @@ function ConfiguredWorkspace({
                 )}
 
                 <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
-                    Uncategorized
-                  </p>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
+                      Uncategorized
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void handleRefreshSidebarLinks()}
+                      disabled={isRefreshingSidebarLinks}
+                      className="border border-[var(--workspace-border-control)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {isRefreshingSidebarLinks ? "Refreshing…" : "Refresh"}
+                    </button>
+                  </div>
                   {uncategorizedPages.length === 0 ? (
                     <p className="mt-3 text-sm text-[var(--workspace-text-faint)]">
                       Every active page is referenced in the sidebar.

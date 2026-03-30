@@ -202,6 +202,32 @@ export const ensureSidebarPage = mutation({
   },
 });
 
+export const refreshSidebarLinks = mutation({
+  args: {
+    ownerKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const pages = await ctx.db.query("pages").collect();
+    const sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
+    if (!sidebarPage) {
+      return {
+        refreshedCount: 0,
+      };
+    }
+
+    const sidebarNodes = await listPageNodes(ctx.db, sidebarPage._id);
+    for (const node of sidebarNodes) {
+      await syncLinksForNode(ctx.db, node);
+    }
+
+    return {
+      refreshedCount: sidebarNodes.length,
+    };
+  },
+});
+
 export const validateOwnerKey = query({
   args: {
     ownerKey: v.string(),
