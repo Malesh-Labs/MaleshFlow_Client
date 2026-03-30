@@ -2790,6 +2790,14 @@ function ConfiguredWorkspace({
           <button
             type="button"
             onMouseDown={(event) => event.preventDefault()}
+            onClick={() => openPalette(lastPaletteModeRef.current)}
+            className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+          >
+            Command
+          </button>
+          <button
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() => void history.undo()}
             disabled={!history.canUndo || history.isApplyingHistory}
             className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-40"
@@ -2830,34 +2838,6 @@ function ConfiguredWorkspace({
               >
                 &gt;
               </button>
-              <button
-                type="button"
-                onClick={() => openPalette("pages")}
-                className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-              >
-                P
-              </button>
-              <button
-                type="button"
-                onClick={() => openPalette("find")}
-                className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-              >
-                F
-              </button>
-              <button
-                type="button"
-                onClick={() => openPalette("nodes")}
-                className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-              >
-                S
-              </button>
-              <button
-                type="button"
-                onClick={() => openPalette("chat")}
-                className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-              >
-                AI
-              </button>
               <div className="mt-auto flex flex-col items-center gap-3">
                 <button
                   type="button"
@@ -2886,36 +2866,7 @@ function ConfiguredWorkspace({
                 >
                   &lt;
                 </button>
-                <div className="flex items-start justify-end gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openPalette("pages")}
-                    className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                  >
-                    Pages
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openPalette("find")}
-                    className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                  >
-                    Find
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openPalette("nodes")}
-                    className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                  >
-                    Semantic
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openPalette("chat")}
-                    className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                  >
-                    Ask
-                  </button>
-                </div>
+                <div className="flex-1" />
               </div>
 
               <div className="mt-6 flex-1 overflow-y-auto">
