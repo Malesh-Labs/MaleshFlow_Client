@@ -56,6 +56,97 @@ function linkSearchScore(text: string, query: string) {
   return Number.POSITIVE_INFINITY;
 }
 
+function formatNodeForKnowledgeContext(node: Pick<Doc<"nodes">, "text" | "kind" | "taskStatus">) {
+  const text = node.text.trim();
+  if (text.length === 0 || text === ".") {
+    return "";
+  }
+
+  if (node.kind === "task") {
+    return `${node.taskStatus === "done" ? "[x]" : "[ ]"} ${text}`;
+  }
+
+  return text;
+}
+
+function groupNodesByParent(nodes: Doc<"nodes">[]) {
+  const sortedNodes = [...nodes].sort((left, right) => left.position - right.position);
+  const childrenByParent = new Map<string | null, Doc<"nodes">[]>();
+
+  for (const node of sortedNodes) {
+    const key = (node.parentNodeId as string | null) ?? null;
+    const bucket = childrenByParent.get(key) ?? [];
+    bucket.push(node);
+    childrenByParent.set(key, bucket);
+  }
+
+  return childrenByParent;
+}
+
+function buildOutlineLines(
+  childrenByParent: Map<string | null, Doc<"nodes">[]>,
+  parentNodeId: string | null,
+  depth: number,
+) {
+  const lines: string[] = [];
+  const children = childrenByParent.get(parentNodeId) ?? [];
+
+  for (const child of children) {
+    const formatted = formatNodeForKnowledgeContext(child);
+    if (formatted.length > 0) {
+      lines.push(`${"  ".repeat(depth)}${formatted}`);
+    }
+    lines.push(...buildOutlineLines(childrenByParent, child._id as string, depth + 1));
+  }
+
+  return lines;
+}
+
+function buildNodeSubtreeLines(
+  childrenByParent: Map<string | null, Doc<"nodes">[]>,
+  currentNode: Doc<"nodes"> | null,
+  depth: number,
+) {
+  if (!currentNode) {
+    return [];
+  }
+
+  const lines: string[] = [];
+  const formatted = formatNodeForKnowledgeContext(currentNode);
+  if (formatted.length > 0) {
+    lines.push(`${"  ".repeat(depth)}${formatted}`);
+  }
+
+  for (const child of childrenByParent.get(currentNode._id as string) ?? []) {
+    lines.push(...buildNodeSubtreeLines(childrenByParent, child, depth + 1));
+  }
+
+  return lines;
+}
+
+function buildNodeAncestorPath(
+  node: Doc<"nodes">,
+  nodeMap: Map<string, Doc<"nodes">>,
+) {
+  const labels: string[] = [];
+  let currentNode: Doc<"nodes"> | null = node;
+
+  while (currentNode) {
+    const formatted = formatNodeForKnowledgeContext(currentNode);
+    if (formatted.length > 0) {
+      labels.unshift(formatted);
+    }
+
+    if (!currentNode.parentNodeId) {
+      break;
+    }
+
+    currentNode = nodeMap.get(currentNode.parentNodeId as string) ?? null;
+  }
+
+  return labels.join(" > ");
+}
+
 const nodeCreateInputValidator = v.object({
   parentNodeId: v.optional(nullableNodeIdValidator),
   afterNodeId: v.optional(nullableNodeIdValidator),
@@ -643,7 +734,12 @@ export const createPage = mutation({
       ),
     ),
     pageType: v.optional(
-      v.union(v.literal("default"), v.literal("model"), v.literal("journal")),
+      v.union(
+        v.literal("default"),
+        v.literal("model"),
+        v.literal("journal"),
+        v.literal("scratchpad"),
+      ),
     ),
   },
   handler: async (ctx, args) => {
@@ -760,6 +856,46 @@ export const createPage = mutation({
         sourceMeta: {
           sourceType: "system",
           sectionSlot: "journalFeedback",
+          locked: true,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    if (args.pageType === "scratchpad") {
+      await ctx.db.insert("nodes", {
+        pageId,
+        parentNodeId: null,
+        position: 1024,
+        text: "Live",
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
+        archived: false,
+        sourceMeta: {
+          sourceType: "system",
+          sectionSlot: "scratchpadLive",
+          locked: true,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      await ctx.db.insert("nodes", {
+        pageId,
+        parentNodeId: null,
+        position: 2048,
+        text: "Previous",
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
+        archived: false,
+        sourceMeta: {
+          sourceType: "system",
+          sectionSlot: "scratchpadPrevious",
           locked: true,
         },
         createdAt: now,
@@ -1401,6 +1537,86 @@ export const getJournalPageContext = internalQuery({
       feedbackSection,
       thoughtLines: getSectionChildren(thoughtsSection?._id ?? null),
       feedbackLines: getSectionChildren(feedbackSection?._id ?? null),
+    };
+  },
+});
+
+export const getLinkedKnowledgeContext = internalQuery({
+  args: {
+    pageIds: v.array(v.id("pages")),
+    nodeIds: v.array(v.id("nodes")),
+  },
+  handler: async (ctx, args) => {
+    const uniquePageIds = [...new Set(args.pageIds)];
+    const uniqueNodeIds = [...new Set(args.nodeIds)];
+
+    const pages = await Promise.all(uniquePageIds.map((pageId) => ctx.db.get(pageId)));
+    const visiblePages = pages.filter(
+      (page): page is Doc<"pages"> => page !== null && !page.archived && !isSidebarSpecialPage(page),
+    );
+
+    const pageEntries = await Promise.all(
+      visiblePages.map(async (page) => {
+        const nodes = await listPageNodes(ctx.db, page._id);
+        const visibleNodes = nodes.filter((node) => !node.archived);
+        const childrenByParent = groupNodesByParent(visibleNodes);
+        const content = buildOutlineLines(childrenByParent, null, 0).join("\n");
+        const representativeNode =
+          visibleNodes.find((node) => formatNodeForKnowledgeContext(node).length > 0) ??
+          visibleNodes[0] ??
+          null;
+
+        return {
+          page,
+          representativeNode,
+          content,
+        };
+      }),
+    );
+
+    const nodes = await Promise.all(uniqueNodeIds.map((nodeId) => ctx.db.get(nodeId)));
+    const visibleNodeEntries = await Promise.all(
+      nodes.map(async (node) => {
+        if (!node || node.archived) {
+          return null;
+        }
+
+        const page = await ctx.db.get(node.pageId);
+        if (!page || page.archived || isSidebarSpecialPage(page)) {
+          return null;
+        }
+
+        const pageNodes = await listPageNodes(ctx.db, page._id);
+        const visiblePageNodes = pageNodes.filter((entry) => !entry.archived);
+        const childrenByParent = groupNodesByParent(visiblePageNodes);
+        const nodeMap = new Map(
+          visiblePageNodes.map((entry) => [entry._id as string, entry]),
+        );
+        const path = buildNodeAncestorPath(node, nodeMap);
+        const subtree = buildNodeSubtreeLines(childrenByParent, node, 0).join("\n");
+        const content = [path.length > 0 ? `Path: ${path}` : "", subtree]
+          .filter((value) => value.trim().length > 0)
+          .join("\n");
+
+        return {
+          node,
+          page,
+          content,
+        };
+      }),
+    );
+
+    return {
+      pages: pageEntries,
+      nodes: visibleNodeEntries.filter(
+        (
+          entry,
+        ): entry is {
+          node: Doc<"nodes">;
+          page: Doc<"pages">;
+          content: string;
+        } => entry !== null,
+      ),
     };
   },
 });

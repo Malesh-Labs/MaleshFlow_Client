@@ -64,7 +64,7 @@ const MODEL_REGENERATE_PROMPT =
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
-type PageType = "default" | "model" | "journal";
+type PageType = "default" | "model" | "journal" | "scratchpad";
 type PageDoc = Doc<"pages">;
 type PageTreeResult = {
   page: PageDoc;
@@ -177,7 +177,9 @@ type SectionSlot =
   | "model"
   | "recentExamples"
   | "journalThoughts"
-  | "journalFeedback";
+  | "journalFeedback"
+  | "scratchpadLive"
+  | "scratchpadPrevious";
 
 type TreeNode = OutlineTreeNode<{
   _id: string;
@@ -413,6 +415,8 @@ function getPageMeta(page: Doc<"pages"> | null | undefined) {
       ? "model"
       : sourceMeta.pageType === "journal"
         ? "journal"
+        : sourceMeta.pageType === "scratchpad"
+          ? "scratchpad"
         : "default";
 
   return { sidebarSection, pageType };
@@ -563,6 +567,43 @@ function writePageIdToHistory(pageId: string | null, mode: "push" | "replace" = 
 
 function buildNodeLinkInsertText(node: Doc<"nodes">) {
   return `[[${sanitizeLinkLabel(node.text)}|node:${node._id}]]`;
+}
+
+function buildNodeClipboardLink(node: Pick<Doc<"nodes">, "_id" | "text">) {
+  return `[[${sanitizeLinkLabel(node.text)}|node:${node._id}]]`;
+}
+
+function getNodeIdFromTarget(target: EventTarget | null) {
+  if (!(target instanceof HTMLElement)) {
+    return null;
+  }
+
+  return target.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId ?? null;
+}
+
+function resolveExplicitKnowledgeLinkTargets(
+  value: string,
+  pagesByTitle: Map<string, PageDoc>,
+) {
+  const linkedPageIds = new Set<Id<"pages">>();
+  const linkedNodeIds = new Set<Id<"nodes">>();
+
+  for (const match of extractLinkMatches(value)) {
+    if (match.link.kind === "page") {
+      const page = pagesByTitle.get(normalizePageTitleKey(match.link.targetPageTitle));
+      if (page && !page.archived) {
+        linkedPageIds.add(page._id);
+      }
+      continue;
+    }
+
+    linkedNodeIds.add(match.link.targetNodeRef as Id<"nodes">);
+  }
+
+  return {
+    linkedPageIds: [...linkedPageIds],
+    linkedNodeIds: [...linkedNodeIds],
+  };
 }
 
 function getActiveLinkToken(value: string, caretPosition: number | null) {
@@ -1181,6 +1222,11 @@ function ConfiguredWorkspace({
     null,
   );
   const [isKnowledgeChatLoading, setIsKnowledgeChatLoading] = useState(false);
+  const [workspaceChatDraft, setWorkspaceChatDraft] = useState("");
+  const [workspaceChatResponse, setWorkspaceChatResponse] = useState<KnowledgeChatResponse | null>(
+    null,
+  );
+  const [isWorkspaceChatLoading, setIsWorkspaceChatLoading] = useState(false);
   const [lastResolvedPageTree, setLastResolvedPageTree] = useState<PageTreeResult | null>(null);
   const [activeDraggedNodeId, setActiveDraggedNodeId] = useState<string | null>(null);
   const [activeDraggedNodePayload, setActiveDraggedNodePayload] = useState<DraggedNodePayload | null>(null);
@@ -1341,6 +1387,8 @@ function ConfiguredWorkspace({
   const recentExamplesSection = findSectionNode(tree, "recentExamples");
   const journalThoughtsSection = findSectionNode(tree, "journalThoughts");
   const journalFeedbackSection = findSectionNode(tree, "journalFeedback");
+  const scratchpadLiveSection = findSectionNode(tree, "scratchpadLive");
+  const scratchpadPreviousSection = findSectionNode(tree, "scratchpadPrevious");
   const genericRoots =
     pageMeta.pageType === "model"
       ? collectChildren(
@@ -1354,7 +1402,14 @@ function ConfiguredWorkspace({
               [journalThoughtsSection?._id, journalFeedbackSection?._id].filter(Boolean) as string[],
             ),
           )
-      : tree;
+        : pageMeta.pageType === "scratchpad"
+          ? collectChildren(
+              tree,
+              new Set(
+                [scratchpadLiveSection?._id, scratchpadPreviousSection?._id].filter(Boolean) as string[],
+              ),
+            )
+          : tree;
   const sectionDepthOffset = isMobileLayout ? 0 : 1;
   const modelVisibleRoots = [modelSection, recentExamplesSection].filter(
     (node): node is TreeNode => Boolean(node),
@@ -1362,11 +1417,16 @@ function ConfiguredWorkspace({
   const journalVisibleRoots = [journalThoughtsSection, journalFeedbackSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
+  const scratchpadVisibleRoots = [scratchpadLiveSection, scratchpadPreviousSection].filter(
+    (node): node is TreeNode => Boolean(node),
+  );
   const pageVisibleRows =
     pageMeta.pageType === "model"
       ? flattenTreeNodes([...modelVisibleRoots, ...genericRoots], collapsedNodeIds)
       : pageMeta.pageType === "journal"
         ? flattenTreeNodes([...journalVisibleRoots, ...genericRoots], collapsedNodeIds)
+        : pageMeta.pageType === "scratchpad"
+          ? flattenTreeNodes([...scratchpadVisibleRoots, ...genericRoots], collapsedNodeIds)
         : flattenTreeNodes(genericRoots, collapsedNodeIds);
   const sidebarVisibleRows = flattenTreeNodes(sidebarNodes, collapsedNodeIds);
   const visibleNodeOrder = [...sidebarVisibleRows, ...pageVisibleRows].map((node) => node._id);
@@ -1398,6 +1458,34 @@ function ConfiguredWorkspace({
     }
     return next;
   }, [activePageTree?.nodes, sidebarTree?.nodes]);
+  const copyNodeLinkToClipboard = useCallback(async (target: EventTarget | null) => {
+    const targetNodeId =
+      getNodeIdFromTarget(target) ??
+      (selectedNodeIds.size === 1 ? [...selectedNodeIds][0]! : null);
+    if (!targetNodeId) {
+      return;
+    }
+
+    const node = workspaceNodeMap.get(targetNodeId);
+    if (!node) {
+      return;
+    }
+
+    const link = buildNodeClipboardLink(node);
+    try {
+      await navigator.clipboard.writeText(link);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = link;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+  }, [selectedNodeIds, workspaceNodeMap]);
   const paletteResults = filterPagesForCommandPalette(
     pages ?? [],
     paletteQuery,
@@ -2473,6 +2561,12 @@ function ConfiguredWorkspace({
         return;
       }
 
+      if (isModifier && event.shiftKey && normalizedKey === "k") {
+        event.preventDefault();
+        void copyNodeLinkToClipboard(event.target);
+        return;
+      }
+
       if (
         isModifier &&
         event.shiftKey &&
@@ -2621,6 +2715,7 @@ function ConfiguredWorkspace({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    copyNodeLinkToClipboard,
     deleteHighlightedNodes,
     focusLastVisiblePageNode,
     indentHighlightedNodeByKeyboard,
@@ -2691,12 +2786,16 @@ function ConfiguredWorkspace({
           ? "model"
           : section === "Journal"
             ? "journal"
+            : section === "Scratchpads"
+              ? "scratchpad"
             : "default";
       const title =
         section === "Models"
           ? "Untitled Model"
           : section === "Journal"
             ? formatLocalDateTitle()
+            : section === "Scratchpads"
+              ? "Untitled Scratchpad"
             : `Untitled ${section.slice(0, -1)}`;
       const pageId = await createPage({
         ownerKey,
@@ -2783,6 +2882,20 @@ function ConfiguredWorkspace({
     clearNodeSelection();
   }, [clearNodeSelection]);
 
+  const askKnowledgeBase = useCallback(
+    async (question: string) => {
+      const explicitTargets = resolveExplicitKnowledgeLinkTargets(question, pagesByTitle);
+      return (await answerWorkspaceQuestion({
+        ownerKey,
+        question,
+        limit: 10,
+        linkedPageIds: explicitTargets.linkedPageIds,
+        linkedNodeIds: explicitTargets.linkedNodeIds,
+      })) as KnowledgeChatResponse;
+    },
+    [answerWorkspaceQuestion, ownerKey, pagesByTitle],
+  );
+
   const handleKnowledgeChat = useCallback(async () => {
     const question = paletteQuery.trim();
     if (question.length === 0) {
@@ -2792,11 +2905,7 @@ function ConfiguredWorkspace({
 
     setIsKnowledgeChatLoading(true);
     try {
-      const response = (await answerWorkspaceQuestion({
-        ownerKey,
-        question,
-        limit: 10,
-      })) as KnowledgeChatResponse;
+      const response = await askKnowledgeBase(question);
       setKnowledgeChatResponse(response);
     } catch (error) {
       setKnowledgeChatResponse({
@@ -2811,7 +2920,33 @@ function ConfiguredWorkspace({
     } finally {
       setIsKnowledgeChatLoading(false);
     }
-  }, [answerWorkspaceQuestion, ownerKey, paletteQuery]);
+  }, [askKnowledgeBase, paletteQuery]);
+
+  const handleWorkspaceChatSubmit = useCallback(async () => {
+    const question = workspaceChatDraft.trim();
+    if (question.length === 0) {
+      setWorkspaceChatResponse(null);
+      return;
+    }
+
+    setIsWorkspaceChatLoading(true);
+    try {
+      const response = await askKnowledgeBase(question);
+      setWorkspaceChatResponse(response);
+    } catch (error) {
+      setWorkspaceChatResponse({
+        answer:
+          error instanceof Error
+            ? `Knowledge-base chat failed: ${error.message}`
+            : "Knowledge-base chat failed.",
+        sources: [],
+        model: "gpt-5-mini",
+        error: error instanceof Error ? error.message : "Unknown error.",
+      });
+    } finally {
+      setIsWorkspaceChatLoading(false);
+    }
+  }, [askKnowledgeBase, workspaceChatDraft]);
 
   const handleArchivePage = async (page: PageDoc, archived: boolean) => {
     await archivePage({
@@ -3007,7 +3142,7 @@ function ConfiguredWorkspace({
       </div>
       <div
         className={clsx(
-          "mx-auto grid min-h-screen max-w-[1600px] grid-cols-1",
+          "mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 pb-36 md:pb-44",
           isSidebarCollapsed
             ? "lg:grid-cols-[56px_minmax(0,1fr)]"
             : "lg:grid-cols-[320px_minmax(0,1fr)]",
@@ -3568,6 +3703,79 @@ function ConfiguredWorkspace({
                       />
                     </div>
                   </div>
+                ) : pageMeta.pageType === "scratchpad" ? (
+                  <div className="divide-y divide-[var(--workspace-border-subtle)]">
+                    <div className="pb-8">
+                      <PageSection
+                        title="Live"
+                        sectionNode={scratchpadLiveSection}
+                        ownerKey={ownerKey}
+                        pageId={selectedPage._id}
+                        nodeMap={nodeMap}
+                        createNodesBatch={createNodesBatch}
+                        updateNode={updateNode}
+                        moveNode={moveNode}
+                        splitNode={splitNode}
+                        replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                        setNodeTreeArchived={setNodeTreeArchived}
+                        isPageReadOnly={isPageArchived}
+                        collapsedNodeIds={collapsedNodeIds}
+                        selectedNodeIds={selectedNodeIds}
+                        onToggleNodeCollapsed={toggleNodeCollapsed}
+                        onSelectSingleNode={selectSingleNode}
+                        onSelectNodeRange={selectNodeRange}
+                        pendingInsertedComposer={pendingInsertedComposer}
+                        onOpenInsertedComposer={openInsertedComposer}
+                        onClearInsertedComposer={clearInsertedComposer}
+                        onBeginTextEditing={clearNodeSelection}
+                        activeDraggedNodeId={activeDraggedNodeId}
+                        activeDraggedNodePayload={activeDraggedNodePayload}
+                        onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                        onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                        onSelectionStart={beginNodeSelection}
+                        onSelectionExtend={extendNodeSelection}
+                        pagesByTitle={pagesByTitle}
+                        onOpenPage={handleSelectPage}
+                        onOpenNode={handleOpenLinkedNode}
+                        depthOffset={sectionDepthOffset}
+                      />
+                    </div>
+                    <div className="pt-8">
+                      <PageSection
+                        title="Previous"
+                        sectionNode={scratchpadPreviousSection}
+                        ownerKey={ownerKey}
+                        pageId={selectedPage._id}
+                        nodeMap={nodeMap}
+                        createNodesBatch={createNodesBatch}
+                        updateNode={updateNode}
+                        moveNode={moveNode}
+                        splitNode={splitNode}
+                        replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                        setNodeTreeArchived={setNodeTreeArchived}
+                        isPageReadOnly={isPageArchived}
+                        collapsedNodeIds={collapsedNodeIds}
+                        selectedNodeIds={selectedNodeIds}
+                        onToggleNodeCollapsed={toggleNodeCollapsed}
+                        onSelectSingleNode={selectSingleNode}
+                        onSelectNodeRange={selectNodeRange}
+                        pendingInsertedComposer={pendingInsertedComposer}
+                        onOpenInsertedComposer={openInsertedComposer}
+                        onClearInsertedComposer={clearInsertedComposer}
+                        onBeginTextEditing={clearNodeSelection}
+                        activeDraggedNodeId={activeDraggedNodeId}
+                        activeDraggedNodePayload={activeDraggedNodePayload}
+                        onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                        onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                        onSelectionStart={beginNodeSelection}
+                        onSelectionExtend={extendNodeSelection}
+                        pagesByTitle={pagesByTitle}
+                        onOpenPage={handleSelectPage}
+                        onOpenNode={handleOpenLinkedNode}
+                        depthOffset={sectionDepthOffset}
+                      />
+                    </div>
+                  </div>
                 ) : (
                   <div className="space-y-1">
                     <OutlineNodeList
@@ -3941,6 +4149,16 @@ function ConfiguredWorkspace({
           </div>
         </div>
       ) : null}
+      <WorkspaceAiDock
+        ownerKey={ownerKey}
+        draft={workspaceChatDraft}
+        onDraftChange={setWorkspaceChatDraft}
+        onSubmit={() => void handleWorkspaceChatSubmit()}
+        response={workspaceChatResponse}
+        isLoading={isWorkspaceChatLoading}
+        onDismissResponse={() => setWorkspaceChatResponse(null)}
+        onOpenResult={handleSelectNodeSearchResult}
+      />
       </main>
     </WorkspaceHistoryProvider>
   );
@@ -4360,6 +4578,220 @@ function LinkedTextPreview({
           )
         ),
       )}
+    </div>
+  );
+}
+
+function WorkspaceAiDock({
+  ownerKey,
+  draft,
+  onDraftChange,
+  onSubmit,
+  response,
+  isLoading,
+  onDismissResponse,
+  onOpenResult,
+}: {
+  ownerKey: string;
+  draft: string;
+  onDraftChange: (value: string) => void;
+  onSubmit: () => void;
+  response: KnowledgeChatResponse | null;
+  isLoading: boolean;
+  onDismissResponse: () => void;
+  onOpenResult: (result: NodeSearchResult) => void;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [caretPosition, setCaretPosition] = useState<number | null>(null);
+  const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
+  const activeLinkToken = getActiveLinkToken(draft, caretPosition);
+  const linkTargetResults = useQuery(
+    api.workspace.searchLinkTargets,
+    ownerKey && activeLinkToken
+      ? {
+          ownerKey,
+          query: activeLinkToken.query,
+          limit: 6,
+        }
+      : SKIP,
+  ) as LinkTargetSearchResults | undefined;
+  const linkSuggestions = useMemo(
+    () => buildLinkSuggestions(linkTargetResults),
+    [linkTargetResults],
+  );
+  const activeLinkHighlightIndex =
+    linkSuggestions.length === 0
+      ? 0
+      : Math.min(linkHighlightIndex, linkSuggestions.length - 1);
+
+  useEffect(() => {
+    autoResizeTextarea(textareaRef.current);
+  }, [draft]);
+
+  const applyLinkSuggestion = (suggestion: LinkSuggestion) => {
+    if (!activeLinkToken) {
+      return;
+    }
+
+    const nextValue =
+      draft.slice(0, activeLinkToken.startIndex) +
+      suggestion.insertText +
+      draft.slice(activeLinkToken.endIndex);
+    const nextCaretPosition = activeLinkToken.startIndex + suggestion.insertText.length;
+
+    onDraftChange(nextValue);
+    setCaretPosition(nextCaretPosition);
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCaretPosition, nextCaretPosition);
+    });
+  };
+
+  const handleKeyDown = (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
+    if (activeLinkToken && linkSuggestions.length > 0) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setLinkHighlightIndex((current) =>
+          Math.min(current + 1, linkSuggestions.length - 1),
+        );
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setLinkHighlightIndex((current) => Math.max(current - 1, 0));
+        return;
+      }
+
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        const highlighted = linkSuggestions[activeLinkHighlightIndex];
+        if (highlighted) {
+          applyLinkSuggestion(highlighted);
+        }
+        return;
+      }
+
+      if (event.key === "Tab") {
+        const highlighted = linkSuggestions[activeLinkHighlightIndex];
+        if (highlighted) {
+          event.preventDefault();
+          applyLinkSuggestion(highlighted);
+          return;
+        }
+      }
+    }
+
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      onSubmit();
+    }
+  };
+
+  return (
+    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 px-3 pb-3 md:px-6 md:pb-6">
+      <div className="pointer-events-auto mx-auto max-w-[1600px]">
+        <div className="overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface)] shadow-[0_-16px_48px_-32px_rgba(0,0,0,0.65)] backdrop-blur-sm">
+          {response ? (
+            <div className="max-h-[38vh] overflow-y-auto border-b border-[var(--workspace-border-subtle)] px-4 py-4 md:px-6">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                    AI Response
+                  </p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[var(--workspace-text)]">
+                    {response.answer}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onDismissResponse}
+                  className="border border-[var(--workspace-border-control)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="mt-4 space-y-2">
+                {response.sources.length === 0 ? (
+                  <p className="text-sm text-[var(--workspace-text-subtle)]">
+                    No source snippets available.
+                  </p>
+                ) : (
+                  response.sources.map((result, index) => (
+                    <button
+                      key={`${result.node._id}:${index}:dock`}
+                      type="button"
+                      onClick={() => onOpenResult(result)}
+                      className="block w-full border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-4 py-3 text-left transition hover:border-[var(--workspace-border-hover)] hover:bg-[var(--workspace-surface-hover)]"
+                    >
+                      <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
+                        {result.node.text || "(empty line)"}
+                      </span>
+                      <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                        {result.page?.title ?? "Unknown page"}
+                        {result.page ? ` • ${getPageTypeDisplayLabel(result.page)}` : ""}
+                      </span>
+                      {result.content && result.content.trim() !== result.node.text.trim() ? (
+                        <span className="mt-2 block whitespace-pre-wrap text-xs leading-6 text-[var(--workspace-text-subtle)]">
+                          {result.content}
+                        </span>
+                      ) : null}
+                    </button>
+                  ))
+                )}
+              </div>
+              <div className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--workspace-border-subtle)] pt-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                <span>{response.model}</span>
+                <span>{response.error ? "OpenAI issue surfaced" : "Grounded with linked + semantic context"}</span>
+              </div>
+            </div>
+          ) : null}
+          <div className="relative flex items-end gap-3 px-4 py-3 md:px-6 md:py-4">
+            <div className="min-w-0 flex-1">
+              <textarea
+                ref={textareaRef}
+                value={draft}
+                onChange={(event) => {
+                  onDraftChange(event.target.value);
+                  setCaretPosition(event.target.selectionStart ?? event.target.value.length);
+                }}
+                onFocus={(event) => {
+                  setCaretPosition(event.target.selectionStart ?? event.target.value.length);
+                }}
+                onSelect={(event) => {
+                  setCaretPosition(
+                    event.currentTarget.selectionStart ?? event.currentTarget.value.length,
+                  );
+                }}
+                onKeyDown={handleKeyDown}
+                placeholder="Ask AI about your workspace. Use [[Page]] or [[Node|node:id]] to pin specific context…"
+                rows={1}
+                className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-[15px] leading-6 outline-none"
+              />
+              <p className="mt-1 text-[11px] leading-5 text-[var(--workspace-text-faint)]">
+                Linked pages and nodes in `[[...]]` are sent as explicit context before semantic retrieval.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onSubmit}
+              disabled={isLoading || draft.trim().length === 0}
+              className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition hover:bg-[var(--workspace-brand-hover)] disabled:cursor-wait disabled:opacity-60"
+            >
+              {isLoading ? "Thinking…" : "Ask AI"}
+            </button>
+            {activeLinkToken && linkSuggestions.length > 0 ? (
+              <LinkAutocompleteMenu
+                anchorRef={textareaRef}
+                suggestions={linkSuggestions}
+                highlightIndex={activeLinkHighlightIndex}
+                onHover={setLinkHighlightIndex}
+                onSelect={applyLinkSuggestion}
+              />
+            ) : null}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

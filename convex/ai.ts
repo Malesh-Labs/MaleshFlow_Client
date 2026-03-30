@@ -38,6 +38,8 @@ const upsertEmbeddingJobRef = internal.aiData.upsertEmbeddingJob as any;
 const saveNodeEmbeddingRef = internal.aiData.saveNodeEmbedding as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const applyTaskMetadataRef = internal.aiData.applyTaskMetadata as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const getLinkedKnowledgeContextRef = internal.workspace.getLinkedKnowledgeContext as any;
 
 function getOpenAIClient() {
   if (!process.env.OPENAI_API_KEY) {
@@ -180,6 +182,8 @@ export const answerWorkspaceQuestion = action({
     ownerKey: v.string(),
     question: v.string(),
     limit: v.optional(v.number()),
+    linkedPageIds: v.optional(v.array(v.id("pages"))),
+    linkedNodeIds: v.optional(v.array(v.id("nodes"))),
   },
   handler: async (
     ctx,
@@ -208,6 +212,22 @@ export const answerWorkspaceQuestion = action({
       };
     }
 
+    const linkedContext = (await ctx.runQuery(getLinkedKnowledgeContextRef, {
+      pageIds: args.linkedPageIds ?? [],
+      nodeIds: args.linkedNodeIds ?? [],
+    })) as {
+      pages: Array<{
+        page: Doc<"pages">;
+        representativeNode: Doc<"nodes"> | null;
+        content: string;
+      }>;
+      nodes: Array<{
+        node: Doc<"nodes">;
+        page: Doc<"pages">;
+        content: string;
+      }>;
+    };
+
     const rawSources = (await runSemanticSearch(ctx, {
       query: question,
       limit: args.limit ?? 10,
@@ -217,9 +237,58 @@ export const answerWorkspaceQuestion = action({
       score?: number;
       content?: string;
     }>;
-    const sources = rawSources.filter((entry) => entry.page !== null).slice(0, 10);
+    const linkedPageSources = linkedContext.pages
+      .filter((entry) => entry.representativeNode !== null)
+      .map((entry) => ({
+        node: entry.representativeNode!,
+        page: entry.page,
+        content: entry.content,
+      }));
+    const linkedNodeSources = linkedContext.nodes.map((entry) => ({
+      node: entry.node,
+      page: entry.page,
+      content: entry.content,
+    }));
 
-    if (sources.length === 0) {
+    const dedupedSources = new Map<
+      string,
+      {
+        node: Doc<"nodes">;
+        page: Doc<"pages"> | null;
+        score?: number;
+        content?: string;
+      }
+    >();
+    for (const entry of [...linkedNodeSources, ...linkedPageSources, ...rawSources]) {
+      if (!entry.page) {
+        continue;
+      }
+
+      const key = entry.node._id as string;
+      if (!dedupedSources.has(key)) {
+        dedupedSources.set(key, entry);
+      }
+    }
+    const sources = [...dedupedSources.values()].slice(0, 10);
+
+    const explicitLinkedContext = [
+      ...linkedContext.pages
+        .filter((entry) => entry.content.trim().length > 0)
+        .map((entry, index) =>
+          [
+            `Linked page [${index + 1}]: ${entry.page.title}`,
+            entry.content,
+          ].join("\n"),
+        ),
+      ...linkedContext.nodes.map((entry, index) =>
+        [
+          `Linked node [N${index + 1}] on ${entry.page.title}`,
+          entry.content.trim().length > 0 ? entry.content : entry.node.text || "(empty line)",
+        ].join("\n"),
+      ),
+    ].join("\n\n");
+
+    if (sources.length === 0 && explicitLinkedContext.trim().length === 0) {
       return {
         answer: "I couldn't find any relevant notes or tasks in your knowledge base yet.",
         sources: [],
@@ -261,9 +330,17 @@ export const answerWorkspaceQuestion = action({
           },
           {
             role: "user",
-            content: [`Question: ${question}`, "", "Knowledge base snippets:", sourceContext].join(
-              "\n",
-            ),
+            content: [
+              `Question: ${question}`,
+              explicitLinkedContext.trim().length > 0 ? "" : null,
+              explicitLinkedContext.trim().length > 0 ? "Explicitly linked context:" : null,
+              explicitLinkedContext.trim().length > 0 ? explicitLinkedContext : null,
+              sourceContext.trim().length > 0 ? "" : null,
+              sourceContext.trim().length > 0 ? "Knowledge base snippets:" : null,
+              sourceContext.trim().length > 0 ? sourceContext : null,
+            ]
+              .filter((value): value is string => value !== null)
+              .join("\n"),
           },
         ],
         text: {
