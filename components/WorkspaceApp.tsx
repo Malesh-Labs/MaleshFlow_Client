@@ -1837,85 +1837,184 @@ function ConfiguredWorkspace({
 
   const indentHighlightedNodeByKeyboard = useCallback(
     async (outdent: boolean) => {
-      if (selectedNodeIds.size !== 1) {
+      if (selectedNodeIds.size === 0) {
         return;
       }
 
-      const nodeId = [...selectedNodeIds][0];
-      if (!nodeId) {
-        return;
-      }
-
-      const context = findNodeContext(sidebarNodes, tree, nodeId);
-      if (!context || getNodeMeta(context.node).locked === true) {
-        return;
-      }
-
-      const page = pagesById.get(context.pageId as string);
-      if (page?.archived) {
-        return;
-      }
-
-      const beforePlacement = buildNodePlacement(
-        context.pageId,
-        context.parentNodeId,
-        (context.previousSibling?._id as Id<"nodes"> | undefined) ?? null,
+      const orderedSelectedNodeIds = visibleNodeOrder.filter((nodeId) =>
+        selectedNodeIds.has(nodeId),
       );
-      let afterPlacement: NodePlacement | null = null;
+      const selectedRootNodeIds = orderedSelectedNodeIds.filter((nodeId) => {
+        let currentNode = workspaceNodeMap.get(nodeId) ?? null;
+        while (currentNode?.parentNodeId) {
+          const parentNodeId = currentNode.parentNodeId as string;
+          if (selectedNodeIds.has(parentNodeId)) {
+            return false;
+          }
+          currentNode = workspaceNodeMap.get(parentNodeId) ?? null;
+        }
+
+        return true;
+      });
+
+      if (selectedRootNodeIds.length === 0) {
+        return;
+      }
+
+      const contexts = selectedRootNodeIds
+        .map((nodeId) => findNodeContext(sidebarNodes, tree, nodeId))
+        .filter(
+          (
+            context,
+          ): context is NonNullable<ReturnType<typeof findNodeContext>> => context !== null,
+        )
+        .filter((context) => {
+          if (getNodeMeta(context.node).locked === true) {
+            return false;
+          }
+
+          const page = pagesById.get(context.pageId as string);
+          return !page?.archived;
+        });
+
+      if (contexts.length === 0) {
+        return;
+      }
+
+      const firstContext = contexts[0]!;
+      const sharedPageId = firstContext.pageId;
+      const sharedParentNodeId = firstContext.parentNodeId;
+      const allContextsShareContainer = contexts.every(
+        (context) =>
+          context.pageId === sharedPageId && context.parentNodeId === sharedParentNodeId,
+      );
+      if (!allContextsShareContainer) {
+        return;
+      }
+
+      const historyEntries: Array<Extract<HistoryEntry, { type: "move_node" }>> = [];
 
       if (outdent) {
-        if (!context.node.parentNodeId) {
+        if (!firstContext.node.parentNodeId) {
           return;
         }
 
-        const parentNode = workspaceNodeMap.get(context.node.parentNodeId as string);
+        const parentNode = workspaceNodeMap.get(firstContext.node.parentNodeId as string);
         if (!parentNode) {
           return;
         }
 
-        afterPlacement = buildNodePlacement(
-          context.pageId,
-          (parentNode.parentNodeId as Id<"nodes"> | null) ?? null,
-          parentNode._id as Id<"nodes">,
-        );
+        let nextAfterNodeId = parentNode._id as Id<"nodes">;
+        const targetParentNodeId = (parentNode.parentNodeId as Id<"nodes"> | null) ?? null;
 
-        await moveNode({
-          ownerKey,
-          nodeId: context.node._id as Id<"nodes">,
-          pageId: context.pageId,
-          parentNodeId: (parentNode.parentNodeId as Id<"nodes"> | null) ?? null,
-          afterNodeId: parentNode._id as Id<"nodes">,
-        });
+        for (const context of contexts) {
+          const beforePlacement = buildNodePlacement(
+            context.pageId,
+            context.parentNodeId,
+            (context.previousSibling?._id as Id<"nodes"> | undefined) ?? null,
+          );
+          const afterPlacement = buildNodePlacement(
+            context.pageId,
+            targetParentNodeId,
+            nextAfterNodeId,
+          );
+
+          await moveNode({
+            ownerKey,
+            nodeId: context.node._id as Id<"nodes">,
+            pageId: context.pageId,
+            parentNodeId: targetParentNodeId,
+            afterNodeId: nextAfterNodeId,
+          });
+
+          historyEntries.push({
+            type: "move_node",
+            pageId: context.pageId,
+            nodeId: context.node._id as Id<"nodes">,
+            beforePlacement,
+            afterPlacement,
+            focusEditorId: getNodeEditorId(context.node._id as Id<"nodes">),
+          });
+
+          nextAfterNodeId = context.node._id as Id<"nodes">;
+        }
       } else {
-        if (!context.previousSibling) {
+        if (!firstContext.previousSibling) {
           return;
         }
 
-        afterPlacement = buildNodePlacement(
-          context.pageId,
-          context.previousSibling._id as Id<"nodes">,
-          null,
-        );
+        let nextAfterNodeId: Id<"nodes"> | null = null;
+        const targetParentNodeId = firstContext.previousSibling._id as Id<"nodes">;
 
-        await moveNode({
-          ownerKey,
-          nodeId: context.node._id as Id<"nodes">,
-          pageId: context.pageId,
-          parentNodeId: context.previousSibling._id as Id<"nodes">,
+        for (const context of contexts) {
+          const beforePlacement = buildNodePlacement(
+            context.pageId,
+            context.parentNodeId,
+            (context.previousSibling?._id as Id<"nodes"> | undefined) ?? null,
+          );
+          const afterPlacement = buildNodePlacement(
+            context.pageId,
+            targetParentNodeId,
+            nextAfterNodeId,
+          );
+
+          await moveNode({
+            ownerKey,
+            nodeId: context.node._id as Id<"nodes">,
+            pageId: context.pageId,
+            parentNodeId: targetParentNodeId,
+            afterNodeId: nextAfterNodeId,
+          });
+
+          historyEntries.push({
+            type: "move_node",
+            pageId: context.pageId,
+            nodeId: context.node._id as Id<"nodes">,
+            beforePlacement,
+            afterPlacement,
+            focusEditorId: getNodeEditorId(context.node._id as Id<"nodes">),
+          });
+
+          nextAfterNodeId = context.node._id as Id<"nodes">;
+        }
+      }
+
+      if (historyEntries.length === 0) {
+        return;
+      }
+
+      if (historyEntries.length === 1) {
+        history.pushUndoEntry(historyEntries[0]!);
+      } else {
+        history.pushUndoEntry({
+          type: "compound",
+          pageId: sharedPageId,
+          entries: historyEntries,
+          focusAfterUndoId: getNodeEditorId(historyEntries[0]!.nodeId),
+          focusAfterRedoId: getNodeEditorId(
+            historyEntries[historyEntries.length - 1]!.nodeId,
+          ),
         });
       }
 
-      history.pushUndoEntry({
-        type: "move_node",
-        pageId: context.pageId,
-        nodeId: context.node._id as Id<"nodes">,
-        beforePlacement,
-        afterPlacement,
-        focusEditorId: getNodeEditorId(context.node._id as Id<"nodes">),
-      });
-      selectSingleNode(context.node._id);
+      setSelectedNodeIds(
+        new Set(contexts.map((context) => context.node._id as string)),
+      );
+      setDragSelection(null);
     },
-    [history, moveNode, ownerKey, pagesById, selectSingleNode, selectedNodeIds, sidebarNodes, tree, workspaceNodeMap],
+    [
+      history,
+      moveNode,
+      ownerKey,
+      pagesById,
+      selectedNodeIds,
+      setDragSelection,
+      setSelectedNodeIds,
+      sidebarNodes,
+      tree,
+      visibleNodeOrder,
+      workspaceNodeMap,
+    ],
   );
 
   const setHighlightedNodeCollapsedByKeyboard = useCallback(
