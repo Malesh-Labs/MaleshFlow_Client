@@ -768,6 +768,11 @@ function collectChildren(nodes: TreeNode[], excludedIds: Set<string>) {
   return nodes.filter((node) => !excludedIds.has(node._id));
 }
 
+function getLastChildNodeId(node: TreeNode | null) {
+  const lastChild = node?.children[node.children.length - 1] ?? null;
+  return (lastChild?._id as Id<"nodes"> | null) ?? null;
+}
+
 function findNodeContextInTree(
   nodes: TreeNode[],
   targetNodeId: string,
@@ -1943,7 +1948,7 @@ function ConfiguredWorkspace({
           return;
         }
 
-        let nextAfterNodeId: Id<"nodes"> | null = null;
+        let nextAfterNodeId = getLastChildNodeId(firstContext.previousSibling);
         const targetParentNodeId = firstContext.previousSibling._id as Id<"nodes">;
 
         for (const context of contexts) {
@@ -5346,16 +5351,18 @@ function OutlineNodeEditor({
           return;
         }
 
+        const targetAfterNodeId = getLastChildNodeId(previousSibling);
         afterPlacement = buildNodePlacement(
           pageId,
           previousSibling._id as Id<"nodes">,
-          null,
+          targetAfterNodeId,
         );
         await moveNode({
           ownerKey,
           nodeId: node._id as Id<"nodes">,
           pageId,
           parentNodeId: previousSibling._id as Id<"nodes">,
+          afterNodeId: targetAfterNodeId,
         });
       }
 
