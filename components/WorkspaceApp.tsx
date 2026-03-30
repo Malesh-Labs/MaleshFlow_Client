@@ -13,6 +13,8 @@ import {
   useSyncExternalStore,
   type CSSProperties,
   type ErrorInfo,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type RefObject,
   type ReactNode,
   type KeyboardEvent as TextareaKeyboardEvent,
@@ -4449,6 +4451,8 @@ function OutlineNodeEditor({
   const [dropTarget, setDropTarget] = useState<NodeDropTarget | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRef = useRef(draft);
+  const markerHoldTimeoutRef = useRef<number | null>(null);
+  const markerLongPressTriggeredRef = useRef(false);
 
   const nodeMeta = getNodeMeta(node);
   const isLocked = nodeMeta.locked === true;
@@ -4560,6 +4564,14 @@ function OutlineNodeEditor({
   useEffect(() => {
     return () => history.flushDraftCheckpoint(editorId);
   }, [editorId, history]);
+
+  useEffect(() => {
+    return () => {
+      if (markerHoldTimeoutRef.current !== null) {
+        window.clearTimeout(markerHoldTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const applyLinkSuggestion = (suggestion: LinkSuggestion) => {
     if (!activeLinkToken) {
@@ -4697,6 +4709,9 @@ function OutlineNodeEditor({
       return;
     }
 
+    clearMarkerHold();
+    markerLongPressTriggeredRef.current = false;
+
     const payload: DraggedNodePayload = {
       nodeId: node._id,
       pageId,
@@ -4710,6 +4725,63 @@ function OutlineNodeEditor({
     onSetActiveDraggedNodeId(node._id);
     onSetActiveDraggedNodePayload(payload);
     onSelectSingleNode(node._id);
+  };
+
+  const clearMarkerHold = () => {
+    if (markerHoldTimeoutRef.current !== null) {
+      window.clearTimeout(markerHoldTimeoutRef.current);
+      markerHoldTimeoutRef.current = null;
+    }
+  };
+
+  const handleMarkerPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (isDisabled) {
+      return;
+    }
+
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+
+    markerLongPressTriggeredRef.current = false;
+    clearMarkerHold();
+    markerHoldTimeoutRef.current = window.setTimeout(() => {
+      markerHoldTimeoutRef.current = null;
+      markerLongPressTriggeredRef.current = true;
+      onSelectSingleNode(node._id);
+    }, 180);
+  };
+
+  const handleMarkerPointerEnd = () => {
+    clearMarkerHold();
+  };
+
+  const consumeMarkerLongPress = () => {
+    if (!markerLongPressTriggeredRef.current) {
+      return false;
+    }
+
+    markerLongPressTriggeredRef.current = false;
+    return true;
+  };
+
+  const handleMarkerClick = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (consumeMarkerLongPress()) {
+      event.preventDefault();
+      return;
+    }
+
+    if (node.kind === "task") {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+        void handleToggleNodeKind();
+        return;
+      }
+
+      void handleToggleTask();
+      return;
+    }
+
+    void handleToggleNodeKind();
   };
 
   const handleDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
@@ -5539,18 +5611,25 @@ function OutlineNodeEditor({
             ((isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder) ? null : node.kind === "task" ? (
               <button
                 type="button"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={(event) => {
-                  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-                    void handleToggleNodeKind();
-                    return;
-                  }
-                  void handleToggleTask();
+                data-selection-gutter="true"
+                draggable={!isDisabled}
+                onPointerDown={handleMarkerPointerDown}
+                onPointerUp={handleMarkerPointerEnd}
+                onPointerLeave={handleMarkerPointerEnd}
+                onPointerCancel={handleMarkerPointerEnd}
+                onClick={handleMarkerClick}
+                onDragStart={handleDragHandleStart}
+                onDragEnd={() => {
+                  clearMarkerHold();
+                  markerLongPressTriggeredRef.current = false;
+                  setDropTarget(null);
+                  onSetActiveDraggedNodeId(null);
+                  onSetActiveDraggedNodePayload(null);
                 }}
                 disabled={isDisabled}
                 title="Click to toggle task status. Hold a modifier key to convert to a note."
                 className={clsx(
-                  "flex h-4 w-4 items-center justify-center border text-[10px] transition",
+                  "flex h-4 w-4 flex-none cursor-grab items-center justify-center border text-[10px] transition active:cursor-grabbing",
                   node.taskStatus === "done"
                     ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
                     : "border-[var(--workspace-border-hover)] bg-[var(--workspace-surface)] text-transparent hover:border-[var(--workspace-accent)]",
@@ -5562,12 +5641,25 @@ function OutlineNodeEditor({
             ) : (
               <button
                 type="button"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => void handleToggleNodeKind()}
+                data-selection-gutter="true"
+                draggable={!isDisabled}
+                onPointerDown={handleMarkerPointerDown}
+                onPointerUp={handleMarkerPointerEnd}
+                onPointerLeave={handleMarkerPointerEnd}
+                onPointerCancel={handleMarkerPointerEnd}
+                onClick={handleMarkerClick}
+                onDragStart={handleDragHandleStart}
+                onDragEnd={() => {
+                  clearMarkerHold();
+                  markerLongPressTriggeredRef.current = false;
+                  setDropTarget(null);
+                  onSetActiveDraggedNodeId(null);
+                  onSetActiveDraggedNodePayload(null);
+                }}
                 disabled={isDisabled}
                 title="Convert this note into a task."
                 className={clsx(
-                  "flex h-4 w-4 items-center justify-center transition hover:text-[var(--workspace-brand)]",
+                  "flex h-4 w-4 flex-none cursor-grab items-center justify-center transition hover:text-[var(--workspace-brand)] active:cursor-grabbing",
                   isDisabled ? "cursor-not-allowed opacity-60" : "",
                 )}
               >
@@ -5643,35 +5735,6 @@ function OutlineNodeEditor({
             ) : null}
           </div>
           <div className="ml-1 flex flex-none items-center gap-1">
-            <button
-              type="button"
-              data-selection-gutter="true"
-              aria-label="Drag line"
-              draggable={!isDisabled}
-              onClick={() => onSelectSingleNode(node._id)}
-              onDragStart={handleDragHandleStart}
-              onDragEnd={() => {
-                setDropTarget(null);
-                onSetActiveDraggedNodeId(null);
-                onSetActiveDraggedNodePayload(null);
-              }}
-              className={clsx(
-                "flex h-8 w-5 flex-none items-center justify-center border-l transition",
-                isSelected
-                  ? "border-[var(--workspace-accent)] text-[var(--workspace-accent)]"
-                  : "border-transparent text-[var(--workspace-text-faint)] opacity-60 hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-accent)] group-hover:opacity-100",
-                isDisabled ? "cursor-not-allowed opacity-40" : "cursor-grab active:cursor-grabbing",
-              )}
-            >
-              <span className="grid grid-cols-2 gap-[2px]">
-                {Array.from({ length: 6 }).map((_, index) => (
-                  <span
-                    key={index}
-                    className="h-[2px] w-[2px] rounded-full bg-current"
-                  />
-                ))}
-              </span>
-            </button>
             <button
               type="button"
               onMouseDown={(event) => event.preventDefault()}
