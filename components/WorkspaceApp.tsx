@@ -12,7 +12,6 @@ import {
   useState,
   useSyncExternalStore,
   type ErrorInfo,
-  type FormEvent,
   type RefObject,
   type ReactNode,
   type KeyboardEvent as TextareaKeyboardEvent,
@@ -57,6 +56,8 @@ const LAST_PAGE_STORAGE_KEY = "maleshflow-last-page-id";
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "maleshflow-sidebar-collapsed";
 const COLLAPSED_NODES_STORAGE_KEY = "maleshflow-collapsed-node-ids";
 const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
+const MODEL_REGENERATE_PROMPT =
+  "Regenerate the Model section using the current Model lines and the Recent section as context. Refine it into a concise, useful model while preserving important intent and signal.";
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
 type PageType = "default" | "model" | "journal";
@@ -1124,7 +1125,6 @@ function ConfiguredWorkspace({
 }) {
   const [selectedPageId, setSelectedPageId] = useState<Id<"pages"> | null>(null);
   const [pageTitleDraft, setPageTitleDraft] = useState("");
-  const [modelChatInput, setModelChatInput] = useState("");
   const [chatStatus, setChatStatus] = useState("");
   const [journalFeedbackStatus, setJournalFeedbackStatus] = useState("");
   const [embeddingRebuildStatus, setEmbeddingRebuildStatus] = useState("");
@@ -2528,9 +2528,8 @@ function ConfiguredWorkspace({
     }
   };
 
-  const handleRunModelChat = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!selectedPageId || modelChatInput.trim().length === 0 || isPageArchived) {
+  const handleRegenerateModel = async () => {
+    if (!selectedPageId || isPageArchived) {
       return;
     }
 
@@ -2540,17 +2539,16 @@ function ConfiguredWorkspace({
       const result = (await rewriteModelSection({
         ownerKey,
         pageId: selectedPageId,
-        prompt: modelChatInput.trim(),
+        prompt: MODEL_REGENERATE_PROMPT,
       })) as {
         summary: string;
       };
       setChatStatus(result.summary);
-      setModelChatInput("");
     } catch (error) {
       setChatStatus(
         error instanceof Error
           ? error.message
-          : "Could not update the model right now.",
+          : "Could not regenerate the model right now.",
       );
     } finally {
       setIsSendingChat(false);
@@ -3097,31 +3095,6 @@ function ConfiguredWorkspace({
                 }}
               >
                 {pageMeta.pageType === "model" ? (
-                  <div className="mb-8 border-b border-[var(--workspace-border-subtle)] pb-6">
-                    <form onSubmit={(event) => void handleRunModelChat(event)} className="space-y-3">
-                      <input
-                        value={modelChatInput}
-                        onChange={(event) => setModelChatInput(event.target.value)}
-                        placeholder="Ask AI..."
-                        disabled={isPageArchived}
-                        className="w-full border-0 border-b border-[var(--workspace-border)] bg-transparent px-0 py-2 text-sm outline-none disabled:text-[var(--workspace-text-muted)]"
-                      />
-                      <div className="flex items-center justify-between gap-4">
-                        <p className="text-sm text-[var(--workspace-text-subtle)]">
-                          {isPageArchived ? "Archived pages are read-only." : chatStatus}
-                        </p>
-                        <button
-                          type="submit"
-                          disabled={isSendingChat || modelChatInput.trim().length === 0 || isPageArchived}
-                          className="border border-[var(--workspace-brand)] px-4 py-2 text-sm font-semibold text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)] disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {isSendingChat ? "Thinking…" : "Send"}
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                ) : null}
-                {pageMeta.pageType === "model" ? (
                   <div className="divide-y divide-[var(--workspace-border-subtle)]">
                     <div className="pb-8">
                       <PageSection
@@ -3156,6 +3129,17 @@ function ConfiguredWorkspace({
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       depthOffset={1}
+                      statusMessage={chatStatus}
+                      action={
+                        <button
+                          type="button"
+                          onClick={() => void handleRegenerateModel()}
+                          disabled={isSendingChat || isPageArchived}
+                          className="border border-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {isSendingChat ? "Regenerating…" : "Regenerate Model"}
+                        </button>
+                      }
                     />
                   </div>
                     <div className="pt-8">
