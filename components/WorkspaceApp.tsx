@@ -234,6 +234,32 @@ function useOwnerKey() {
   return { ownerKey, setOwnerKey: updateOwnerKey };
 }
 
+function useIsMobileLayout() {
+  return useSyncExternalStore(
+    (onStoreChange) => {
+      if (typeof window === "undefined") {
+        return () => {};
+      }
+
+      const mediaQuery = window.matchMedia("(max-width: 767px)");
+      const handleChange = () => onStoreChange();
+
+      if (typeof mediaQuery.addEventListener === "function") {
+        mediaQuery.addEventListener("change", handleChange);
+        return () => mediaQuery.removeEventListener("change", handleChange);
+      }
+
+      mediaQuery.addListener(handleChange);
+      return () => mediaQuery.removeListener(handleChange);
+    },
+    () =>
+      typeof window !== "undefined"
+        ? window.matchMedia("(max-width: 767px)").matches
+        : false,
+    () => false,
+  );
+}
+
 function toTreeNodes(nodes: Doc<"nodes">[]) {
   return buildOutlineTree(
     nodes.map((node) => ({
@@ -1124,6 +1150,7 @@ function ConfiguredWorkspace({
   ownerKey: string;
   setOwnerKey: (nextValue: string) => void;
 }) {
+  const isMobileLayout = useIsMobileLayout();
   const [selectedPageId, setSelectedPageId] = useState<Id<"pages"> | null>(null);
   const [pageTitleDraft, setPageTitleDraft] = useState("");
   const [chatStatus, setChatStatus] = useState("");
@@ -1320,6 +1347,7 @@ function ConfiguredWorkspace({
             ),
           )
       : tree;
+  const sectionDepthOffset = isMobileLayout ? 0 : 1;
   const modelVisibleRoots = [modelSection, recentExamplesSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
@@ -3262,7 +3290,7 @@ function ConfiguredWorkspace({
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
-                      depthOffset={1}
+                      depthOffset={sectionDepthOffset}
                       statusMessage={chatStatus}
                       action={
                         <button
@@ -3308,7 +3336,7 @@ function ConfiguredWorkspace({
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
-                      depthOffset={1}
+                      depthOffset={sectionDepthOffset}
                     />
                   </div>
                   </div>
@@ -3346,7 +3374,7 @@ function ConfiguredWorkspace({
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
-                      depthOffset={1}
+                      depthOffset={sectionDepthOffset}
                     />
                   </div>
                     <div className="pt-8">
@@ -3381,7 +3409,7 @@ function ConfiguredWorkspace({
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
-                      depthOffset={1}
+                      depthOffset={sectionDepthOffset}
                       statusMessage={journalFeedbackStatus}
                       action={
                           <button
