@@ -4525,7 +4525,7 @@ function OutlineNodeEditor({
         afterNodeId:
           ((node.children[node.children.length - 1]?._id as Id<"nodes"> | undefined) ?? null),
         lineSide: "bottom",
-        lineIndentOffset: 56,
+        lineIndentOffset: 30,
       };
     }
 
@@ -4536,7 +4536,7 @@ function OutlineNodeEditor({
         ? (((siblings[siblingIndex - 1]?._id as Id<"nodes"> | undefined) ?? null))
         : (node._id as Id<"nodes">),
       lineSide: upperZone ? "top" : "bottom",
-      lineIndentOffset: 38,
+      lineIndentOffset: 14,
     };
   };
 
@@ -5374,59 +5374,8 @@ function OutlineNodeEditor({
             <span className="absolute -left-1.5 -top-[5px] h-2.5 w-2.5 rounded-full bg-[var(--workspace-brand)]" />
           </div>
         ) : null}
-        <div className="flex min-h-8 items-center gap-2">
-          <button
-            type="button"
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={handleToggleCollapsed}
-            disabled={!hasChildren}
-            aria-label={isCollapsed ? "Expand nested items" : "Collapse nested items"}
-            className={clsx(
-              "flex h-10 w-8 flex-none items-center justify-center text-base leading-none transition",
-              hasChildren
-                ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text)]"
-                : "cursor-default text-transparent",
-            )}
-          >
-            <span
-              className={clsx(
-                "inline-block transition-transform",
-                isCollapsed ? "rotate-0" : "rotate-90",
-              )}
-            >
-              ▸
-            </span>
-          </button>
-          <button
-            type="button"
-            data-selection-gutter="true"
-            aria-label="Drag line"
-            draggable={!isDisabled}
-            onClick={() => onSelectSingleNode(node._id)}
-            onDragStart={handleDragHandleStart}
-            onDragEnd={() => {
-              setDropTarget(null);
-              onSetActiveDraggedNodeId(null);
-              onSetActiveDraggedNodePayload(null);
-            }}
-            className={clsx(
-              "flex h-8 w-5 flex-none items-center justify-center border-r transition",
-              isSelected
-                ? "border-[var(--workspace-accent)] text-[var(--workspace-accent)]"
-                : "border-transparent text-[var(--workspace-text-faint)] opacity-60 hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-accent)] group-hover:opacity-100",
-              isDisabled ? "cursor-not-allowed opacity-40" : "cursor-grab active:cursor-grabbing",
-            )}
-          >
-            <span className="grid grid-cols-2 gap-[2px]">
-              {Array.from({ length: 6 }).map((_, index) => (
-                <span
-                  key={index}
-                  className="h-[2px] w-[2px] rounded-full bg-current"
-                />
-              ))}
-            </span>
-          </button>
-          <div className="flex h-8 w-5 flex-none items-center justify-center text-[var(--workspace-text-faint)]">
+        <div className="flex min-h-8 items-center gap-1.5">
+          <div className="flex h-8 w-4 flex-none items-center justify-center text-[var(--workspace-text-faint)]">
             {isLocked ||
             ((isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder) ? null : node.kind === "task" ? (
               <button
@@ -5533,6 +5482,59 @@ function OutlineNodeEditor({
                 onSelect={applyLinkSuggestion}
               />
             ) : null}
+          </div>
+          <div className="ml-1 flex flex-none items-center gap-1">
+            <button
+              type="button"
+              data-selection-gutter="true"
+              aria-label="Drag line"
+              draggable={!isDisabled}
+              onClick={() => onSelectSingleNode(node._id)}
+              onDragStart={handleDragHandleStart}
+              onDragEnd={() => {
+                setDropTarget(null);
+                onSetActiveDraggedNodeId(null);
+                onSetActiveDraggedNodePayload(null);
+              }}
+              className={clsx(
+                "flex h-8 w-5 flex-none items-center justify-center border-l transition",
+                isSelected
+                  ? "border-[var(--workspace-accent)] text-[var(--workspace-accent)]"
+                  : "border-transparent text-[var(--workspace-text-faint)] opacity-60 hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-accent)] group-hover:opacity-100",
+                isDisabled ? "cursor-not-allowed opacity-40" : "cursor-grab active:cursor-grabbing",
+              )}
+            >
+              <span className="grid grid-cols-2 gap-[2px]">
+                {Array.from({ length: 6 }).map((_, index) => (
+                  <span
+                    key={index}
+                    className="h-[2px] w-[2px] rounded-full bg-current"
+                  />
+                ))}
+              </span>
+            </button>
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={handleToggleCollapsed}
+              disabled={!hasChildren}
+              aria-label={isCollapsed ? "Expand nested items" : "Collapse nested items"}
+              className={clsx(
+                "flex h-10 w-8 flex-none items-center justify-center text-base leading-none transition",
+                hasChildren
+                  ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text)]"
+                  : "cursor-default text-transparent",
+              )}
+            >
+              <span
+                className={clsx(
+                  "inline-block transition-transform",
+                  isCollapsed ? "rotate-0" : "rotate-90",
+                )}
+              >
+                ▸
+              </span>
+            </button>
           </div>
         </div>
       </div>
