@@ -4910,7 +4910,6 @@ function LinkedTextPreview({
   onOpenTag,
   isDisabled,
   className,
-  previewRef,
 }: {
   segments: LinkPreviewSegment[];
   onFocusLine: () => void;
@@ -4919,11 +4918,9 @@ function LinkedTextPreview({
   onOpenTag: (tag: string) => void;
   isDisabled: boolean;
   className?: string;
-  previewRef?: RefObject<HTMLDivElement | null>;
 }) {
   return (
     <div
-      ref={previewRef}
       className={clsx(
         "absolute inset-0 z-10 whitespace-pre-wrap break-words px-0",
         isDisabled ? "cursor-default" : "cursor-text",
@@ -5036,17 +5033,14 @@ function PlainTextPreview({
   onFocusLine,
   isDisabled,
   className,
-  previewRef,
 }: {
   text: string;
   onFocusLine: () => void;
   isDisabled: boolean;
   className?: string;
-  previewRef?: RefObject<HTMLDivElement | null>;
 }) {
   return (
     <div
-      ref={previewRef}
       className={clsx(
         "absolute inset-0 z-10 whitespace-pre-wrap break-words px-0",
         isDisabled ? "cursor-default" : "cursor-text",
@@ -5059,6 +5053,79 @@ function PlainTextPreview({
         event.preventDefault();
         onFocusLine();
       }}
+    >
+      {text}
+    </div>
+  );
+}
+
+function LinkPreviewMeasure({
+  segments,
+  className,
+  measureRef,
+}: {
+  segments: LinkPreviewSegment[];
+  className?: string;
+  measureRef?: RefObject<HTMLDivElement | null>;
+}) {
+  return (
+    <div
+      ref={measureRef}
+      aria-hidden="true"
+      className={clsx(
+        "pointer-events-none absolute left-0 right-0 top-0 invisible whitespace-pre-wrap break-words px-0",
+        className,
+      )}
+    >
+      {segments.map((segment) =>
+        segment.kind === "text" ? (
+          <span key={segment.key}>{segment.text}</span>
+        ) : segment.kind === "tag" ? (
+          <span
+            key={segment.key}
+            className="inline text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px]"
+          >
+            {segment.text}
+          </span>
+        ) : (
+          <span
+            key={segment.key}
+            className={clsx(
+              "inline-flex items-center text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px]",
+              segment.archived ? "opacity-75" : "",
+              !segment.resolved ? "opacity-80" : "",
+            )}
+          >
+            <span>{segment.text}</span>
+            {segment.pageTypeLabel ? (
+              <span className="ml-1 text-[10px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)] no-underline">
+                {segment.pageTypeLabel}
+              </span>
+            ) : null}
+          </span>
+        ),
+      )}
+    </div>
+  );
+}
+
+function PlainTextMeasure({
+  text,
+  className,
+  measureRef,
+}: {
+  text: string;
+  className?: string;
+  measureRef?: RefObject<HTMLDivElement | null>;
+}) {
+  return (
+    <div
+      ref={measureRef}
+      aria-hidden="true"
+      className={clsx(
+        "pointer-events-none absolute left-0 right-0 top-0 invisible whitespace-pre-wrap break-words px-0",
+        className,
+      )}
     >
       {text}
     </div>
@@ -5492,7 +5559,7 @@ function OutlineNodeEditor({
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
   const [dropTarget, setDropTarget] = useState<NodeDropTarget | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const previewContentRef = useRef<HTMLDivElement>(null);
+  const previewMeasureRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef(draft);
   const markerHoldTimeoutRef = useRef<number | null>(null);
   const markerLongPressTriggeredRef = useRef(false);
@@ -5617,6 +5684,7 @@ function OutlineNodeEditor({
   const previewTypographyClass = clsx(
     baseTypographyClass,
     hasPageLinkPreview && !isTaskRow && !isHeadingNoteRow ? "py-1" : "",
+    hasPageLinkPreview && isTaskRow ? "py-0.5" : "",
   );
   const [shouldRenderChildren, setShouldRenderChildren] = useState(hasChildren && !isCollapsed);
   const [isChildrenExpanded, setIsChildrenExpanded] = useState(hasChildren && !isCollapsed);
@@ -5632,7 +5700,7 @@ function OutlineNodeEditor({
     }
 
     if (!isFocused && hasDisplayPreview) {
-      const previewMeasure = previewContentRef.current;
+      const previewMeasure = previewMeasureRef.current;
       if (previewMeasure) {
         textarea.style.height = "0px";
         const previewHeight = Math.ceil(previewMeasure.getBoundingClientRect().height);
@@ -6895,8 +6963,34 @@ function OutlineNodeEditor({
               )}
               />
             {hasPageLinkPreview ? (
+              <LinkPreviewMeasure
+                measureRef={previewMeasureRef}
+                segments={linkPreviewSegments}
+                className={clsx(
+                  previewTypographyClass,
+                  node.taskStatus === "done"
+                    ? "text-[var(--workspace-text-faint)] line-through"
+                    : isDimmedLine
+                      ? "text-[var(--workspace-text-subtle)]"
+                      : "text-[var(--workspace-text)]",
+                )}
+              />
+            ) : hasPlainTextPreview ? (
+              <PlainTextMeasure
+                measureRef={previewMeasureRef}
+                text={displayDraft}
+                className={clsx(
+                  previewTypographyClass,
+                  node.taskStatus === "done"
+                    ? "text-[var(--workspace-text-faint)] line-through"
+                    : isDimmedLine
+                      ? "text-[var(--workspace-text-subtle)]"
+                      : "text-[var(--workspace-text)]",
+                )}
+              />
+            ) : null}
+            {hasPageLinkPreview ? (
               <LinkedTextPreview
-                previewRef={previewContentRef}
                 segments={linkPreviewSegments}
                 onFocusLine={focusLineEditor}
                 onOpenPage={onOpenPage}
@@ -6914,7 +7008,6 @@ function OutlineNodeEditor({
               />
             ) : hasPlainTextPreview ? (
               <PlainTextPreview
-                previewRef={previewContentRef}
                 text={displayDraft}
                 onFocusLine={focusLineEditor}
                 isDisabled={isDisabled || activeDraggedNodeId !== null}
