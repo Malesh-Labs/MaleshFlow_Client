@@ -6134,6 +6134,7 @@ function OutlineNodeEditor({
     const cursorEnd = event.currentTarget.selectionEnd ?? cursorStart;
 
     if (cursorStart < rawValue.length || cursorStart !== cursorEnd) {
+      const isStartOfLineSplit = cursorStart === 0 && cursorEnd === 0;
       const headDraft = rawValue.slice(0, cursorStart);
       const tailDraft = rawValue.slice(cursorEnd);
       const segmentFallback = {
@@ -6145,7 +6146,13 @@ function OutlineNodeEditor({
           | "cancelled"
           | null,
       };
-      const normalizedHead = parseSplitSegmentDraft(headDraft, segmentFallback);
+      const normalizedHead = isStartOfLineSplit
+        ? {
+            text: "",
+            kind: "note" as const,
+            taskStatus: null,
+          }
+        : parseSplitSegmentDraft(headDraft, segmentFallback);
       const normalizedTail = parseSplitSegmentDraft(tailDraft, segmentFallback);
       const result = (await splitNode({
         ownerKey,
@@ -6195,6 +6202,13 @@ function OutlineNodeEditor({
         history.pushUndoEntry(updateEntry);
       } else if (createEntry) {
         history.pushUndoEntry(createEntry);
+      }
+
+      if (isStartOfLineSplit) {
+        window.requestAnimationFrame(() => {
+          textareaRef.current?.focus();
+          textareaRef.current?.setSelectionRange(0, 0);
+        });
       }
       return;
     }
