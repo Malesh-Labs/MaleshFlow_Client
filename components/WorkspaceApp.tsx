@@ -4018,6 +4018,7 @@ function ConfiguredWorkspace({
                           onOpenNode={handleOpenLinkedNode}
                           onOpenTag={openFindPaletteForQuery}
                           compact
+                          showHeader={false}
                         />
                       ) : (
                         <div className="text-xs uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
@@ -4604,6 +4605,7 @@ function PageSection({
   action = null,
   statusMessage = "",
   compact = false,
+  showHeader = true,
 }: {
   title: string;
   sectionNode: TreeNode | null;
@@ -4645,6 +4647,7 @@ function PageSection({
   action?: ReactNode;
   statusMessage?: string;
   compact?: boolean;
+  showHeader?: boolean;
 }) {
   return (
     <div
@@ -4654,23 +4657,31 @@ function PageSection({
           : undefined
       }
     >
-      <div className="flex items-center justify-between gap-4">
-        <h2
-          className={clsx(
-            compact
-              ? "text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]"
-              : "text-2xl font-semibold tracking-tight",
-          )}
-        >
-          {title}
-        </h2>
-        {action}
-      </div>
-      {statusMessage ? (
-        <p className="mt-2 text-sm text-[var(--workspace-text-subtle)]">{statusMessage}</p>
+      {showHeader ? (
+        <>
+          <div className="flex items-center justify-between gap-4">
+            <h2
+              className={clsx(
+                compact
+                  ? "text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]"
+                  : "text-2xl font-semibold tracking-tight",
+              )}
+            >
+              {title}
+            </h2>
+            {action}
+          </div>
+          {statusMessage ? (
+            <p className="mt-2 text-sm text-[var(--workspace-text-subtle)]">{statusMessage}</p>
+          ) : null}
+          <div className="mt-2 border-b border-[var(--workspace-border)]" />
+        </>
       ) : null}
-      <div className="mt-2 border-b border-[var(--workspace-border)]" />
-      <div className={clsx(compact ? "mt-3 space-y-1" : "mt-4 space-y-1")}>
+      <div
+        className={clsx(
+          showHeader ? (compact ? "mt-3 space-y-1" : "mt-4 space-y-1") : "space-y-1",
+        )}
+      >
         <OutlineNodeList
           nodes={sectionNode?.children ?? []}
           ownerKey={ownerKey}
