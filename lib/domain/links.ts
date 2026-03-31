@@ -8,6 +8,12 @@ export type ExtractedLink =
       kind: "node";
       label: string;
       targetNodeRef: string;
+    }
+  | {
+      kind: "external";
+      label: string;
+      text: string;
+      targetUrl: string;
     };
 
 export type ExtractedLinkMatch = {
@@ -18,6 +24,7 @@ export type ExtractedLinkMatch = {
 
 const WIKI_LINK_PATTERN = /\[\[([^[\]]+)\]\]/g;
 const NODE_LINK_PATTERN = /\(\(([a-zA-Z0-9_-]+)\)\)/g;
+const MARKDOWN_LINK_PATTERN = /\[([^\]]+)\]\(([^)\s]+)\)/g;
 const NODE_WIKI_TARGET_PATTERN = /^(.*?)\|node:([a-zA-Z0-9_-]+)$/;
 
 export function extractLinkMatches(text: string) {
@@ -76,6 +83,25 @@ export function extractLinkMatches(text: string) {
     });
   }
 
+  for (const match of text.matchAll(MARKDOWN_LINK_PATTERN)) {
+    const labelText = match[1]?.trim();
+    const targetUrl = match[2]?.trim();
+    if (!labelText || !targetUrl) {
+      continue;
+    }
+
+    matches.push({
+      start: match.index ?? 0,
+      end: (match.index ?? 0) + match[0].length,
+      link: {
+        kind: "external",
+        label: match[0],
+        text: labelText,
+        targetUrl,
+      },
+    });
+  }
+
   return matches.sort((left, right) => left.start - right.start);
 }
 
@@ -86,6 +112,10 @@ export function extractLinks(text: string) {
 function getReadableLinkLabel(match: ExtractedLinkMatch) {
   if (match.link.kind === "page") {
     return match.link.targetPageTitle;
+  }
+
+  if (match.link.kind === "external") {
+    return match.link.text;
   }
 
   if (match.link.label.startsWith("[[")) {

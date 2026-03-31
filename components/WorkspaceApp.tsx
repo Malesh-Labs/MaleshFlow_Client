@@ -129,7 +129,8 @@ type LinkPreviewSegment =
       nodeId: Id<"nodes"> | null;
       archived: boolean;
       resolved: boolean;
-      linkKind: "page" | "node";
+      linkKind: "page" | "node" | "external";
+      href?: string | null;
       pageTypeLabel?: string | null;
     }
   | {
@@ -641,7 +642,9 @@ function resolveExplicitKnowledgeLinkTargets(
       continue;
     }
 
-    linkedNodeIds.add(match.link.targetNodeRef as Id<"nodes">);
+    if (match.link.kind === "node") {
+      linkedNodeIds.add(match.link.targetNodeRef as Id<"nodes">);
+    }
   }
 
   return {
@@ -870,6 +873,19 @@ function buildLinkPreviewSegments(
         value: match.value,
         normalizedValue: match.normalizedValue,
       });
+    } else if (match.link.kind === "external") {
+      segments.push({
+        key: `external:${match.start}`,
+        kind: "link",
+        text: match.link.text,
+        pageId: null,
+        nodeId: null,
+        archived: false,
+        resolved: true,
+        linkKind: "external",
+        href: normalizeExternalHref(match.link.targetUrl),
+        pageTypeLabel: null,
+      });
     } else if (match.link.kind === "page") {
       const page = pagesByTitle.get(normalizePageTitleKey(match.link.targetPageTitle));
       segments.push({
@@ -881,6 +897,7 @@ function buildLinkPreviewSegments(
         archived: page?.archived ?? false,
         resolved: Boolean(page),
         linkKind: "page",
+        href: null,
         pageTypeLabel: page ? getPageTypeDisplayLabel(page) : null,
       });
     } else {
@@ -900,6 +917,7 @@ function buildLinkPreviewSegments(
         archived: targetNode?.pageArchived ?? false,
         resolved: Boolean(targetNode?.pageId),
         linkKind: "node",
+        href: null,
         pageTypeLabel: null,
       });
     }
@@ -916,6 +934,23 @@ function buildLinkPreviewSegments(
   }
 
   return hasRenderableToken ? segments : [];
+}
+
+function normalizeExternalHref(value: string) {
+  const trimmedValue = value.trim();
+  if (trimmedValue.length === 0) {
+    return trimmedValue;
+  }
+
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmedValue)) {
+    return trimmedValue;
+  }
+
+  if (trimmedValue.startsWith("//")) {
+    return `https:${trimmedValue}`;
+  }
+
+  return `https://${trimmedValue}`;
 }
 
 function collectChildren(nodes: TreeNode[], excludedIds: Set<string>) {
@@ -4896,7 +4931,25 @@ function LinkedTextPreview({
             {segment.text}
           </button>
         ) : (
-          segment.pageId !== null ? (
+          segment.linkKind === "external" ? (
+            <a
+              key={segment.key}
+              href={segment.href ?? "#"}
+              target="_blank"
+              rel="noreferrer noopener"
+              data-inline-preview-interactive="true"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.stopPropagation();
+              }}
+              className="inline cursor-pointer text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px] transition hover:text-[var(--workspace-brand-hover)]"
+            >
+              {segment.text}
+            </a>
+          ) : segment.pageId !== null ? (
             <button
               key={segment.key}
               type="button"

@@ -136,6 +136,10 @@ export async function syncLinksForNode(
   const timestamp = Date.now();
 
   for (const link of links) {
+    if (link.kind === "external") {
+      continue;
+    }
+
     if (link.kind === "page") {
       const slug = slugify(link.targetPageTitle, { lower: true, strict: true }) || "untitled";
       const targetPage = await getPageBySlug(db, slug);

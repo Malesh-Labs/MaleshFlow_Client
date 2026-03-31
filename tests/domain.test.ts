@@ -11,7 +11,7 @@ import {
 
 test("extractLinks finds wiki links and node refs", () => {
   const links = extractLinks(
-    "Plan [[Launch Page]] after reviewing ((node_123)) and [[Attachment note|node:node_456]].",
+    "Plan [[Launch Page]] after reviewing ((node_123)), [[Attachment note|node:node_456]], and [OpenAI](openai.com).",
   );
   assert.deepEqual(links, [
     {
@@ -29,11 +29,19 @@ test("extractLinks finds wiki links and node refs", () => {
       label: "[[Attachment note|node:node_456]]",
       targetNodeRef: "node_456",
     },
+    {
+      kind: "external",
+      label: "[OpenAI](openai.com)",
+      text: "OpenAI",
+      targetUrl: "openai.com",
+    },
   ]);
 });
 
 test("extractLinkMatches preserves ranges for inline rendering", () => {
-  const matches = extractLinkMatches("See [[Launch Page]] and [[Attachment note|node:node_456]].");
+  const matches = extractLinkMatches(
+    "See [[Launch Page]], [[Attachment note|node:node_456]], and [OpenAI](openai.com).",
+  );
 
   assert.deepEqual(
     matches.map((match) => ({
@@ -50,10 +58,16 @@ test("extractLinkMatches preserves ranges for inline rendering", () => {
         label: "[[Launch Page]]",
       },
       {
-        start: 24,
-        end: 57,
+        start: 21,
+        end: 54,
         kind: "node",
         label: "[[Attachment note|node:node_456]]",
+      },
+      {
+        start: 60,
+        end: 80,
+        kind: "external",
+        label: "[OpenAI](openai.com)",
       },
     ],
   );
