@@ -6915,7 +6915,12 @@ function OutlineNodeEditor({
               </button>
             )}
           </div>
-          <div className="relative flex min-h-0 min-w-0 flex-1 items-start">
+          <div
+            className={clsx(
+              "relative flex min-h-0 min-w-0 flex-1 items-start",
+              isHeadingNoteRow ? "self-stretch" : "",
+            )}
+          >
             {isVisualSeparatorLine && !shouldRevealVisualPlaceholder ? (
               <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 border-t border-[var(--workspace-border)]" />
             ) : null}
