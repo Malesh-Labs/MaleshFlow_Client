@@ -5422,15 +5422,12 @@ function WorkspaceAiDock({
                     );
                   }}
                   onKeyDown={handleKeyDown}
-                  placeholder="Ask AI about your workspace. Use [[Page]] or [[Node|node:id]] to pin specific context…"
+                  placeholder="Ask AI…"
                   rows={1}
                   disabled={isLoading}
                   tabIndex={isCollapsed ? -1 : 0}
                   className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-[15px] leading-6 outline-none"
                 />
-                <p className="mt-1 text-[11px] leading-5 text-[var(--workspace-text-faint)]">
-                  This chat persists between sessions. Linked pages and nodes in `[[...]]` are sent as explicit context before semantic retrieval.
-                </p>
               </div>
               <button
                 type="button"
