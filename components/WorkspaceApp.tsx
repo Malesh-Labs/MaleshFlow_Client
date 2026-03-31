@@ -1305,7 +1305,7 @@ function getHeadingRowMinHeightClass(level: 1 | 2 | 3 | null) {
   }
 
   if (level === 3) {
-    return "min-h-[2.2rem]";
+    return "min-h-[1.8rem]";
   }
 
   return "min-h-0";
@@ -1321,7 +1321,7 @@ function getHeadingMarkerOffsetClass(level: 1 | 2 | 3 | null) {
   }
 
   if (level === 3) {
-    return "pt-[0.45rem]";
+    return "pt-[0.28rem]";
   }
 
   return "";
@@ -1337,7 +1337,7 @@ function getHeadingControlOffsetClass(level: 1 | 2 | 3 | null) {
   }
 
   if (level === 3) {
-    return "pt-[0.2rem]";
+    return "pt-[0.08rem]";
   }
 
   return "";
