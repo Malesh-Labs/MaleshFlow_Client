@@ -5054,6 +5054,7 @@ function OutlineNodeEditor({
   const draftRef = useRef(draft);
   const markerHoldTimeoutRef = useRef<number | null>(null);
   const markerLongPressTriggeredRef = useRef(false);
+  const childrenAnimationFrameRef = useRef<number | null>(null);
 
   const nodeMeta = getNodeMeta(node);
   const isLocked = nodeMeta.locked === true;
@@ -5153,6 +5154,8 @@ function OutlineNodeEditor({
   const hasChildren = node.children.length > 0;
   const hasNestedGrandchildren = node.children.some((child) => child.children.length > 0);
   const isCollapsed = hasChildren && collapsedNodeIds.has(node._id);
+  const [shouldRenderChildren, setShouldRenderChildren] = useState(hasChildren && !isCollapsed);
+  const [isChildrenExpanded, setIsChildrenExpanded] = useState(hasChildren && !isCollapsed);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -5186,6 +5189,49 @@ function OutlineNodeEditor({
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (childrenAnimationFrameRef.current !== null) {
+      window.cancelAnimationFrame(childrenAnimationFrameRef.current);
+      childrenAnimationFrameRef.current = null;
+    }
+
+    if (!hasChildren) {
+      if (shouldRenderChildren || isChildrenExpanded) {
+        childrenAnimationFrameRef.current = window.requestAnimationFrame(() => {
+          setShouldRenderChildren(false);
+          setIsChildrenExpanded(false);
+          childrenAnimationFrameRef.current = null;
+        });
+      }
+      return;
+    }
+
+    if (isCollapsed) {
+      if (isChildrenExpanded) {
+        childrenAnimationFrameRef.current = window.requestAnimationFrame(() => {
+          setIsChildrenExpanded(false);
+          childrenAnimationFrameRef.current = null;
+        });
+      }
+      return;
+    }
+
+    if (!shouldRenderChildren || !isChildrenExpanded) {
+      childrenAnimationFrameRef.current = window.requestAnimationFrame(() => {
+        setShouldRenderChildren(true);
+        setIsChildrenExpanded(true);
+        childrenAnimationFrameRef.current = null;
+      });
+    }
+
+    return () => {
+      if (childrenAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(childrenAnimationFrameRef.current);
+        childrenAnimationFrameRef.current = null;
+      }
+    };
+  }, [hasChildren, isChildrenExpanded, isCollapsed, shouldRenderChildren]);
 
   const applyLinkSuggestion = (suggestion: LinkSuggestion) => {
     if (!activeLinkToken) {
@@ -6395,41 +6441,63 @@ function OutlineNodeEditor({
           </div>
         </div>
       </div>
-      {!isCollapsed ? (
-        <OutlineNodeList
-          nodes={node.children}
-          ownerKey={ownerKey}
-          pageId={pageId}
-          parentNodeId={node._id as Id<"nodes">}
-          nodeMap={nodeMap}
-          createNodesBatch={createNodesBatch}
-          updateNode={updateNode}
-          moveNode={moveNode}
-          splitNode={splitNode}
-          replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
-          setNodeTreeArchived={setNodeTreeArchived}
-          depth={depth + 1}
-          isPageReadOnly={isPageReadOnly}
-          collapsedNodeIds={collapsedNodeIds}
-          selectedNodeIds={selectedNodeIds}
-          onToggleNodeCollapsed={onToggleNodeCollapsed}
-          onSelectSingleNode={onSelectSingleNode}
-          onSelectNodeRange={onSelectNodeRange}
-          pendingInsertedComposer={pendingInsertedComposer}
-          onOpenInsertedComposer={onOpenInsertedComposer}
-          onClearInsertedComposer={onClearInsertedComposer}
-          onBeginTextEditing={onBeginTextEditing}
-          activeDraggedNodeId={activeDraggedNodeId}
-          activeDraggedNodePayload={activeDraggedNodePayload}
-          onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
-          onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
-          onSelectionStart={onSelectionStart}
-          onSelectionExtend={onSelectionExtend}
-          pagesByTitle={pagesByTitle}
-          onOpenPage={onOpenPage}
-          onOpenNode={onOpenNode}
-          mobileIndentStep={mobileIndentStep}
-        />
+      {hasChildren && (shouldRenderChildren || !isCollapsed) ? (
+        <div
+          className={clsx(
+            "grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none",
+            isChildrenExpanded
+              ? "grid-rows-[1fr] opacity-100"
+              : "pointer-events-none grid-rows-[0fr] opacity-0",
+          )}
+          onTransitionEnd={(event) => {
+            if (event.target !== event.currentTarget) {
+              return;
+            }
+
+            if (!isCollapsed || isChildrenExpanded) {
+              return;
+            }
+
+            setShouldRenderChildren(false);
+          }}
+        >
+          <div aria-hidden={!isChildrenExpanded} className="min-h-0 overflow-hidden">
+            <OutlineNodeList
+              nodes={node.children}
+              ownerKey={ownerKey}
+              pageId={pageId}
+              parentNodeId={node._id as Id<"nodes">}
+              nodeMap={nodeMap}
+              createNodesBatch={createNodesBatch}
+              updateNode={updateNode}
+              moveNode={moveNode}
+              splitNode={splitNode}
+              replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+              setNodeTreeArchived={setNodeTreeArchived}
+              depth={depth + 1}
+              isPageReadOnly={isPageReadOnly}
+              collapsedNodeIds={collapsedNodeIds}
+              selectedNodeIds={selectedNodeIds}
+              onToggleNodeCollapsed={onToggleNodeCollapsed}
+              onSelectSingleNode={onSelectSingleNode}
+              onSelectNodeRange={onSelectNodeRange}
+              pendingInsertedComposer={pendingInsertedComposer}
+              onOpenInsertedComposer={onOpenInsertedComposer}
+              onClearInsertedComposer={onClearInsertedComposer}
+              onBeginTextEditing={onBeginTextEditing}
+              activeDraggedNodeId={activeDraggedNodeId}
+              activeDraggedNodePayload={activeDraggedNodePayload}
+              onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
+              onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
+              onSelectionStart={onSelectionStart}
+              onSelectionExtend={onSelectionExtend}
+              pagesByTitle={pagesByTitle}
+              onOpenPage={onOpenPage}
+              onOpenNode={onOpenNode}
+              mobileIndentStep={mobileIndentStep}
+            />
+          </div>
+        </div>
       ) : null}
       {pendingSiblingComposerVisible ? (
         <InlineComposer
