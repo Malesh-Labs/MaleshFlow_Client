@@ -4991,6 +4991,7 @@ function OutlineNodeEditor({
     pendingSiblingComposerVisible ? pendingInsertedComposer?.focusToken ?? 0 : 0;
   const isDraggingAnotherNode = activeDraggedNodeId !== null && activeDraggedNodeId !== node._id;
   const hasChildren = node.children.length > 0;
+  const hasNestedGrandchildren = node.children.some((child) => child.children.length > 0);
   const isCollapsed = hasChildren && collapsedNodeIds.has(node._id);
 
   useEffect(() => {
@@ -6208,7 +6209,10 @@ function OutlineNodeEditor({
             >
               <span
                 className={clsx(
-                  "inline-block transition-transform",
+                  "inline-flex h-5 w-5 items-center justify-center rounded-full transition-transform",
+                  hasNestedGrandchildren
+                    ? "border border-[var(--workspace-border-hover)]"
+                    : "",
                   isCollapsed ? "rotate-0" : "rotate-90",
                 )}
               >
