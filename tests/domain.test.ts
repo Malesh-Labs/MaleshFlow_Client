@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { extractLinkMatches, extractLinks } from "../lib/domain/links";
+import { parseHeadingSyntax } from "../lib/domain/displaySyntax";
 import { extractTagMatches, extractTags } from "../lib/domain/tags";
 import { parseMarkdownFile, serializePageToMarkdown } from "../lib/domain/markdown";
 import {
@@ -106,6 +107,25 @@ test("extractTagMatches preserves ranges for inline rendering", () => {
       },
     ],
   );
+});
+
+test("parseHeadingSyntax recognizes markdown-style heading prefixes", () => {
+  assert.deepEqual(parseHeadingSyntax("# Big heading"), {
+    level: 1,
+    text: "Big heading",
+  });
+  assert.deepEqual(parseHeadingSyntax("## Medium heading"), {
+    level: 2,
+    text: "Medium heading",
+  });
+  assert.deepEqual(parseHeadingSyntax("### Small heading"), {
+    level: 3,
+    text: "Small heading",
+  });
+  assert.deepEqual(parseHeadingSyntax("#not a heading"), {
+    level: null,
+    text: "#not a heading",
+  });
 });
 
 test("parseMarkdownFile converts headings, bullets, and tasks into nodes", () => {

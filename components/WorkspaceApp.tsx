@@ -24,6 +24,7 @@ import {
 import { createPortal } from "react-dom";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
+import { parseHeadingSyntax } from "@/lib/domain/displaySyntax";
 import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
 import { extractLinkMatches } from "@/lib/domain/links";
 import { extractTagMatches } from "@/lib/domain/tags";
@@ -1263,6 +1264,22 @@ function isDimmedSyntaxLine(value: string) {
 
 function stripDimmedSyntaxPrefix(value: string) {
   return value.replace(/^(\s*)%%\s*/, "$1");
+}
+
+function getHeadingPreviewClass(level: 1 | 2 | 3 | null) {
+  if (level === 1) {
+    return "py-1.5 text-[1.9rem] leading-[2.3rem] font-semibold tracking-tight";
+  }
+
+  if (level === 2) {
+    return "py-1 text-[1.45rem] leading-[1.9rem] font-semibold tracking-tight";
+  }
+
+  if (level === 3) {
+    return "py-0.5 text-[1.1rem] leading-[1.55rem] font-semibold tracking-tight";
+  }
+
+  return "";
 }
 
 function buildNodePlacement(
@@ -5466,10 +5483,21 @@ function OutlineNodeEditor({
   const isVisualEmptyLine = normalizedDraft === ".";
   const isVisualSeparatorLine = normalizedDraft === "---";
   const isDimmedLine = isDimmedSyntaxLine(draft);
-  const displayDraft = useMemo(
+  const syntaxDisplayDraft = useMemo(
     () => (isDimmedLine ? stripDimmedSyntaxPrefix(draft) : draft),
     [draft, isDimmedLine],
   );
+  const headingSyntax = useMemo(
+    () =>
+      node.kind === "note"
+        ? parseHeadingSyntax(syntaxDisplayDraft)
+        : { level: null, text: syntaxDisplayDraft },
+    [node.kind, syntaxDisplayDraft],
+  );
+  const displayDraft = headingSyntax.text;
+  const headingPreviewClass = getHeadingPreviewClass(headingSyntax.level);
+  const isHeadingLine = headingSyntax.level !== null;
+  const shouldHideNoteMarker = isHeadingLine && !isFocused;
   const shouldRevealVisualPlaceholder = isFocused || isSelected;
   const nodeLinkTargetIds = useMemo(
     () =>
@@ -5508,7 +5536,7 @@ function OutlineNodeEditor({
     !isFocused &&
     !isVisualEmptyLine &&
     !isVisualSeparatorLine &&
-    isDimmedLine &&
+    (isDimmedLine || isHeadingLine) &&
     !hasPageLinkPreview;
   const hasDisplayPreview = hasPageLinkPreview || hasPlainTextPreview;
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
@@ -6733,6 +6761,7 @@ function OutlineNodeEditor({
                 title="Convert this note into a task."
                 className={clsx(
                   "flex h-4 w-4 flex-none cursor-grab items-center justify-center transition hover:text-[var(--workspace-brand)] active:cursor-grabbing",
+                  shouldHideNoteMarker ? "opacity-0" : "",
                   isDisabled ? "cursor-not-allowed opacity-60" : "",
                 )}
               >
@@ -6776,6 +6805,7 @@ function OutlineNodeEditor({
               className={clsx(
                 "w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 text-[15px] outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]",
                 isTaskRow ? "py-0 leading-[1.35rem]" : "py-1 leading-6",
+                hasDisplayPreview ? headingPreviewClass : "",
                 isDraggingAnotherNode ? "pointer-events-none select-none" : "",
                 node.taskStatus === "done" ? "text-[var(--workspace-text-faint)] line-through" : "",
                 isDimmedLine && node.taskStatus !== "done"
@@ -6797,6 +6827,7 @@ function OutlineNodeEditor({
                 isDisabled={isDisabled || activeDraggedNodeId !== null}
                 className={clsx(
                   isTaskRow ? "py-0 leading-[1.35rem]" : "",
+                  headingPreviewClass,
                   node.taskStatus === "done"
                     ? "text-[var(--workspace-text-faint)] line-through"
                     : isDimmedLine
@@ -6811,6 +6842,7 @@ function OutlineNodeEditor({
                 isDisabled={isDisabled || activeDraggedNodeId !== null}
                 className={clsx(
                   isTaskRow ? "py-0 leading-[1.35rem]" : "",
+                  headingPreviewClass,
                   node.taskStatus === "done"
                     ? "text-[var(--workspace-text-faint)] line-through"
                     : isDimmedLine
