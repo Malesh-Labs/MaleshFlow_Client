@@ -1185,6 +1185,45 @@ function isDimmedSyntaxLine(value: string) {
   return value.trim().startsWith("%%");
 }
 
+function stripDimmedSyntaxPrefix(value: string) {
+  return value.replace(/^(\s*)%%\s*/, "$1");
+}
+
+function stripDimPrefixFromSegments(segments: LinkPreviewSegment[]) {
+  let shouldStripPrefix = true;
+
+  return segments
+    .map((segment) => {
+      if (!shouldStripPrefix) {
+        return segment;
+      }
+
+      if (segment.kind !== "text") {
+        return segment;
+      }
+
+      const nextText = stripDimmedSyntaxPrefix(segment.text);
+      if (nextText !== segment.text) {
+        shouldStripPrefix = false;
+        if (nextText.length === 0) {
+          return null;
+        }
+
+        return {
+          ...segment,
+          text: nextText,
+        } satisfies LinkPreviewSegment;
+      }
+
+      if (segment.text.length > 0) {
+        shouldStripPrefix = false;
+      }
+
+      return segment;
+    })
+    .filter((segment): segment is LinkPreviewSegment => segment !== null);
+}
+
 function buildNodePlacement(
   pageId: Id<"pages">,
   parentNodeId: Id<"nodes"> | null,
@@ -4545,6 +4584,37 @@ function LinkedTextPreview({
   );
 }
 
+function PlainTextPreview({
+  text,
+  onFocusLine,
+  isDisabled,
+  className,
+}: {
+  text: string;
+  onFocusLine: () => void;
+  isDisabled: boolean;
+  className?: string;
+}) {
+  return (
+    <div
+      className={clsx(
+        "absolute inset-0 z-10 whitespace-pre-wrap break-words px-0 py-1 text-[15px] leading-6",
+        isDisabled ? "cursor-default" : "cursor-text",
+        className,
+      )}
+      onMouseDown={(event) => {
+        if (isDisabled) {
+          return;
+        }
+        event.preventDefault();
+        onFocusLine();
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
 function WorkspaceAiDock({
   ownerKey,
   draft,
@@ -4958,15 +5028,26 @@ function OutlineNodeEditor({
     }
     return next;
   }, [resolvedNodeLinks]);
-  const linkPreviewSegments = useMemo(
-    () => buildLinkPreviewSegments(draft, pagesByTitle, nodeTargetsById),
-    [draft, nodeTargetsById, pagesByTitle],
+  const linkPreviewSegments = useMemo(() => {
+    const segments = buildLinkPreviewSegments(draft, pagesByTitle, nodeTargetsById);
+    return isDimmedLine ? stripDimPrefixFromSegments(segments) : segments;
+  }, [draft, isDimmedLine, nodeTargetsById, pagesByTitle]);
+  const displayDraft = useMemo(
+    () => (isDimmedLine ? stripDimmedSyntaxPrefix(draft) : draft),
+    [draft, isDimmedLine],
   );
   const hasPageLinkPreview =
     !isFocused &&
     !isVisualEmptyLine &&
     !isVisualSeparatorLine &&
     linkPreviewSegments.length > 0;
+  const hasPlainTextPreview =
+    !isFocused &&
+    !isVisualEmptyLine &&
+    !isVisualSeparatorLine &&
+    isDimmedLine &&
+    !hasPageLinkPreview;
+  const hasDisplayPreview = hasPageLinkPreview || hasPlainTextPreview;
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
   const linkTargetResults = useQuery(
     api.workspace.searchLinkTargets,
@@ -6168,7 +6249,7 @@ function OutlineNodeEditor({
                 (isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder
                   ? "text-transparent"
                   : "",
-                hasPageLinkPreview ? "text-transparent caret-transparent" : "",
+                hasDisplayPreview ? "text-transparent caret-transparent" : "",
               )}
             />
             {hasPageLinkPreview ? (
@@ -6177,6 +6258,19 @@ function OutlineNodeEditor({
                 onFocusLine={focusLineEditor}
                 onOpenPage={onOpenPage}
                 onOpenNode={onOpenNode}
+                isDisabled={isDisabled || activeDraggedNodeId !== null}
+                className={clsx(
+                  node.taskStatus === "done"
+                    ? "text-[var(--workspace-text-faint)] line-through"
+                    : isDimmedLine
+                      ? "text-[var(--workspace-text-subtle)]"
+                      : "text-[var(--workspace-text)]",
+                )}
+              />
+            ) : hasPlainTextPreview ? (
+              <PlainTextPreview
+                text={displayDraft}
+                onFocusLine={focusLineEditor}
                 isDisabled={isDisabled || activeDraggedNodeId !== null}
                 className={clsx(
                   node.taskStatus === "done"
