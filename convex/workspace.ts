@@ -736,6 +736,7 @@ export const createPage = mutation({
     pageType: v.optional(
       v.union(
         v.literal("default"),
+        v.literal("task"),
         v.literal("model"),
         v.literal("journal"),
         v.literal("scratchpad"),
@@ -816,6 +817,27 @@ export const createPage = mutation({
         sourceMeta: {
           sourceType: "system",
           sectionSlot: "recentExamples",
+          locked: true,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    if (args.pageType === "task") {
+      await ctx.db.insert("nodes", {
+        pageId,
+        parentNodeId: null,
+        position: 1024,
+        text: "Sidebar",
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
+        archived: false,
+        sourceMeta: {
+          sourceType: "system",
+          sectionSlot: "taskSidebar",
           locked: true,
         },
         createdAt: now,
@@ -906,6 +928,66 @@ export const createPage = mutation({
     await enqueuePageRootEmbeddingRefresh(ctx, pageId);
 
     return pageId;
+  },
+});
+
+export const ensureTaskPageSidebarSection = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived) {
+      throw new Error("Page not found.");
+    }
+
+    const pageSourceMeta = getPageSourceMeta(page);
+    const isTaskPage =
+      pageSourceMeta.pageType === "task" || pageSourceMeta.sidebarSection === "Tasks";
+    if (!isTaskPage) {
+      throw new Error("Only task pages can have a task sidebar section.");
+    }
+
+    const nodes = await listPageNodes(ctx.db, args.pageId);
+    const existingSection = nodes.find((node) => {
+      const sourceMeta =
+        node.sourceMeta && typeof node.sourceMeta === "object"
+          ? (node.sourceMeta as Record<string, unknown>)
+          : null;
+      return sourceMeta?.sectionSlot === "taskSidebar";
+    });
+
+    if (existingSection) {
+      return existingSection._id;
+    }
+
+    const rootNodes = nodes.filter((node) => node.parentNodeId === null);
+    const position = Math.max(...rootNodes.map((node) => node.position), 0) + 1024;
+    const now = getTimestamp();
+    const nodeId = await ctx.db.insert("nodes", {
+      pageId: args.pageId,
+      parentNodeId: null,
+      position,
+      text: "Sidebar",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      archived: false,
+      sourceMeta: {
+        sourceType: "system",
+        sectionSlot: "taskSidebar",
+        locked: true,
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    await enqueuePageRootEmbeddingRefresh(ctx, args.pageId);
+    return nodeId;
   },
 });
 

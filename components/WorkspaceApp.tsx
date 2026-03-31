@@ -66,7 +66,7 @@ const MODEL_REGENERATE_PROMPT =
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
-type PageType = "default" | "model" | "journal" | "scratchpad";
+type PageType = "default" | "task" | "model" | "journal" | "scratchpad";
 type PageDoc = Doc<"pages">;
 type PageTreeResult = {
   page: PageDoc;
@@ -184,6 +184,7 @@ type WorkspaceErrorBoundaryState = {
 };
 
 type SectionSlot =
+  | "taskSidebar"
   | "model"
   | "recentExamples"
   | "journalThoughts"
@@ -427,7 +428,9 @@ function getPageMeta(page: Doc<"pages"> | null | undefined) {
         ? "journal"
         : sourceMeta.pageType === "scratchpad"
           ? "scratchpad"
-        : "default";
+          : sourceMeta.pageType === "task" || sourceMeta.sidebarSection === "Tasks"
+            ? "task"
+          : "default";
 
   return { sidebarSection, pageType };
 }
@@ -1399,6 +1402,9 @@ function ConfiguredWorkspace({
 
   const createPage = useMutation(api.workspace.createPage);
   const ensureSidebarPage = useMutation(api.workspace.ensureSidebarPage);
+  const ensureTaskPageSidebarSection = useMutation(
+    api.workspace.ensureTaskPageSidebarSection,
+  );
   const renamePage = useMutation(api.workspace.renamePage);
   const archivePage = useMutation(api.workspace.archivePage);
   const deletePageForever = useMutation(api.workspace.deletePageForever);
@@ -1423,6 +1429,7 @@ function ConfiguredWorkspace({
   const lastPaletteModeRef = useRef<PaletteMode>("pages");
   const hasResolvedInitialPageSelection = useRef(false);
   const hasRequestedSidebarPage = useRef(false);
+  const hasRequestedTaskSidebarSection = useRef(new Set<string>());
 
   const clearNodeSelection = useCallback(() => {
     setSelectedNodeIds(new Set());
@@ -1519,12 +1526,18 @@ function ConfiguredWorkspace({
 
   const modelSection = findSectionNode(tree, "model");
   const recentExamplesSection = findSectionNode(tree, "recentExamples");
+  const taskSidebarSection = findSectionNode(tree, "taskSidebar");
   const journalThoughtsSection = findSectionNode(tree, "journalThoughts");
   const journalFeedbackSection = findSectionNode(tree, "journalFeedback");
   const scratchpadLiveSection = findSectionNode(tree, "scratchpadLive");
   const scratchpadPreviousSection = findSectionNode(tree, "scratchpadPrevious");
   const genericRoots =
-    pageMeta.pageType === "model"
+    pageMeta.pageType === "task"
+      ? collectChildren(
+          tree,
+          new Set([taskSidebarSection?._id].filter(Boolean) as string[]),
+        )
+      : pageMeta.pageType === "model"
       ? collectChildren(
           tree,
           new Set([modelSection?._id, recentExamplesSection?._id].filter(Boolean) as string[]),
@@ -1545,6 +1558,9 @@ function ConfiguredWorkspace({
             )
           : tree;
   const sectionDepthOffset = isMobileLayout ? 0 : 1;
+  const taskVisibleRoots = [taskSidebarSection].filter(
+    (node): node is TreeNode => Boolean(node),
+  );
   const modelVisibleRoots = [modelSection, recentExamplesSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
@@ -1555,7 +1571,9 @@ function ConfiguredWorkspace({
     (node): node is TreeNode => Boolean(node),
   );
   const pageVisibleRows =
-    pageMeta.pageType === "model"
+    pageMeta.pageType === "task"
+      ? flattenTreeNodes([...genericRoots, ...taskVisibleRoots], collapsedNodeIds)
+      : pageMeta.pageType === "model"
       ? flattenTreeNodes([...modelVisibleRoots, ...genericRoots], collapsedNodeIds)
       : pageMeta.pageType === "journal"
         ? flattenTreeNodes([...journalVisibleRoots, ...genericRoots], collapsedNodeIds)
@@ -1753,6 +1771,7 @@ function ConfiguredWorkspace({
   useEffect(() => {
     if (!ownerKey || !isOwnerKeyValid) {
       hasRequestedSidebarPage.current = false;
+      hasRequestedTaskSidebarSection.current.clear();
       setSidebarBootstrapError("");
       setShowSidebarDiagnostics(false);
       return;
@@ -1777,6 +1796,37 @@ function ConfiguredWorkspace({
       setSidebarBootstrapError("");
     }
   }, [ensureSidebarPage, isOwnerKeyValid, ownerKey, sidebarTree]);
+
+  useEffect(() => {
+    if (!ownerKey || !isOwnerKeyValid || !selectedPage || pageMeta.pageType !== "task") {
+      return;
+    }
+
+    if (taskSidebarSection) {
+      hasRequestedTaskSidebarSection.current.delete(selectedPage._id as string);
+      return;
+    }
+
+    const pageId = selectedPage._id as string;
+    if (hasRequestedTaskSidebarSection.current.has(pageId)) {
+      return;
+    }
+
+    hasRequestedTaskSidebarSection.current.add(pageId);
+    void ensureTaskPageSidebarSection({
+      ownerKey,
+      pageId: selectedPage._id,
+    }).catch(() => {
+      hasRequestedTaskSidebarSection.current.delete(pageId);
+    });
+  }, [
+    ensureTaskPageSidebarSection,
+    isOwnerKeyValid,
+    ownerKey,
+    pageMeta.pageType,
+    selectedPage,
+    taskSidebarSection,
+  ]);
 
   useEffect(() => {
     if (!isSidebarQueryLoading) {
@@ -2928,6 +2978,8 @@ function ConfiguredWorkspace({
       const pageType: PageType =
         section === "Models"
           ? "model"
+          : section === "Tasks"
+            ? "task"
           : section === "Journal"
             ? "journal"
             : section === "Scratchpads"
@@ -3651,7 +3703,94 @@ function ConfiguredWorkspace({
                   }
                 }}
               >
-                {pageMeta.pageType === "model" ? (
+                {pageMeta.pageType === "task" ? (
+                  <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start">
+                    <div className="min-w-0 space-y-1">
+                      <OutlineNodeList
+                        nodes={genericRoots}
+                        ownerKey={ownerKey}
+                        pageId={selectedPage._id}
+                        nodeMap={nodeMap}
+                        createNodesBatch={createNodesBatch}
+                        updateNode={updateNode}
+                        moveNode={moveNode}
+                        splitNode={splitNode}
+                        replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                        setNodeTreeArchived={setNodeTreeArchived}
+                        isPageReadOnly={isPageArchived}
+                        collapsedNodeIds={collapsedNodeIds}
+                        selectedNodeIds={selectedNodeIds}
+                        onToggleNodeCollapsed={toggleNodeCollapsed}
+                        onSelectSingleNode={selectSingleNode}
+                        onSelectNodeRange={selectNodeRange}
+                        pendingInsertedComposer={pendingInsertedComposer}
+                        onOpenInsertedComposer={openInsertedComposer}
+                        onClearInsertedComposer={clearInsertedComposer}
+                        onBeginTextEditing={clearNodeSelection}
+                        activeDraggedNodeId={activeDraggedNodeId}
+                        activeDraggedNodePayload={activeDraggedNodePayload}
+                        onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                        onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                        onSelectionStart={beginNodeSelection}
+                        onSelectionExtend={extendNodeSelection}
+                        pagesByTitle={pagesByTitle}
+                        onOpenPage={handleSelectPage}
+                        onOpenNode={handleOpenLinkedNode}
+                      />
+                      <InlineComposer
+                        ownerKey={ownerKey}
+                        pageId={selectedPage._id}
+                        parentNodeId={null}
+                        afterNodeId={genericRoots[genericRoots.length - 1]?._id as Id<"nodes"> | undefined}
+                        createNodesBatch={createNodesBatch}
+                        readOnly={isPageArchived}
+                        depth={0}
+                        onBeginTextEditing={clearNodeSelection}
+                      />
+                    </div>
+                    <aside className="min-w-0 border-t border-[var(--workspace-border-subtle)] pt-6 lg:sticky lg:top-6 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+                      {taskSidebarSection ? (
+                        <PageSection
+                          title="Sidebar"
+                          sectionNode={taskSidebarSection}
+                          ownerKey={ownerKey}
+                          pageId={selectedPage._id}
+                          nodeMap={nodeMap}
+                          createNodesBatch={createNodesBatch}
+                          updateNode={updateNode}
+                          moveNode={moveNode}
+                          splitNode={splitNode}
+                          replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                          setNodeTreeArchived={setNodeTreeArchived}
+                          isPageReadOnly={isPageArchived}
+                          collapsedNodeIds={collapsedNodeIds}
+                          selectedNodeIds={selectedNodeIds}
+                          onToggleNodeCollapsed={toggleNodeCollapsed}
+                          onSelectSingleNode={selectSingleNode}
+                          onSelectNodeRange={selectNodeRange}
+                          pendingInsertedComposer={pendingInsertedComposer}
+                          onOpenInsertedComposer={openInsertedComposer}
+                          onClearInsertedComposer={clearInsertedComposer}
+                          onBeginTextEditing={clearNodeSelection}
+                          activeDraggedNodeId={activeDraggedNodeId}
+                          activeDraggedNodePayload={activeDraggedNodePayload}
+                          onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                          onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                          onSelectionStart={beginNodeSelection}
+                          onSelectionExtend={extendNodeSelection}
+                          pagesByTitle={pagesByTitle}
+                          onOpenPage={handleSelectPage}
+                          onOpenNode={handleOpenLinkedNode}
+                          compact
+                        />
+                      ) : (
+                        <div className="text-xs uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
+                          Preparing sidebar…
+                        </div>
+                      )}
+                    </aside>
+                  </div>
+                ) : pageMeta.pageType === "model" ? (
                   <div className="divide-y divide-[var(--workspace-border-subtle)]">
                     <div className="pb-8">
                       <PageSection
@@ -4230,6 +4369,7 @@ function PageSection({
   mobileIndentStep = 0,
   action = null,
   statusMessage = "",
+  compact = false,
 }: {
   title: string;
   sectionNode: TreeNode | null;
@@ -4269,6 +4409,7 @@ function PageSection({
   mobileIndentStep?: number;
   action?: ReactNode;
   statusMessage?: string;
+  compact?: boolean;
 }) {
   const lastChild = sectionNode
     ? sectionNode.children[sectionNode.children.length - 1] ?? null
@@ -4283,14 +4424,22 @@ function PageSection({
       }
     >
       <div className="flex items-center justify-between gap-4">
-        <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
+        <h2
+          className={clsx(
+            compact
+              ? "text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]"
+              : "text-2xl font-semibold tracking-tight",
+          )}
+        >
+          {title}
+        </h2>
         {action}
       </div>
       {statusMessage ? (
         <p className="mt-2 text-sm text-[var(--workspace-text-subtle)]">{statusMessage}</p>
       ) : null}
       <div className="mt-2 border-b border-[var(--workspace-border)]" />
-      <div className="mt-4 space-y-1">
+      <div className={clsx(compact ? "mt-3 space-y-1" : "mt-4 space-y-1")}>
         <OutlineNodeList
           nodes={sectionNode?.children ?? []}
           ownerKey={ownerKey}
