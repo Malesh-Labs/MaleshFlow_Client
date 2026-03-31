@@ -3092,6 +3092,28 @@ function ConfiguredWorkspace({
           }
 
           if (selectedIndices.length !== 1) {
+            const edgeIndex =
+              direction === 1
+                ? selectedIndices[selectedIndices.length - 1]!
+                : selectedIndices[0]!;
+            let nextIndex = edgeIndex + direction;
+
+            while (nextIndex >= 0 && nextIndex < visibleNodeOrder.length) {
+              const candidateNodeId = visibleNodeOrder[nextIndex];
+              if (candidateNodeId && !selectedNodeIds.has(candidateNodeId)) {
+                clearNodeSelection();
+                window.setTimeout(() => {
+                  const target = document.querySelector<HTMLElement>(
+                    `[data-node-id="${candidateNodeId}"] textarea:not([disabled])`,
+                  );
+                  focusElementAtEnd(target as HTMLTextAreaElement | null);
+                }, 0);
+                return;
+              }
+              nextIndex += direction;
+            }
+
+            clearNodeSelection();
             return;
           }
 
