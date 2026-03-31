@@ -3554,9 +3554,6 @@ function ConfiguredWorkspace({
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                     Sidebar
                   </p>
-                  <p className="text-[11px] text-[var(--workspace-text-faint)]">
-                    Use `[[Page]]` links to build your map.
-                  </p>
                 </div>
                 {sidebarTree ? (
                   <div className="space-y-1">
@@ -3698,7 +3695,7 @@ function ConfiguredWorkspace({
                         <button
                           type="button"
                           onClick={() => setIsUncategorizedSectionCollapsed((current) => !current)}
-                          className="flex h-7 w-7 items-center justify-center border border-[var(--workspace-border-control)] text-xs font-semibold text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                          className="flex h-8 w-8 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold leading-none text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
                           aria-label={
                             showUncategorizedSectionContent
                               ? "Collapse uncategorized pages"
@@ -3743,7 +3740,7 @@ function ConfiguredWorkspace({
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                       Tags
                     </p>
-                    <span className="text-xs font-semibold text-[var(--workspace-text-faint)]">
+                    <span className="inline-flex h-5 w-5 items-center justify-center text-sm font-semibold leading-none text-[var(--workspace-text-faint)]">
                       {isTagsSectionCollapsed ? "+" : "−"}
                     </span>
                   </button>
@@ -3785,7 +3782,7 @@ function ConfiguredWorkspace({
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                       Archive
                     </p>
-                    <span className="text-xs font-semibold text-[var(--workspace-text-faint)]">
+                    <span className="inline-flex h-5 w-5 items-center justify-center text-sm font-semibold leading-none text-[var(--workspace-text-faint)]">
                       {showArchiveSectionContent ? "−" : "+"}
                     </span>
                   </button>
@@ -3857,9 +3854,6 @@ function ConfiguredWorkspace({
                     >
                       Reset Local State
                     </button>
-                    <p className="text-xs leading-5 text-[var(--workspace-text-faint)]">
-                      Clears saved browser state for this site and reloads.
-                    </p>
                     <button
                       type="button"
                       onClick={() => setOwnerKey("")}
