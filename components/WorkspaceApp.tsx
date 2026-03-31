@@ -944,27 +944,34 @@ function parseNodeDraft(draft: string) {
     return { shouldDelete: true as const };
   }
 
-  const doneMatch = trimmed.match(/^\[x\]\s*(.*)$/i);
+  const dimPrefix = trimmed.match(/^%%\s*/)?.[0] ?? "";
+  const content = dimPrefix ? trimmed.slice(dimPrefix.length) : trimmed;
+
+  if (content.trim().length === 0) {
+    return { shouldDelete: true as const };
+  }
+
+  const doneMatch = content.match(/^\[x\]\s*(.*)$/i);
   if (doneMatch) {
     const text = doneMatch[1]?.trim() ?? "";
     return text.length === 0
       ? { shouldDelete: true as const }
       : {
           shouldDelete: false as const,
-          text,
+          text: `${dimPrefix}${text}`,
           kind: "task" as const,
           taskStatus: "done" as const,
         };
   }
 
-  const todoMatch = trimmed.match(/^\[\s\]\s*(.*)$/);
+  const todoMatch = content.match(/^\[\s\]\s*(.*)$/);
   if (todoMatch) {
     const text = todoMatch[1]?.trim() ?? "";
     return text.length === 0
       ? { shouldDelete: true as const }
       : {
           shouldDelete: false as const,
-          text,
+          text: `${dimPrefix}${text}`,
           kind: "task" as const,
           taskStatus: "todo" as const,
         };
@@ -990,27 +997,33 @@ function parseNodeDraftWithFallback(
     return { shouldDelete: true as const };
   }
 
-  const doneMatch = trimmed.match(/^\[x\]\s*(.*)$/i);
+  const dimPrefix = trimmed.match(/^%%\s*/)?.[0] ?? "";
+  const content = dimPrefix ? trimmed.slice(dimPrefix.length) : trimmed;
+  if (content.trim().length === 0) {
+    return { shouldDelete: true as const };
+  }
+
+  const doneMatch = content.match(/^\[x\]\s*(.*)$/i);
   if (doneMatch) {
     const text = doneMatch[1]?.trim() ?? "";
     return text.length === 0
       ? { shouldDelete: true as const }
       : {
           shouldDelete: false as const,
-          text,
+          text: `${dimPrefix}${text}`,
           kind: "task" as const,
           taskStatus: "done" as const,
         };
   }
 
-  const todoMatch = trimmed.match(/^\[\s\]\s*(.*)$/);
+  const todoMatch = content.match(/^\[\s\]\s*(.*)$/);
   if (todoMatch) {
     const text = todoMatch[1]?.trim() ?? "";
     return text.length === 0
       ? { shouldDelete: true as const }
       : {
           shouldDelete: false as const,
-          text,
+          text: `${dimPrefix}${text}`,
           kind: "task" as const,
           taskStatus: "todo" as const,
         };
@@ -1034,19 +1047,22 @@ function parseSplitSegmentDraft(
     taskStatus: "todo" | "in_progress" | "done" | "cancelled" | null;
   },
 ) {
-  const doneMatch = draft.match(/^\[x\]\s?(.*)$/i);
+  const dimPrefix = draft.match(/^%%\s*/)?.[0] ?? "";
+  const content = dimPrefix ? draft.slice(dimPrefix.length) : draft;
+
+  const doneMatch = content.match(/^\[x\]\s?(.*)$/i);
   if (doneMatch) {
     return {
-      text: doneMatch[1] ?? "",
+      text: `${dimPrefix}${doneMatch[1] ?? ""}`,
       kind: "task" as const,
       taskStatus: "done" as const,
     };
   }
 
-  const todoMatch = draft.match(/^\[\s\]\s?(.*)$/);
+  const todoMatch = content.match(/^\[\s\]\s?(.*)$/);
   if (todoMatch) {
     return {
-      text: todoMatch[1] ?? "",
+      text: `${dimPrefix}${todoMatch[1] ?? ""}`,
       kind: "task" as const,
       taskStatus: "todo" as const,
     };
@@ -1093,6 +1109,10 @@ function toNodeValueSnapshot(
     kind: value.kind as "note" | "task",
     taskStatus: (value.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
   };
+}
+
+function isDimmedSyntaxLine(value: string) {
+  return value.trim().startsWith("%%");
 }
 
 function buildNodePlacement(
@@ -4907,6 +4927,7 @@ function OutlineNodeEditor({
   const normalizedDraft = draft.trim();
   const isVisualEmptyLine = normalizedDraft === ".";
   const isVisualSeparatorLine = normalizedDraft === "---";
+  const isDimmedLine = isDimmedSyntaxLine(draft);
   const shouldRevealVisualPlaceholder = isFocused || isSelected;
   const nodeLinkTargetIds = useMemo(
     () =>
@@ -6136,6 +6157,9 @@ function OutlineNodeEditor({
                 "w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-1 text-[15px] leading-6 outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]",
                 isDraggingAnotherNode ? "pointer-events-none select-none" : "",
                 node.taskStatus === "done" ? "text-[var(--workspace-text-faint)] line-through" : "",
+                isDimmedLine && node.taskStatus !== "done"
+                  ? "text-[var(--workspace-text-subtle)]"
+                  : "",
                 (isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder
                   ? "text-transparent"
                   : "",
@@ -6152,7 +6176,9 @@ function OutlineNodeEditor({
                 className={clsx(
                   node.taskStatus === "done"
                     ? "text-[var(--workspace-text-faint)] line-through"
-                    : "text-[var(--workspace-text)]",
+                    : isDimmedLine
+                      ? "text-[var(--workspace-text-subtle)]"
+                      : "text-[var(--workspace-text)]",
                 )}
               />
             ) : null}
