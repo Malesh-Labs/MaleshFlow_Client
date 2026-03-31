@@ -6318,10 +6318,12 @@ function InlineComposer({
   const history = useWorkspaceHistory();
   const [draft, setDraft] = useState("");
   const [isFocused, setIsFocused] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [caretPosition, setCaretPosition] = useState<number | null>(null);
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRef = useRef(draft);
+  const isSubmittingRef = useRef(false);
   const editorId = getComposerEditorId(
     pageId,
     parentNodeId ?? null,
@@ -6408,7 +6410,7 @@ function InlineComposer({
   };
 
   const submitLines = async (value: string) => {
-    if (readOnly) {
+    if (readOnly || isSubmittingRef.current) {
       return;
     }
 
@@ -6437,38 +6439,46 @@ function InlineComposer({
       return;
     }
 
-    const createdNodes = (await createNodesBatch({
-      ownerKey,
-      pageId,
-      nodes: batch,
-    })) as Doc<"nodes">[];
+    isSubmittingRef.current = true;
+    setIsSubmitting(true);
 
-    const createdSnapshots = createdNodes.map((createdNode, index) =>
-      toCreatedNodeSnapshot(
-        createdNode,
-        index === 0
-          ? (afterNodeId ?? null)
-          : createdNodes[index - 1]!._id,
-      ),
-    );
+    try {
+      const createdNodes = (await createNodesBatch({
+        ownerKey,
+        pageId,
+        nodes: batch,
+      })) as Doc<"nodes">[];
 
-    history.resetTrackedValue(editorId, editorTarget, "");
-    setDraft("");
-    onSubmitted?.();
-    history.pushUndoEntry({
-      type: "create_nodes",
-      pageId,
-      nodes: createdSnapshots,
-      focusAfterUndoId: editorId,
-      focusAfterRedoId:
-        createdSnapshots.length > 0
-          ? getNodeEditorId(createdSnapshots[createdSnapshots.length - 1]!.nodeId)
-          : editorId,
-    });
+      const createdSnapshots = createdNodes.map((createdNode, index) =>
+        toCreatedNodeSnapshot(
+          createdNode,
+          index === 0
+            ? (afterNodeId ?? null)
+            : createdNodes[index - 1]!._id,
+        ),
+      );
+
+      history.resetTrackedValue(editorId, editorTarget, "");
+      setDraft("");
+      onSubmitted?.();
+      history.pushUndoEntry({
+        type: "create_nodes",
+        pageId,
+        nodes: createdSnapshots,
+        focusAfterUndoId: editorId,
+        focusAfterRedoId:
+          createdSnapshots.length > 0
+            ? getNodeEditorId(createdSnapshots[createdSnapshots.length - 1]!.nodeId)
+            : editorId,
+      });
+    } finally {
+      isSubmittingRef.current = false;
+      setIsSubmitting(false);
+    }
   };
 
   const handleKeyDown = async (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
-    if (readOnly) {
+    if (readOnly || isSubmittingRef.current) {
       return;
     }
 
@@ -6511,7 +6521,7 @@ function InlineComposer({
   };
 
   const handlePaste = async (event: TextareaClipboardEvent<HTMLTextAreaElement>) => {
-    if (readOnly) {
+    if (readOnly || isSubmittingRef.current) {
       return;
     }
 
@@ -6527,6 +6537,10 @@ function InlineComposer({
 
   const handleBlur = () => {
     setIsFocused(false);
+
+    if (isSubmittingRef.current) {
+      return;
+    }
 
     const currentDraft = draftRef.current;
     if (readOnly || currentDraft.trim().length === 0) {
@@ -6574,10 +6588,15 @@ function InlineComposer({
         onPaste={(event) => void handlePaste(event)}
         onKeyDown={(event) => void handleKeyDown(event)}
         placeholder={placeholder}
-        disabled={readOnly}
+        disabled={readOnly || isSubmitting}
         rows={1}
-        className="w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-0.5 text-[15px] leading-6 outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]"
+        className="w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-0.5 pr-8 text-[15px] leading-6 outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]"
       />
+      {isSubmitting ? (
+        <div className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-[var(--workspace-text-faint)]">
+          <span className="block h-3.5 w-3.5 animate-spin rounded-full border border-current border-t-transparent" />
+        </div>
+      ) : null}
       {isFocused && activeLinkToken ? (
         <LinkAutocompleteMenu
           anchorRef={textareaRef}
