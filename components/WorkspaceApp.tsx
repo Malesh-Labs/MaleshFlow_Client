@@ -5076,8 +5076,10 @@ function getNodeTypographyClass({
   }
 
   return clsx(
-    "py-1",
-    headingLevel === null ? "text-[15px] leading-6" : getHeadingPreviewClass(headingLevel),
+    "py-0.5",
+    headingLevel === null
+      ? "text-[15px] leading-[1.45rem]"
+      : getHeadingPreviewClass(headingLevel),
   );
 }
 
@@ -6765,11 +6767,11 @@ function OutlineNodeEditor({
             <span className="absolute -left-1.5 -top-[5px] h-2.5 w-2.5 rounded-full bg-[var(--workspace-brand)]" />
           </div>
         ) : null}
-        <div className={clsx("flex items-start gap-1.5", isTaskRow ? "min-h-0" : "min-h-8")}>
+        <div className="flex min-h-0 items-start gap-1.5">
           <div
             className={clsx(
               "flex w-4 flex-none items-start justify-center text-[var(--workspace-text-faint)]",
-              isTaskRow ? "pt-[2px]" : "min-h-8 pt-[7px]",
+              isTaskRow ? "pt-[2px]" : "pt-[5px]",
             )}
           >
             {isLocked ||
@@ -6833,7 +6835,7 @@ function OutlineNodeEditor({
               </button>
             )}
           </div>
-          <div className={clsx("relative flex min-w-0 flex-1 items-start", isTaskRow ? "min-h-0" : "min-h-8")}>
+          <div className="relative flex min-h-0 min-w-0 flex-1 items-start">
             {isVisualSeparatorLine && !shouldRevealVisualPlaceholder ? (
               <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 border-t border-[var(--workspace-border)]" />
             ) : null}
@@ -6924,7 +6926,7 @@ function OutlineNodeEditor({
               />
             ) : null}
           </div>
-          <div className={clsx("ml-1 flex flex-none items-start gap-1", isTaskRow ? "pt-[1px]" : "pt-[3px]")}>
+          <div className={clsx("ml-1 flex flex-none items-start gap-1", isTaskRow ? "pt-[1px]" : "pt-[2px]")}>
             <button
               type="button"
               onMouseDown={(event) => event.preventDefault()}
