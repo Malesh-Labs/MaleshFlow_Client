@@ -6490,6 +6490,22 @@ function InlineComposer({
       return;
     }
 
+    if (event.key === "Escape") {
+      event.preventDefault();
+
+      if (draft.trim().length === 0) {
+        onCancel?.();
+        return;
+      }
+
+      const textarea = event.currentTarget;
+      await submitLines(draft);
+      window.requestAnimationFrame(() => {
+        textarea.blur();
+      });
+      return;
+    }
+
     if (activeLinkToken && linkSuggestions.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -6517,7 +6533,7 @@ function InlineComposer({
     }
 
     if (event.key !== "Enter") {
-      if ((event.key === "Escape" || event.key === "Backspace") && draft.trim().length === 0) {
+      if (event.key === "Backspace" && draft.trim().length === 0) {
         event.preventDefault();
         onCancel?.();
       }
