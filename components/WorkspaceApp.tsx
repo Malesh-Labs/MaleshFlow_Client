@@ -5495,6 +5495,7 @@ function OutlineNodeEditor({
     const upperZone = relativeY < bounds.height * 0.35;
     const nestingThreshold = 86;
     const wantsNest = !upperZone && relativeX > nestingThreshold;
+    const isLastSibling = siblingIndex === siblings.length - 1;
 
     if (wantsNest) {
       return {
@@ -5505,6 +5506,10 @@ function OutlineNodeEditor({
         lineSide: "bottom",
         lineIndentOffset: 30,
       };
+    }
+
+    if (!upperZone && !isLastSibling) {
+      return null;
     }
 
     return {
