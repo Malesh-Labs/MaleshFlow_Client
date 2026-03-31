@@ -4692,8 +4692,7 @@ function WorkspaceAiDock({
     linkSuggestions.length === 0
       ? 0
       : Math.min(linkHighlightIndex, linkSuggestions.length - 1);
-  const showHistoryPanel = !isCollapsed && (messages.length > 0 || error.length > 0 || isLoading);
-  const showComposer = !isCollapsed;
+  const showHistoryPanel = messages.length > 0 || error.length > 0 || isLoading;
 
   useEffect(() => {
     autoResizeTextarea(textareaRef.current);
@@ -4791,106 +4790,117 @@ function WorkspaceAiDock({
               {isCollapsed ? "Expand" : "Collapse"}
             </button>
           </div>
-          {showHistoryPanel ? (
+          <div
+            className={clsx(
+              "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
+              isCollapsed
+                ? "pointer-events-none grid-rows-[0fr] opacity-0"
+                : "grid-rows-[1fr] opacity-100",
+            )}
+          >
             <div
-              ref={historyRef}
-              className="max-h-[38vh] overflow-y-auto border-b border-[var(--workspace-border-subtle)] px-4 py-4 md:px-6"
+              aria-hidden={isCollapsed}
+              className="min-h-0 overflow-hidden"
             >
-              <div className="space-y-4">
-                {messages.map((message) => {
-                  const metadata =
-                    message.role === "assistant"
-                      ? readWorkspaceKnowledgeMessageMetadata(message)
-                      : null;
-                  const isUser = message.role === "user";
+              {showHistoryPanel ? (
+                <div
+                  ref={historyRef}
+                  className="max-h-[38vh] overflow-y-auto border-b border-[var(--workspace-border-subtle)] px-4 py-4 md:px-6"
+                >
+                  <div className="space-y-4">
+                    {messages.map((message) => {
+                      const metadata =
+                        message.role === "assistant"
+                          ? readWorkspaceKnowledgeMessageMetadata(message)
+                          : null;
+                      const isUser = message.role === "user";
 
-                  return (
-                    <div
-                      key={message._id}
-                      className={clsx(
-                        "flex",
-                        isUser ? "justify-end" : "justify-start",
-                      )}
-                    >
-                      <div
-                        className={clsx(
-                          "max-w-3xl border px-4 py-3",
-                          isUser
-                            ? "border-[var(--workspace-brand)] bg-[color-mix(in_srgb,var(--workspace-brand)_14%,transparent)]"
-                            : "border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)]",
-                        )}
-                      >
-                        <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
-                          {isUser ? "You" : "AI"}
-                        </p>
-                        <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[var(--workspace-text)]">
-                          {message.text}
-                        </p>
-                        {!isUser && metadata ? (
-                          <>
-                            <div className="mt-4 space-y-2">
-                              {metadata.sources.map((source, index) => (
-                                <button
-                                  key={`${message._id}:${source.nodeId}:${index}`}
-                                  type="button"
-                                  onClick={() => onOpenSource(source)}
-                                  className="block w-full border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface)] px-4 py-3 text-left transition hover:border-[var(--workspace-border-hover)] hover:bg-[var(--workspace-surface-hover)]"
-                                >
-                                  <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
-                                    {source.nodeText || "(empty line)"}
-                                  </span>
-                                  <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                                    {source.pageTitle ?? "Unknown page"} • {source.nodeKind === "task" ? "Task" : "Note"}
-                                  </span>
-                                  {source.content && source.content.trim() !== source.nodeText.trim() ? (
-                                    <span className="mt-2 block whitespace-pre-wrap text-xs leading-6 text-[var(--workspace-text-subtle)]">
-                                      {source.content}
-                                    </span>
-                                  ) : null}
-                                </button>
-                              ))}
-                            </div>
-                            <div className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--workspace-border-subtle)] pt-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                              <span>{metadata.model}</span>
-                              <span>{metadata.error ? "OpenAI issue surfaced" : "Grounded with linked + semantic context"}</span>
-                            </div>
-                          </>
-                        ) : null}
+                      return (
+                        <div
+                          key={message._id}
+                          className={clsx(
+                            "flex",
+                            isUser ? "justify-end" : "justify-start",
+                          )}
+                        >
+                          <div
+                            className={clsx(
+                              "max-w-3xl border px-4 py-3",
+                              isUser
+                                ? "border-[var(--workspace-brand)] bg-[color-mix(in_srgb,var(--workspace-brand)_14%,transparent)]"
+                                : "border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)]",
+                            )}
+                          >
+                            <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                              {isUser ? "You" : "AI"}
+                            </p>
+                            <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[var(--workspace-text)]">
+                              {message.text}
+                            </p>
+                            {!isUser && metadata ? (
+                              <>
+                                <div className="mt-4 space-y-2">
+                                  {metadata.sources.map((source, index) => (
+                                    <button
+                                      key={`${message._id}:${source.nodeId}:${index}`}
+                                      type="button"
+                                      onClick={() => onOpenSource(source)}
+                                      className="block w-full border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface)] px-4 py-3 text-left transition hover:border-[var(--workspace-border-hover)] hover:bg-[var(--workspace-surface-hover)]"
+                                    >
+                                      <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
+                                        {source.nodeText || "(empty line)"}
+                                      </span>
+                                      <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                                        {source.pageTitle ?? "Unknown page"} • {source.nodeKind === "task" ? "Task" : "Note"}
+                                      </span>
+                                      {source.content && source.content.trim() !== source.nodeText.trim() ? (
+                                        <span className="mt-2 block whitespace-pre-wrap text-xs leading-6 text-[var(--workspace-text-subtle)]">
+                                          {source.content}
+                                        </span>
+                                      ) : null}
+                                    </button>
+                                  ))}
+                                </div>
+                                <div className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--workspace-border-subtle)] pt-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                                  <span>{metadata.model}</span>
+                                  <span>{metadata.error ? "OpenAI issue surfaced" : "Grounded with linked + semantic context"}</span>
+                                </div>
+                              </>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {isLoading ? (
+                      <div className="flex justify-start">
+                        <div className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-4 py-3">
+                          <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                            AI
+                          </p>
+                          <p className="mt-2 text-sm text-[var(--workspace-text-subtle)]">
+                            Thinking…
+                          </p>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-                {isLoading ? (
-                  <div className="flex justify-start">
-                    <div className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-4 py-3">
-                      <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
-                        AI
-                      </p>
-                      <p className="mt-2 text-sm text-[var(--workspace-text-subtle)]">
-                        Thinking…
-                      </p>
-                    </div>
+                    ) : null}
+                    {error ? (
+                      <div className="border border-[var(--workspace-danger)]/40 bg-[color-mix(in_srgb,var(--workspace-danger)_10%,transparent)] px-4 py-3 text-sm text-[var(--workspace-text)]">
+                        <div className="flex items-start justify-between gap-3">
+                          <p className="whitespace-pre-wrap leading-6">{error}</p>
+                          <button
+                            type="button"
+                            onClick={onClearError}
+                            className="border border-[var(--workspace-border-control)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
-                ) : null}
-                {error ? (
-                  <div className="border border-[var(--workspace-danger)]/40 bg-[color-mix(in_srgb,var(--workspace-danger)_10%,transparent)] px-4 py-3 text-sm text-[var(--workspace-text)]">
-                    <div className="flex items-start justify-between gap-3">
-                      <p className="whitespace-pre-wrap leading-6">{error}</p>
-                      <button
-                        type="button"
-                        onClick={onClearError}
-                        className="border border-[var(--workspace-border-control)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                      >
-                        Dismiss
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-          {showComposer ? (
-            <div className="relative flex items-end gap-3 px-4 py-3 md:px-6 md:py-4">
+                </div>
+              ) : null}
+              <div className="relative flex items-end gap-3 px-4 py-3 md:px-6 md:py-4">
               <div className="min-w-0 flex-1">
                 <textarea
                   id={WORKSPACE_AI_DOCK_TEXTAREA_ID}
@@ -4915,6 +4925,7 @@ function WorkspaceAiDock({
                   placeholder="Ask AI about your workspace. Use [[Page]] or [[Node|node:id]] to pin specific context…"
                   rows={1}
                   disabled={isLoading}
+                  tabIndex={isCollapsed ? -1 : 0}
                   className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-[15px] leading-6 outline-none"
                 />
                 <p className="mt-1 text-[11px] leading-5 text-[var(--workspace-text-faint)]">
@@ -4945,8 +4956,9 @@ function WorkspaceAiDock({
                   onSelect={applyLinkSuggestion}
                 />
               ) : null}
+              </div>
             </div>
-          ) : null}
+          </div>
         </div>
       </div>
     </div>
