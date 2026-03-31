@@ -1281,15 +1281,15 @@ function readStoredBoolean(key: string, defaultValue: boolean) {
 
 function getHeadingPreviewClass(level: 1 | 2 | 3 | null) {
   if (level === 1) {
-    return "py-1.5 text-[1.9rem] leading-[2.3rem] font-semibold tracking-tight";
+    return "text-[1.9rem] leading-[2.3rem] font-semibold tracking-tight";
   }
 
   if (level === 2) {
-    return "py-1 text-[1.45rem] leading-[1.9rem] font-semibold tracking-tight";
+    return "text-[1.45rem] leading-[1.9rem] font-semibold tracking-tight";
   }
 
   if (level === 3) {
-    return "py-0.5 text-[1.1rem] leading-[1.55rem] font-semibold tracking-tight";
+    return "text-[1.1rem] leading-[1.55rem] font-semibold tracking-tight";
   }
 
   return "";
@@ -4924,7 +4924,7 @@ function LinkedTextPreview({
     <div
       ref={previewRef}
       className={clsx(
-        "absolute inset-0 z-10 whitespace-pre-wrap break-words px-0 py-1 text-[15px] leading-6",
+        "absolute inset-0 z-10 whitespace-pre-wrap break-words px-0",
         isDisabled ? "cursor-default" : "cursor-text",
         className,
       )}
@@ -5047,7 +5047,7 @@ function PlainTextPreview({
     <div
       ref={previewRef}
       className={clsx(
-        "absolute inset-0 z-10 whitespace-pre-wrap break-words px-0 py-1 text-[15px] leading-6",
+        "absolute inset-0 z-10 whitespace-pre-wrap break-words px-0",
         isDisabled ? "cursor-default" : "cursor-text",
         className,
       )}
@@ -5061,6 +5061,23 @@ function PlainTextPreview({
     >
       {text}
     </div>
+  );
+}
+
+function getNodeTypographyClass({
+  isTaskRow,
+  headingLevel,
+}: {
+  isTaskRow: boolean;
+  headingLevel: 1 | 2 | 3 | null;
+}) {
+  if (isTaskRow) {
+    return "py-0 text-[15px] leading-[1.35rem]";
+  }
+
+  return clsx(
+    "py-1",
+    headingLevel === null ? "text-[15px] leading-6" : getHeadingPreviewClass(headingLevel),
   );
 }
 
@@ -5513,9 +5530,8 @@ function OutlineNodeEditor({
     [node.kind, syntaxDisplayDraft],
   );
   const displayDraft = headingSyntax.text;
-  const headingPreviewClass = getHeadingPreviewClass(headingSyntax.level);
   const isHeadingLine = headingSyntax.level !== null;
-  const shouldHideNoteMarker = isHeadingLine && !isFocused;
+  const shouldHideNoteMarker = false;
   const shouldRevealVisualPlaceholder = isFocused || isSelected;
   const nodeLinkTargetIds = useMemo(
     () =>
@@ -5588,10 +5604,10 @@ function OutlineNodeEditor({
   const hasNestedGrandchildren = node.children.some((child) => child.children.length > 0);
   const isCollapsed = hasChildren && collapsedNodeIds.has(node._id);
   const isTaskRow = node.kind === "task";
-  const previewTypographyClass = clsx(
-    isTaskRow ? "py-0 leading-[1.35rem]" : "py-1 leading-6",
-    headingPreviewClass,
-  );
+  const previewTypographyClass = getNodeTypographyClass({
+    isTaskRow,
+    headingLevel: headingSyntax.level,
+  });
   const [shouldRenderChildren, setShouldRenderChildren] = useState(hasChildren && !isCollapsed);
   const [isChildrenExpanded, setIsChildrenExpanded] = useState(hasChildren && !isCollapsed);
 
