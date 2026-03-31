@@ -6265,8 +6265,8 @@ function OutlineNodeEditor({
             <span className="absolute -left-1.5 -top-[5px] h-2.5 w-2.5 rounded-full bg-[var(--workspace-brand)]" />
           </div>
         ) : null}
-        <div className="flex min-h-8 items-center gap-1.5">
-          <div className="flex h-8 w-4 flex-none items-center justify-center text-[var(--workspace-text-faint)]">
+        <div className="flex min-h-8 items-start gap-1.5">
+          <div className="flex min-h-8 w-4 flex-none items-start justify-center pt-[7px] text-[var(--workspace-text-faint)]">
             {isLocked ||
             ((isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder) ? null : node.kind === "task" ? (
               <button
@@ -6327,7 +6327,7 @@ function OutlineNodeEditor({
               </button>
             )}
           </div>
-          <div className="relative flex min-h-8 min-w-0 flex-1 items-center">
+          <div className="relative flex min-h-8 min-w-0 flex-1 items-start">
             {isVisualSeparatorLine && !shouldRevealVisualPlaceholder ? (
               <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 border-t border-[var(--workspace-border)]" />
             ) : null}
@@ -6412,7 +6412,7 @@ function OutlineNodeEditor({
               />
             ) : null}
           </div>
-          <div className="ml-1 flex flex-none items-center gap-1">
+          <div className="ml-1 flex flex-none items-start gap-1 pt-[3px]">
             <button
               type="button"
               onMouseDown={(event) => event.preventDefault()}
