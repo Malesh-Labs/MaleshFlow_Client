@@ -7071,7 +7071,13 @@ function OutlineNodeEditor({
                   isCollapsed ? "rotate-0" : "rotate-90",
                 )}
               >
-                <span className={hasNestedGrandchildren ? "translate-x-px" : ""}>▸</span>
+                <span
+                  className={
+                    hasNestedGrandchildren ? "translate-x-[1.5px] -translate-y-px" : ""
+                  }
+                >
+                  ▸
+                </span>
               </span>
             </button>
           </div>
