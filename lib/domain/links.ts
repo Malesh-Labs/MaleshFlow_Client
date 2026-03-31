@@ -82,3 +82,54 @@ export function extractLinkMatches(text: string) {
 export function extractLinks(text: string) {
   return extractLinkMatches(text).map((match) => match.link);
 }
+
+function getReadableLinkLabel(match: ExtractedLinkMatch) {
+  if (match.link.kind === "page") {
+    return match.link.targetPageTitle;
+  }
+
+  if (match.link.label.startsWith("[[")) {
+    return match.link.label
+      .slice(2, -2)
+      .replace(/\|node:[a-zA-Z0-9_-]+$/, "")
+      .trim();
+  }
+
+  return "";
+}
+
+function replaceLinkMarkup(
+  text: string,
+  replacer: (match: ExtractedLinkMatch) => string,
+) {
+  const matches = extractLinkMatches(text);
+  if (matches.length === 0) {
+    return text.trim();
+  }
+
+  let cursor = 0;
+  let nextText = "";
+
+  for (const match of matches) {
+    if (match.start > cursor) {
+      nextText += text.slice(cursor, match.start);
+    }
+
+    nextText += replacer(match);
+    cursor = match.end;
+  }
+
+  if (cursor < text.length) {
+    nextText += text.slice(cursor);
+  }
+
+  return nextText.replace(/\s+/g, " ").trim();
+}
+
+export function stripLinkMarkup(text: string) {
+  return replaceLinkMarkup(text, () => "");
+}
+
+export function replaceLinkMarkupWithLabels(text: string) {
+  return replaceLinkMarkup(text, (match) => getReadableLinkLabel(match));
+}

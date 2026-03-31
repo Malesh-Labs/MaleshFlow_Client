@@ -13,6 +13,7 @@ import {
   buildEmbeddingInput,
   buildRootEmbeddingInput,
 } from "../lib/domain/embeddings";
+import { replaceLinkMarkupWithLabels, stripLinkMarkup } from "../lib/domain/links";
 
 const taskMetadataSchema = z.object({
   kind: z.enum(["note", "task"]),
@@ -202,6 +203,8 @@ export const answerWorkspaceQuestion = action({
     assertOwnerKey(args.ownerKey);
 
     const question = args.question.trim();
+    const messageOnlyQuestion = stripLinkMarkup(question);
+    const semanticQuery = replaceLinkMarkupWithLabels(question);
     const model = process.env.OPENAI_CHAT_MODEL ?? "gpt-5-mini";
     if (question.length === 0) {
       return {
@@ -228,15 +231,24 @@ export const answerWorkspaceQuestion = action({
       }>;
     };
 
-    const rawSources = (await runSemanticSearch(ctx, {
-      query: question,
-      limit: args.limit ?? 10,
-    })) as Array<{
-      node: Doc<"nodes">;
-      page: Doc<"pages"> | null;
-      score?: number;
-      content?: string;
-    }>;
+    const hasExplicitLinkedContext =
+      linkedContext.pages.length > 0 || linkedContext.nodes.length > 0;
+
+    const shouldUseSemanticSearch =
+      semanticQuery.length > 0 &&
+      (!hasExplicitLinkedContext || messageOnlyQuestion.length > 0);
+
+    const rawSources = shouldUseSemanticSearch
+      ? ((await runSemanticSearch(ctx, {
+          query: semanticQuery,
+          limit: args.limit ?? 10,
+        })) as Array<{
+          node: Doc<"nodes">;
+          page: Doc<"pages"> | null;
+          score?: number;
+          content?: string;
+        }>)
+      : [];
     const linkedPageSources = linkedContext.pages
       .filter((entry) => entry.representativeNode !== null)
       .map((entry) => ({
@@ -326,12 +338,12 @@ export const answerWorkspaceQuestion = action({
           {
             role: "system",
             content:
-              "Answer the user's question using only the provided knowledge base snippets. If the snippets are insufficient, say so clearly. Keep the answer concise and grounded. Cite source numbers like [1] when helpful.",
+              "Answer the user's question using only the provided knowledge base snippets. If the snippets are insufficient, say so clearly. Keep the answer concise and grounded. Cite source numbers like [1] when helpful. If no explicit question text is provided, summarize the linked context and surface the most important takeaways.",
           },
           {
             role: "user",
             content: [
-              `Question: ${question}`,
+              messageOnlyQuestion.length > 0 ? `Question: ${semanticQuery}` : null,
               explicitLinkedContext.trim().length > 0 ? "" : null,
               explicitLinkedContext.trim().length > 0 ? "Explicitly linked context:" : null,
               explicitLinkedContext.trim().length > 0 ? explicitLinkedContext : null,
