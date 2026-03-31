@@ -4909,6 +4909,7 @@ function LinkedTextPreview({
   onOpenTag,
   isDisabled,
   className,
+  previewRef,
 }: {
   segments: LinkPreviewSegment[];
   onFocusLine: () => void;
@@ -4917,9 +4918,11 @@ function LinkedTextPreview({
   onOpenTag: (tag: string) => void;
   isDisabled: boolean;
   className?: string;
+  previewRef?: RefObject<HTMLDivElement | null>;
 }) {
   return (
     <div
+      ref={previewRef}
       className={clsx(
         "absolute inset-0 z-10 whitespace-pre-wrap break-words px-0 py-1 text-[15px] leading-6",
         isDisabled ? "cursor-default" : "cursor-text",
@@ -5032,14 +5035,17 @@ function PlainTextPreview({
   onFocusLine,
   isDisabled,
   className,
+  previewRef,
 }: {
   text: string;
   onFocusLine: () => void;
   isDisabled: boolean;
   className?: string;
+  previewRef?: RefObject<HTMLDivElement | null>;
 }) {
   return (
     <div
+      ref={previewRef}
       className={clsx(
         "absolute inset-0 z-10 whitespace-pre-wrap break-words px-0 py-1 text-[15px] leading-6",
         isDisabled ? "cursor-default" : "cursor-text",
@@ -5467,6 +5473,7 @@ function OutlineNodeEditor({
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
   const [dropTarget, setDropTarget] = useState<NodeDropTarget | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const previewContentRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef(draft);
   const markerHoldTimeoutRef = useRef<number | null>(null);
   const markerLongPressTriggeredRef = useRef(false);
@@ -5581,6 +5588,10 @@ function OutlineNodeEditor({
   const hasNestedGrandchildren = node.children.some((child) => child.children.length > 0);
   const isCollapsed = hasChildren && collapsedNodeIds.has(node._id);
   const isTaskRow = node.kind === "task";
+  const previewTypographyClass = clsx(
+    isTaskRow ? "py-0 leading-[1.35rem]" : "py-1 leading-6",
+    headingPreviewClass,
+  );
   const [shouldRenderChildren, setShouldRenderChildren] = useState(hasChildren && !isCollapsed);
   const [isChildrenExpanded, setIsChildrenExpanded] = useState(hasChildren && !isCollapsed);
 
@@ -5588,9 +5599,35 @@ function OutlineNodeEditor({
     draftRef.current = draft;
   }, [draft]);
 
-  useEffect(() => {
-    autoResizeTextarea(textareaRef.current);
-  }, [draft]);
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) {
+      return;
+    }
+
+    if (!isFocused && hasDisplayPreview) {
+      const previewMeasure = previewContentRef.current;
+      if (previewMeasure) {
+        textarea.style.height = "0px";
+        const previewHeight = Math.ceil(previewMeasure.getBoundingClientRect().height);
+        if (previewHeight > 0) {
+          textarea.style.height = `${previewHeight}px`;
+          return;
+        }
+      }
+    }
+
+    autoResizeTextarea(textarea);
+  }, [
+    draft,
+    displayDraft,
+    hasDisplayPreview,
+    isFocused,
+    isDimmedLine,
+    linkPreviewSegments,
+    node.taskStatus,
+    previewTypographyClass,
+  ]);
 
   useEffect(() => {
     return history.registerEditor(editorId, editorTarget, node.text, {
@@ -6815,8 +6852,7 @@ function OutlineNodeEditor({
               rows={1}
               className={clsx(
                 "w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 text-[15px] outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]",
-                isTaskRow ? "py-0 leading-[1.35rem]" : "py-1 leading-6",
-                hasDisplayPreview ? headingPreviewClass : "",
+                previewTypographyClass,
                 isDraggingAnotherNode ? "pointer-events-none select-none" : "",
                 node.taskStatus === "done" ? "text-[var(--workspace-text-faint)] line-through" : "",
                 isDimmedLine && node.taskStatus !== "done"
@@ -6827,9 +6863,10 @@ function OutlineNodeEditor({
                   : "",
                 hasDisplayPreview ? "text-transparent caret-transparent" : "",
               )}
-            />
+              />
             {hasPageLinkPreview ? (
               <LinkedTextPreview
+                previewRef={previewContentRef}
                 segments={linkPreviewSegments}
                 onFocusLine={focusLineEditor}
                 onOpenPage={onOpenPage}
@@ -6837,8 +6874,7 @@ function OutlineNodeEditor({
                 onOpenTag={onOpenTag}
                 isDisabled={isDisabled || activeDraggedNodeId !== null}
                 className={clsx(
-                  isTaskRow ? "py-0 leading-[1.35rem]" : "",
-                  headingPreviewClass,
+                  previewTypographyClass,
                   node.taskStatus === "done"
                     ? "text-[var(--workspace-text-faint)] line-through"
                     : isDimmedLine
@@ -6848,12 +6884,12 @@ function OutlineNodeEditor({
               />
             ) : hasPlainTextPreview ? (
               <PlainTextPreview
+                previewRef={previewContentRef}
                 text={displayDraft}
                 onFocusLine={focusLineEditor}
                 isDisabled={isDisabled || activeDraggedNodeId !== null}
                 className={clsx(
-                  isTaskRow ? "py-0 leading-[1.35rem]" : "",
-                  headingPreviewClass,
+                  previewTypographyClass,
                   node.taskStatus === "done"
                     ? "text-[var(--workspace-text-faint)] line-through"
                     : isDimmedLine
