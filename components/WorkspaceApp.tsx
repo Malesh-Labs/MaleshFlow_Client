@@ -5541,6 +5541,7 @@ function OutlineNodeEditor({
   const hasChildren = node.children.length > 0;
   const hasNestedGrandchildren = node.children.some((child) => child.children.length > 0);
   const isCollapsed = hasChildren && collapsedNodeIds.has(node._id);
+  const isTaskRow = node.kind === "task";
   const [shouldRenderChildren, setShouldRenderChildren] = useState(hasChildren && !isCollapsed);
   const [isChildrenExpanded, setIsChildrenExpanded] = useState(hasChildren && !isCollapsed);
 
@@ -6621,7 +6622,7 @@ function OutlineNodeEditor({
   };
 
   return (
-    <div className="space-y-0.5">
+    <div className="space-y-px">
       <div
         data-node-shell
         data-node-id={node._id}
@@ -6672,8 +6673,13 @@ function OutlineNodeEditor({
             <span className="absolute -left-1.5 -top-[5px] h-2.5 w-2.5 rounded-full bg-[var(--workspace-brand)]" />
           </div>
         ) : null}
-        <div className="flex min-h-8 items-start gap-1.5">
-          <div className="flex min-h-8 w-4 flex-none items-start justify-center pt-[7px] text-[var(--workspace-text-faint)]">
+        <div className={clsx("flex items-start gap-1.5", isTaskRow ? "min-h-0" : "min-h-8")}>
+          <div
+            className={clsx(
+              "flex w-4 flex-none items-start justify-center text-[var(--workspace-text-faint)]",
+              isTaskRow ? "pt-[2px]" : "min-h-8 pt-[7px]",
+            )}
+          >
             {isLocked ||
             ((isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder) ? null : node.kind === "task" ? (
               <button
@@ -6734,7 +6740,7 @@ function OutlineNodeEditor({
               </button>
             )}
           </div>
-          <div className="relative flex min-h-8 min-w-0 flex-1 items-start">
+          <div className={clsx("relative flex min-w-0 flex-1 items-start", isTaskRow ? "min-h-0" : "min-h-8")}>
             {isVisualSeparatorLine && !shouldRevealVisualPlaceholder ? (
               <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 border-t border-[var(--workspace-border)]" />
             ) : null}
@@ -6768,7 +6774,8 @@ function OutlineNodeEditor({
               disabled={isDisabled}
               rows={1}
               className={clsx(
-                "w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 py-1 text-[15px] leading-6 outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]",
+                "w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 text-[15px] outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]",
+                isTaskRow ? "py-0 leading-[1.35rem]" : "py-1 leading-6",
                 isDraggingAnotherNode ? "pointer-events-none select-none" : "",
                 node.taskStatus === "done" ? "text-[var(--workspace-text-faint)] line-through" : "",
                 isDimmedLine && node.taskStatus !== "done"
@@ -6789,6 +6796,7 @@ function OutlineNodeEditor({
                 onOpenTag={onOpenTag}
                 isDisabled={isDisabled || activeDraggedNodeId !== null}
                 className={clsx(
+                  isTaskRow ? "py-0 leading-[1.35rem]" : "",
                   node.taskStatus === "done"
                     ? "text-[var(--workspace-text-faint)] line-through"
                     : isDimmedLine
@@ -6802,6 +6810,7 @@ function OutlineNodeEditor({
                 onFocusLine={focusLineEditor}
                 isDisabled={isDisabled || activeDraggedNodeId !== null}
                 className={clsx(
+                  isTaskRow ? "py-0 leading-[1.35rem]" : "",
                   node.taskStatus === "done"
                     ? "text-[var(--workspace-text-faint)] line-through"
                     : isDimmedLine
@@ -6820,7 +6829,7 @@ function OutlineNodeEditor({
               />
             ) : null}
           </div>
-          <div className="ml-1 flex flex-none items-start gap-1 pt-[3px]">
+          <div className={clsx("ml-1 flex flex-none items-start gap-1", isTaskRow ? "pt-[1px]" : "pt-[3px]")}>
             <button
               type="button"
               onMouseDown={(event) => event.preventDefault()}
@@ -6828,7 +6837,8 @@ function OutlineNodeEditor({
               disabled={!hasChildren}
               aria-label={isCollapsed ? "Expand nested items" : "Collapse nested items"}
               className={clsx(
-                "flex h-10 w-8 flex-none items-center justify-center text-base leading-none transition",
+                "flex flex-none items-center justify-center leading-none transition",
+                hasChildren ? "h-7 w-6 text-sm" : "h-4 w-6 text-xs",
                 hasChildren
                   ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text)]"
                   : "cursor-default text-transparent",
@@ -6836,7 +6846,8 @@ function OutlineNodeEditor({
             >
               <span
                 className={clsx(
-                  "inline-flex h-5 w-5 items-center justify-center rounded-full transition-transform",
+                  "inline-flex items-center justify-center rounded-full transition-transform",
+                  hasChildren ? "h-4 w-4" : "h-3 w-3",
                   hasNestedGrandchildren
                     ? "border border-[var(--workspace-border-hover)]"
                     : "",
