@@ -58,6 +58,7 @@ const OWNER_KEY_EVENT = "maleshflow-owner-key-change";
 const LAST_PAGE_STORAGE_KEY = "maleshflow-last-page-id";
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "maleshflow-sidebar-collapsed";
 const COLLAPSED_NODES_STORAGE_KEY = "maleshflow-collapsed-node-ids";
+const WORKSPACE_AI_DOCK_COLLAPSE_STORAGE_KEY = "maleshflow-workspace-ai-dock-collapsed";
 const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
 const WORKSPACE_AI_DOCK_TEXTAREA_ID = "workspace-ai-dock-textarea";
 const MODEL_REGENERATE_PROMPT =
@@ -1357,6 +1358,7 @@ function ConfiguredWorkspace({
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isWorkspaceAiDockCollapsed, setIsWorkspaceAiDockCollapsed] = useState(false);
   const [showSidebarDiagnostics, setShowSidebarDiagnostics] = useState(false);
   const [sidebarBootstrapError, setSidebarBootstrapError] = useState<string>("");
   const [dragSelection, setDragSelection] = useState<{
@@ -1425,6 +1427,13 @@ function ConfiguredWorkspace({
   const clearNodeSelection = useCallback(() => {
     setSelectedNodeIds(new Set());
     setDragSelection(null);
+  }, []);
+
+  const focusWorkspaceAiDockInput = useCallback(() => {
+    setIsWorkspaceAiDockCollapsed(false);
+    window.requestAnimationFrame(() => {
+      focusWorkspaceAiDock();
+    });
   }, []);
 
   const selectSingleNode = useCallback((nodeId: string) => {
@@ -1659,6 +1668,9 @@ function ConfiguredWorkspace({
     }
 
     setIsSidebarCollapsed(window.localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY) === "true");
+    setIsWorkspaceAiDockCollapsed(
+      window.localStorage.getItem(WORKSPACE_AI_DOCK_COLLAPSE_STORAGE_KEY) === "true",
+    );
     try {
       const storedCollapsedNodeIds = JSON.parse(
         window.localStorage.getItem(COLLAPSED_NODES_STORAGE_KEY) ?? "[]",
@@ -1687,6 +1699,17 @@ function ConfiguredWorkspace({
       isSidebarCollapsed ? "true" : "false",
     );
   }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      WORKSPACE_AI_DOCK_COLLAPSE_STORAGE_KEY,
+      isWorkspaceAiDockCollapsed ? "true" : "false",
+    );
+  }, [isWorkspaceAiDockCollapsed]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1924,6 +1947,7 @@ function ConfiguredWorkspace({
     window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
     window.localStorage.removeItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
+    window.localStorage.removeItem(WORKSPACE_AI_DOCK_COLLAPSE_STORAGE_KEY);
     setSelectedPageId(null);
     setLocationPageId(null);
     writePageIdToHistory(null, "replace");
@@ -2676,7 +2700,7 @@ function ConfiguredWorkspace({
 
       if (isModifier && event.shiftKey && normalizedKey === "l") {
         event.preventDefault();
-        focusWorkspaceAiDock();
+        focusWorkspaceAiDockInput();
         return;
       }
 
@@ -2837,6 +2861,7 @@ function ConfiguredWorkspace({
     copyNodeLinkToClipboard,
     deleteHighlightedNodes,
     focusLastVisiblePageNode,
+    focusWorkspaceAiDockInput,
     indentHighlightedNodeByKeyboard,
     moveHighlightedNodeByKeyboard,
     openPalette,
@@ -4160,6 +4185,10 @@ function ConfiguredWorkspace({
         error={workspaceChatError}
         onClearError={() => setWorkspaceChatError("")}
         onOpenSource={handleOpenWorkspaceKnowledgeSource}
+        isCollapsed={isWorkspaceAiDockCollapsed}
+        onToggleCollapsed={() =>
+          setIsWorkspaceAiDockCollapsed((current) => !current)
+        }
       />
       </main>
     </WorkspaceHistoryProvider>
@@ -4625,6 +4654,8 @@ function WorkspaceAiDock({
   error,
   onClearError,
   onOpenSource,
+  isCollapsed,
+  onToggleCollapsed,
 }: {
   ownerKey: string;
   draft: string;
@@ -4635,6 +4666,8 @@ function WorkspaceAiDock({
   error: string;
   onClearError: () => void;
   onOpenSource: (source: WorkspaceKnowledgeSourceSnapshot) => void;
+  isCollapsed: boolean;
+  onToggleCollapsed: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
@@ -4659,6 +4692,8 @@ function WorkspaceAiDock({
     linkSuggestions.length === 0
       ? 0
       : Math.min(linkHighlightIndex, linkSuggestions.length - 1);
+  const showHistoryPanel = !isCollapsed && (messages.length > 0 || error.length > 0 || isLoading);
+  const showComposer = !isCollapsed;
 
   useEffect(() => {
     autoResizeTextarea(textareaRef.current);
@@ -4737,7 +4772,26 @@ function WorkspaceAiDock({
     <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 px-3 pb-3 md:px-6 md:pb-6">
       <div className="pointer-events-auto mx-auto max-w-[1600px]">
         <div className="overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface)] shadow-[0_-16px_48px_-32px_rgba(0,0,0,0.65)] backdrop-blur-sm">
-          {messages.length > 0 || error || isLoading ? (
+          <div className="flex items-center justify-between gap-3 border-b border-[var(--workspace-border-subtle)] px-4 py-2 md:px-6">
+            <div className="min-w-0">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                AI Chat
+              </p>
+              <p className="text-[11px] text-[var(--workspace-text-faint)]">
+                {messages.length > 0
+                  ? `${messages.length} message${messages.length === 1 ? "" : "s"} saved`
+                  : "Persistent workspace conversation"}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onToggleCollapsed}
+              className="border border-[var(--workspace-border-control)] px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+            >
+              {isCollapsed ? "Expand" : "Collapse"}
+            </button>
+          </div>
+          {showHistoryPanel ? (
             <div
               ref={historyRef}
               className="max-h-[38vh] overflow-y-auto border-b border-[var(--workspace-border-subtle)] px-4 py-4 md:px-6"
@@ -4835,62 +4889,64 @@ function WorkspaceAiDock({
               </div>
             </div>
           ) : null}
-          <div className="relative flex items-end gap-3 px-4 py-3 md:px-6 md:py-4">
-            <div className="min-w-0 flex-1">
-              <textarea
-                id={WORKSPACE_AI_DOCK_TEXTAREA_ID}
-                ref={textareaRef}
-                value={draft}
-                onChange={(event) => {
-                  if (error) {
-                    onClearError();
-                  }
-                  onDraftChange(event.target.value);
-                  setCaretPosition(event.target.selectionStart ?? event.target.value.length);
-                }}
-                onFocus={(event) => {
-                  setCaretPosition(event.target.selectionStart ?? event.target.value.length);
-                }}
-                onSelect={(event) => {
-                  setCaretPosition(
-                    event.currentTarget.selectionStart ?? event.currentTarget.value.length,
-                  );
-                }}
-                onKeyDown={handleKeyDown}
-                placeholder="Ask AI about your workspace. Use [[Page]] or [[Node|node:id]] to pin specific context…"
-                rows={1}
-                disabled={isLoading}
-                className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-[15px] leading-6 outline-none"
-              />
-              <p className="mt-1 text-[11px] leading-5 text-[var(--workspace-text-faint)]">
-                This chat persists between sessions. Linked pages and nodes in `[[...]]` are sent as explicit context before semantic retrieval.
-              </p>
+          {showComposer ? (
+            <div className="relative flex items-end gap-3 px-4 py-3 md:px-6 md:py-4">
+              <div className="min-w-0 flex-1">
+                <textarea
+                  id={WORKSPACE_AI_DOCK_TEXTAREA_ID}
+                  ref={textareaRef}
+                  value={draft}
+                  onChange={(event) => {
+                    if (error) {
+                      onClearError();
+                    }
+                    onDraftChange(event.target.value);
+                    setCaretPosition(event.target.selectionStart ?? event.target.value.length);
+                  }}
+                  onFocus={(event) => {
+                    setCaretPosition(event.target.selectionStart ?? event.target.value.length);
+                  }}
+                  onSelect={(event) => {
+                    setCaretPosition(
+                      event.currentTarget.selectionStart ?? event.currentTarget.value.length,
+                    );
+                  }}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Ask AI about your workspace. Use [[Page]] or [[Node|node:id]] to pin specific context…"
+                  rows={1}
+                  disabled={isLoading}
+                  className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-[15px] leading-6 outline-none"
+                />
+                <p className="mt-1 text-[11px] leading-5 text-[var(--workspace-text-faint)]">
+                  This chat persists between sessions. Linked pages and nodes in `[[...]]` are sent as explicit context before semantic retrieval.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={onSubmit}
+                disabled={isLoading || draft.trim().length === 0}
+                className={clsx(
+                  "border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition",
+                  isLoading
+                    ? "cursor-wait opacity-60"
+                    : draft.trim().length === 0
+                      ? "cursor-not-allowed opacity-60"
+                      : "hover:bg-[var(--workspace-brand-hover)]",
+                )}
+              >
+                {isLoading ? "Thinking…" : "Ask AI"}
+              </button>
+              {activeLinkToken && linkSuggestions.length > 0 ? (
+                <LinkAutocompleteMenu
+                  anchorRef={textareaRef}
+                  suggestions={linkSuggestions}
+                  highlightIndex={activeLinkHighlightIndex}
+                  onHover={setLinkHighlightIndex}
+                  onSelect={applyLinkSuggestion}
+                />
+              ) : null}
             </div>
-            <button
-              type="button"
-              onClick={onSubmit}
-              disabled={isLoading || draft.trim().length === 0}
-              className={clsx(
-                "border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition",
-                isLoading
-                  ? "cursor-wait opacity-60"
-                  : draft.trim().length === 0
-                    ? "cursor-not-allowed opacity-60"
-                    : "hover:bg-[var(--workspace-brand-hover)]",
-              )}
-            >
-              {isLoading ? "Thinking…" : "Ask AI"}
-            </button>
-            {activeLinkToken && linkSuggestions.length > 0 ? (
-              <LinkAutocompleteMenu
-                anchorRef={textareaRef}
-                suggestions={linkSuggestions}
-                highlightIndex={activeLinkHighlightIndex}
-                onHover={setLinkHighlightIndex}
-                onSelect={applyLinkSuggestion}
-              />
-            ) : null}
-          </div>
+          ) : null}
         </div>
       </div>
     </div>
