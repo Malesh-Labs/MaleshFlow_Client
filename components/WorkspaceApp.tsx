@@ -3545,17 +3545,6 @@ function ConfiguredWorkspace({
                       onOpenTag={openFindPaletteForQuery}
                       mobileIndentStep={SIDEBAR_MOBILE_INDENT_STEP}
                     />
-                    <InlineComposer
-                      ownerKey={ownerKey}
-                      pageId={sidebarTree?.page._id as Id<"pages">}
-                      parentNodeId={null}
-                      afterNodeId={sidebarNodes[sidebarNodes.length - 1]?._id as Id<"nodes"> | undefined}
-                      createNodesBatch={createNodesBatch}
-                      readOnly={false}
-                      depth={0}
-                      mobileIndentStep={SIDEBAR_MOBILE_INDENT_STEP}
-                      onBeginTextEditing={clearNodeSelection}
-                    />
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -3949,16 +3938,6 @@ function ConfiguredWorkspace({
                         onOpenNode={handleOpenLinkedNode}
                         onOpenTag={openFindPaletteForQuery}
                       />
-                      <InlineComposer
-                        ownerKey={ownerKey}
-                        pageId={selectedPage._id}
-                        parentNodeId={null}
-                        afterNodeId={genericRoots[genericRoots.length - 1]?._id as Id<"nodes"> | undefined}
-                        createNodesBatch={createNodesBatch}
-                        readOnly={isPageArchived}
-                        depth={0}
-                        onBeginTextEditing={clearNodeSelection}
-                      />
                     </div>
                     <aside className="min-w-0 border-t border-[var(--workspace-border-subtle)] pt-6 lg:sticky lg:top-6 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
                       {taskSidebarSection ? (
@@ -4283,16 +4262,6 @@ function ConfiguredWorkspace({
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
-                    />
-                    <InlineComposer
-                      ownerKey={ownerKey}
-                      pageId={selectedPage._id}
-                      parentNodeId={null}
-                      afterNodeId={genericRoots[genericRoots.length - 1]?._id as Id<"nodes"> | undefined}
-                      createNodesBatch={createNodesBatch}
-                      readOnly={isPageArchived}
-                      depth={0}
-                      onBeginTextEditing={clearNodeSelection}
                     />
                   </div>
                 )}
@@ -4633,10 +4602,6 @@ function PageSection({
   statusMessage?: string;
   compact?: boolean;
 }) {
-  const lastChild = sectionNode
-    ? sectionNode.children[sectionNode.children.length - 1] ?? null
-    : null;
-
   return (
     <div
       data-section-slot={
@@ -4696,17 +4661,6 @@ function PageSection({
           onOpenNode={onOpenNode}
           onOpenTag={onOpenTag}
           mobileIndentStep={mobileIndentStep}
-        />
-        <InlineComposer
-          ownerKey={ownerKey}
-          pageId={pageId}
-          parentNodeId={(sectionNode?._id as Id<"nodes"> | undefined) ?? undefined}
-          afterNodeId={(lastChild?._id as Id<"nodes"> | undefined) ?? undefined}
-          createNodesBatch={createNodesBatch}
-          readOnly={isPageReadOnly}
-          depth={depthOffset}
-          mobileIndentStep={mobileIndentStep}
-          onBeginTextEditing={onBeginTextEditing}
         />
       </div>
     </div>
