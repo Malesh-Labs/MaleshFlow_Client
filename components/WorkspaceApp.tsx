@@ -5559,10 +5559,14 @@ function OutlineNodeEditor({
   const isCollapsed = hasChildren && collapsedNodeIds.has(node._id);
   const isTaskRow = node.kind === "task";
   const isHeadingNoteRow = !isTaskRow && isHeadingLine;
-  const previewTypographyClass = getNodeTypographyClass({
+  const baseTypographyClass = getNodeTypographyClass({
     isTaskRow,
     headingLevel: headingSyntax.level,
   });
+  const previewTypographyClass = clsx(
+    baseTypographyClass,
+    hasPageLinkPreview && !isTaskRow && !isHeadingNoteRow ? "py-1" : "",
+  );
   const [shouldRenderChildren, setShouldRenderChildren] = useState(hasChildren && !isCollapsed);
   const [isChildrenExpanded, setIsChildrenExpanded] = useState(hasChildren && !isCollapsed);
 
