@@ -1,3 +1,4 @@
+import slugify from "slugify";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation, internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
@@ -15,6 +16,7 @@ import {
   syncLinksForNode,
 } from "./lib/workspace";
 import { nodeKindValidator, nullableNodeIdValidator, priorityValidator, taskStatusValidator } from "./lib/validators";
+import { rewriteMatchingPageWikiLinks } from "../lib/domain/links";
 import { extractTagMatches } from "../lib/domain/tags";
 
 function getTimestamp() {
@@ -194,6 +196,26 @@ async function filterVisibleLinks(ctx: QueryCtx, links: Doc<"links">[]) {
   });
 }
 
+async function buildVisibleNodeBacklinkCounts(
+  ctx: QueryCtx,
+  nodeIds: Id<"nodes">[],
+) {
+  const counts = await Promise.all(
+    [...new Set(nodeIds)].map(async (nodeId) => {
+      const links = await ctx.db
+        .query("links")
+        .withIndex("by_target_node", (query) => query.eq("targetNodeId", nodeId))
+        .collect();
+      const visibleLinks = await filterVisibleLinks(ctx, links);
+      return [nodeId as string, visibleLinks.length] as const;
+    }),
+  );
+
+  return Object.fromEntries(
+    counts.filter(([, count]) => count > 0),
+  ) as Record<string, number>;
+}
+
 export const listPages = query({
   args: {
     ownerKey: v.string(),
@@ -247,9 +269,14 @@ export const getSidebarTree = query({
       .query("links")
       .withIndex("by_source_page", (query) => query.eq("sourcePageId", sidebarPage._id))
       .collect();
+    const nodeBacklinkCounts = await buildVisibleNodeBacklinkCounts(
+      ctx,
+      nodes.map((node) => node._id),
+    );
     return {
       page: sidebarPage,
       nodes,
+      nodeBacklinkCounts,
       linkedPageIds: [
         ...new Set(
           links
@@ -499,11 +526,18 @@ export const getPageTree = query({
       .query("links")
       .withIndex("by_target_page", (query) => query.eq("targetPageId", args.pageId))
       .collect();
+    const visibleBacklinks = await filterVisibleLinks(ctx, backlinks);
+    const nodeBacklinkCounts = await buildVisibleNodeBacklinkCounts(
+      ctx,
+      nodes.map((node) => node._id),
+    );
 
     return {
       page,
       nodes,
-      backlinks: await filterVisibleLinks(ctx, backlinks),
+      backlinks: visibleBacklinks,
+      pageBacklinkCount: visibleBacklinks.length,
+      nodeBacklinkCounts,
     };
   },
 });
@@ -1054,18 +1088,75 @@ export const renamePage = mutation({
       throw new Error("Page not found.");
     }
 
-    const slug = await buildUniquePageSlug(ctx.db, args.title, args.pageId);
+    const nextTitle = args.title.trim() || "Untitled";
+    const previousSlug = page.slug;
+    const slug = await buildUniquePageSlug(ctx.db, nextTitle, args.pageId);
     await ctx.db.patch(args.pageId, {
-      title: args.title.trim() || "Untitled",
+      title: nextTitle,
       slug,
       updatedAt: getTimestamp(),
     });
+
+    const inboundPageLinks = await ctx.db
+      .query("links")
+      .withIndex("by_target_page", (query) => query.eq("targetPageId", args.pageId))
+      .collect();
+    const sourceNodeIds = [
+      ...new Set(
+        inboundPageLinks
+          .filter(
+            (link): link is Doc<"links"> & { sourceNodeId: Id<"nodes"> } =>
+              link.kind === "page" &&
+              link.resolved &&
+              link.sourceNodeId !== null,
+          )
+          .map((link) => link.sourceNodeId),
+      ),
+    ];
+    const touchedSourcePageIds = new Set<Id<"pages">>();
+
+    for (const sourceNodeId of sourceNodeIds) {
+      const sourceNode = await ctx.db.get(sourceNodeId);
+      if (!sourceNode || sourceNode.archived) {
+        continue;
+      }
+
+      const nextText = rewriteMatchingPageWikiLinks(
+        sourceNode.text,
+        (targetPageTitle) =>
+          (slugify(targetPageTitle, { lower: true, strict: true }) || "untitled") ===
+          previousSlug,
+        nextTitle,
+      );
+
+      if (nextText === sourceNode.text) {
+        continue;
+      }
+
+      const updatedAt = getTimestamp();
+      const updatedNode = {
+        ...sourceNode,
+        text: nextText,
+        updatedAt,
+      };
+      await ctx.db.patch(sourceNodeId, {
+        text: nextText,
+        updatedAt,
+      });
+      await syncLinksForNode(ctx.db, updatedNode);
+      await enqueueNodeEmbeddingRefresh(ctx, sourceNodeId);
+      touchedSourcePageIds.add(sourceNode.pageId);
+    }
 
     const pageNodes = await listPageNodes(ctx.db, args.pageId);
     for (const node of pageNodes) {
       await ctx.scheduler.runAfter(0, internal.ai.generateEmbeddingForNode, {
         nodeId: node._id,
       });
+    }
+
+    for (const sourcePageId of touchedSourcePageIds) {
+      await enqueuePageRootEmbeddingRefresh(ctx, sourcePageId);
     }
   },
 });

@@ -163,3 +163,37 @@ export function stripLinkMarkup(text: string) {
 export function replaceLinkMarkupWithLabels(text: string) {
   return replaceLinkMarkup(text, (match) => getReadableLinkLabel(match));
 }
+
+export function rewriteMatchingPageWikiLinks(
+  text: string,
+  shouldRewrite: (targetPageTitle: string) => boolean,
+  nextTitle: string,
+) {
+  const matches = extractLinkMatches(text);
+  if (matches.length === 0) {
+    return text;
+  }
+
+  let cursor = 0;
+  let nextText = "";
+
+  for (const match of matches) {
+    if (match.start > cursor) {
+      nextText += text.slice(cursor, match.start);
+    }
+
+    if (match.link.kind === "page" && shouldRewrite(match.link.targetPageTitle)) {
+      nextText += `[[${nextTitle}]]`;
+    } else {
+      nextText += text.slice(match.start, match.end);
+    }
+
+    cursor = match.end;
+  }
+
+  if (cursor < text.length) {
+    nextText += text.slice(cursor);
+  }
+
+  return nextText;
+}

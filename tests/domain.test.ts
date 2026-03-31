@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractLinkMatches, extractLinks } from "../lib/domain/links";
+import {
+  extractLinkMatches,
+  extractLinks,
+  rewriteMatchingPageWikiLinks,
+} from "../lib/domain/links";
 import { parseHeadingSyntax } from "../lib/domain/displaySyntax";
 import { extractTagMatches, extractTags } from "../lib/domain/tags";
 import { parseMarkdownFile, serializePageToMarkdown } from "../lib/domain/markdown";
@@ -71,6 +75,22 @@ test("extractLinkMatches preserves ranges for inline rendering", () => {
         label: "[OpenAI](openai.com)",
       },
     ],
+  );
+});
+
+test("rewriteMatchingPageWikiLinks updates only matched resolved page links", () => {
+  const text =
+    "See [[Old Title]], [[old title]], [[Other Page]], [[Label|node:node_123]], and [OpenAI](openai.com).";
+
+  const rewritten = rewriteMatchingPageWikiLinks(
+    text,
+    (targetPageTitle) => targetPageTitle.toLowerCase() === "old title",
+    "New Title",
+  );
+
+  assert.equal(
+    rewritten,
+    "See [[New Title]], [[New Title]], [[Other Page]], [[Label|node:node_123]], and [OpenAI](openai.com).",
   );
 });
 

@@ -78,6 +78,14 @@ type PageTreeResult = {
   page: PageDoc;
   nodes: Doc<"nodes">[];
   backlinks: Doc<"links">[];
+  pageBacklinkCount: number;
+  nodeBacklinkCounts: Record<string, number>;
+};
+type SidebarTreeResult = {
+  page: PageDoc;
+  nodes: Doc<"nodes">[];
+  linkedPageIds: Id<"pages">[];
+  nodeBacklinkCounts: Record<string, number>;
 };
 type PaletteMode = "pages" | "find" | "nodes";
 const PALETTE_MODE_ORDER: PaletteMode[] = ["pages", "find", "nodes"];
@@ -1530,11 +1538,11 @@ function ConfiguredWorkspace({
     ownerKey && isOwnerKeyValid && selectedPageId
       ? { ownerKey, pageId: selectedPageId }
       : SKIP,
-  );
+  ) as PageTreeResult | null | undefined;
   const sidebarTree = useQuery(
     api.workspace.getSidebarTree,
     ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
-  );
+  ) as SidebarTreeResult | null | undefined;
 
   const createPage = useMutation(api.workspace.createPage);
   const ensureSidebarPage = useMutation(api.workspace.ensureSidebarPage);
@@ -1674,7 +1682,16 @@ function ConfiguredWorkspace({
   const sidebarNodeMap = new Map(
     (sidebarTree?.nodes ?? []).map((node) => [node._id as string, node]),
   );
+  const pageNodeBacklinkCounts = useMemo(
+    () => new Map(Object.entries(activePageTree?.nodeBacklinkCounts ?? {})),
+    [activePageTree?.nodeBacklinkCounts],
+  );
+  const sidebarNodeBacklinkCounts = useMemo(
+    () => new Map(Object.entries(sidebarTree?.nodeBacklinkCounts ?? {})),
+    [sidebarTree?.nodeBacklinkCounts],
+  );
   const sidebarLinkedPageIds = new Set((sidebarTree?.linkedPageIds ?? []).map((pageId) => pageId as string));
+  const pageBacklinkCount = activePageTree?.pageBacklinkCount ?? 0;
 
   const modelSection = findSectionNode(tree, "model");
   const recentExamplesSection = findSectionNode(tree, "recentExamples");
@@ -3605,6 +3622,7 @@ function ConfiguredWorkspace({
                       nodes={sidebarNodes}
                       ownerKey={ownerKey}
                       pageId={sidebarTree?.page._id as Id<"pages">}
+                      nodeBacklinkCounts={sidebarNodeBacklinkCounts}
                       nodeMap={sidebarNodeMap}
                       createNodesBatch={createNodesBatch}
                       updateNode={updateNode}
@@ -3946,6 +3964,11 @@ function ConfiguredWorkspace({
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.3em] text-[var(--workspace-accent)]">
                       <span>{getPageTypeDisplayLabel(selectedPage)}</span>
+                      {pageBacklinkCount > 0 ? (
+                        <span className="rounded-full border border-[var(--workspace-border)] px-2 py-1 text-[10px] tracking-[0.2em] text-[var(--workspace-text-faint)]">
+                          {pageBacklinkCount} link{pageBacklinkCount === 1 ? "" : "s"}
+                        </span>
+                      ) : null}
                       {isPageArchived ? (
                         <span className="rounded-full border border-[var(--workspace-border)] px-2 py-1 text-[10px] tracking-[0.2em] text-[var(--workspace-text-faint)]">
                           Archived
@@ -3996,6 +4019,7 @@ function ConfiguredWorkspace({
                         nodes={genericRoots}
                         ownerKey={ownerKey}
                         pageId={selectedPage._id}
+                        nodeBacklinkCounts={pageNodeBacklinkCounts}
                         nodeMap={nodeMap}
                         createNodesBatch={createNodesBatch}
                         updateNode={updateNode}
@@ -4032,6 +4056,7 @@ function ConfiguredWorkspace({
                           sectionNode={taskSidebarSection}
                           ownerKey={ownerKey}
                           pageId={selectedPage._id}
+                          nodeBacklinkCounts={pageNodeBacklinkCounts}
                           nodeMap={nodeMap}
                           createNodesBatch={createNodesBatch}
                           updateNode={updateNode}
@@ -4077,6 +4102,7 @@ function ConfiguredWorkspace({
                         sectionNode={modelSection}
                         ownerKey={ownerKey}
                         pageId={selectedPage._id}
+                        nodeBacklinkCounts={pageNodeBacklinkCounts}
                         nodeMap={nodeMap}
                         createNodesBatch={createNodesBatch}
                         updateNode={updateNode}
@@ -4124,6 +4150,7 @@ function ConfiguredWorkspace({
                         sectionNode={recentExamplesSection}
                         ownerKey={ownerKey}
                         pageId={selectedPage._id}
+                        nodeBacklinkCounts={pageNodeBacklinkCounts}
                         nodeMap={nodeMap}
                         createNodesBatch={createNodesBatch}
                         updateNode={updateNode}
@@ -4163,6 +4190,7 @@ function ConfiguredWorkspace({
                         sectionNode={journalThoughtsSection}
                         ownerKey={ownerKey}
                         pageId={selectedPage._id}
+                        nodeBacklinkCounts={pageNodeBacklinkCounts}
                         nodeMap={nodeMap}
                         createNodesBatch={createNodesBatch}
                         updateNode={updateNode}
@@ -4199,6 +4227,7 @@ function ConfiguredWorkspace({
                         sectionNode={journalFeedbackSection}
                         ownerKey={ownerKey}
                         pageId={selectedPage._id}
+                        nodeBacklinkCounts={pageNodeBacklinkCounts}
                         nodeMap={nodeMap}
                         createNodesBatch={createNodesBatch}
                         updateNode={updateNode}
@@ -4249,6 +4278,7 @@ function ConfiguredWorkspace({
                         sectionNode={scratchpadLiveSection}
                         ownerKey={ownerKey}
                         pageId={selectedPage._id}
+                        nodeBacklinkCounts={pageNodeBacklinkCounts}
                         nodeMap={nodeMap}
                         createNodesBatch={createNodesBatch}
                         updateNode={updateNode}
@@ -4285,6 +4315,7 @@ function ConfiguredWorkspace({
                         sectionNode={scratchpadPreviousSection}
                         ownerKey={ownerKey}
                         pageId={selectedPage._id}
+                        nodeBacklinkCounts={pageNodeBacklinkCounts}
                         nodeMap={nodeMap}
                         createNodesBatch={createNodesBatch}
                         updateNode={updateNode}
@@ -4322,6 +4353,7 @@ function ConfiguredWorkspace({
                       nodes={genericRoots}
                       ownerKey={ownerKey}
                       pageId={selectedPage._id}
+                      nodeBacklinkCounts={pageNodeBacklinkCounts}
                       nodeMap={nodeMap}
                       createNodesBatch={createNodesBatch}
                       updateNode={updateNode}
@@ -4615,6 +4647,7 @@ function PageSection({
   sectionNode,
   ownerKey,
   pageId,
+  nodeBacklinkCounts,
   nodeMap,
   createNodesBatch,
   updateNode,
@@ -4653,6 +4686,7 @@ function PageSection({
   sectionNode: TreeNode | null;
   ownerKey: string;
   pageId: Id<"pages">;
+  nodeBacklinkCounts: Map<string, number>;
   nodeMap: Map<string, Doc<"nodes">>;
   createNodesBatch: CreateNodesBatchMutation;
   updateNode: UpdateNodeMutation;
@@ -4729,6 +4763,7 @@ function PageSection({
           ownerKey={ownerKey}
           pageId={pageId}
           parentNodeId={(sectionNode?._id as Id<"nodes"> | null) ?? null}
+          nodeBacklinkCounts={nodeBacklinkCounts}
           nodeMap={nodeMap}
           createNodesBatch={createNodesBatch}
           updateNode={updateNode}
@@ -4768,6 +4803,7 @@ function OutlineNodeList({
   nodes,
   ownerKey,
   pageId,
+  nodeBacklinkCounts,
   nodeMap,
   createNodesBatch,
   updateNode,
@@ -4802,6 +4838,7 @@ function OutlineNodeList({
   nodes: TreeNode[];
   ownerKey: string;
   pageId: Id<"pages">;
+  nodeBacklinkCounts: Map<string, number>;
   nodeMap: Map<string, Doc<"nodes">>;
   createNodesBatch: CreateNodesBatchMutation;
   updateNode: UpdateNodeMutation;
@@ -4862,6 +4899,8 @@ function OutlineNodeList({
           ownerKey={ownerKey}
           pageId={pageId}
           parentNodeId={parentNodeId}
+          nodeBacklinkCounts={nodeBacklinkCounts}
+          nodeBacklinkCount={nodeBacklinkCounts.get(node._id as string) ?? 0}
           nodeMap={nodeMap}
           createNodesBatch={createNodesBatch}
           updateNode={updateNode}
@@ -5543,6 +5582,8 @@ function OutlineNodeEditor({
   ownerKey,
   pageId,
   parentNodeId,
+  nodeBacklinkCounts,
+  nodeBacklinkCount,
   nodeMap,
   createNodesBatch,
   updateNode,
@@ -5581,6 +5622,8 @@ function OutlineNodeEditor({
   ownerKey: string;
   pageId: Id<"pages">;
   parentNodeId: Id<"nodes"> | null;
+  nodeBacklinkCounts: Map<string, number>;
+  nodeBacklinkCount: number;
   nodeMap: Map<string, Doc<"nodes">>;
   createNodesBatch: CreateNodesBatchMutation;
   updateNode: UpdateNodeMutation;
@@ -7111,6 +7154,14 @@ function OutlineNodeEditor({
                   : "items-start pt-[2px]",
             )}
           >
+            {nodeBacklinkCount > 0 ? (
+              <span
+                title={`${nodeBacklinkCount} incoming link${nodeBacklinkCount === 1 ? "" : "s"}`}
+                className="inline-flex min-w-[1.5rem] items-center justify-center px-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--workspace-text-faint)]"
+              >
+                {nodeBacklinkCount}
+              </span>
+            ) : null}
             <button
               type="button"
               onMouseDown={(event) => event.preventDefault()}
@@ -7173,6 +7224,7 @@ function OutlineNodeEditor({
               ownerKey={ownerKey}
               pageId={pageId}
               parentNodeId={node._id as Id<"nodes">}
+              nodeBacklinkCounts={nodeBacklinkCounts}
               nodeMap={nodeMap}
               createNodesBatch={createNodesBatch}
               updateNode={updateNode}
