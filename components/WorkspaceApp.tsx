@@ -1295,6 +1295,54 @@ function getHeadingPreviewClass(level: 1 | 2 | 3 | null) {
   return "";
 }
 
+function getHeadingRowMinHeightClass(level: 1 | 2 | 3 | null) {
+  if (level === 1) {
+    return "min-h-[3.25rem]";
+  }
+
+  if (level === 2) {
+    return "min-h-[2.7rem]";
+  }
+
+  if (level === 3) {
+    return "min-h-[2.2rem]";
+  }
+
+  return "min-h-0";
+}
+
+function getHeadingMarkerOffsetClass(level: 1 | 2 | 3 | null) {
+  if (level === 1) {
+    return "pt-[0.85rem]";
+  }
+
+  if (level === 2) {
+    return "pt-[0.65rem]";
+  }
+
+  if (level === 3) {
+    return "pt-[0.45rem]";
+  }
+
+  return "";
+}
+
+function getHeadingControlOffsetClass(level: 1 | 2 | 3 | null) {
+  if (level === 1) {
+    return "pt-[0.55rem]";
+  }
+
+  if (level === 2) {
+    return "pt-[0.35rem]";
+  }
+
+  if (level === 3) {
+    return "pt-[0.2rem]";
+  }
+
+  return "";
+}
+
 function buildNodePlacement(
   pageId: Id<"pages">,
   parentNodeId: Id<"nodes"> | null,
@@ -5559,6 +5607,9 @@ function OutlineNodeEditor({
   const isCollapsed = hasChildren && collapsedNodeIds.has(node._id);
   const isTaskRow = node.kind === "task";
   const isHeadingNoteRow = !isTaskRow && isHeadingLine;
+  const headingRowMinHeightClass = getHeadingRowMinHeightClass(headingSyntax.level);
+  const headingMarkerOffsetClass = getHeadingMarkerOffsetClass(headingSyntax.level);
+  const headingControlOffsetClass = getHeadingControlOffsetClass(headingSyntax.level);
   const baseTypographyClass = getNodeTypographyClass({
     isTaskRow,
     headingLevel: headingSyntax.level,
@@ -6724,14 +6775,14 @@ function OutlineNodeEditor({
             <span className="absolute -left-1.5 -top-[5px] h-2.5 w-2.5 rounded-full bg-[var(--workspace-brand)]" />
           </div>
         ) : null}
-        <div className={clsx("flex min-h-0 gap-1.5", isHeadingNoteRow ? "items-center" : "items-start")}>
+        <div className={clsx("flex gap-1.5 items-start", isHeadingNoteRow ? headingRowMinHeightClass : "min-h-0")}>
           <div
             className={clsx(
               "flex w-4 flex-none justify-center text-[var(--workspace-text-faint)]",
               isTaskRow
                 ? "items-start pt-[2px]"
                 : isHeadingNoteRow
-                  ? "items-center self-stretch"
+                  ? clsx("items-start", headingMarkerOffsetClass)
                   : "items-start pt-[5px]",
             )}
           >
@@ -6796,7 +6847,7 @@ function OutlineNodeEditor({
               </button>
             )}
           </div>
-          <div className={clsx("relative flex min-h-0 min-w-0 flex-1", isHeadingNoteRow ? "items-center" : "items-start")}>
+          <div className="relative flex min-h-0 min-w-0 flex-1 items-start">
             {isVisualSeparatorLine && !shouldRevealVisualPlaceholder ? (
               <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 border-t border-[var(--workspace-border)]" />
             ) : null}
@@ -6893,7 +6944,7 @@ function OutlineNodeEditor({
               isTaskRow
                 ? "items-start pt-[1px]"
                 : isHeadingNoteRow
-                  ? "items-center self-stretch"
+                  ? clsx("items-start", headingControlOffsetClass)
                   : "items-start pt-[2px]",
             )}
           >
