@@ -11,6 +11,24 @@ import {
 } from "./lib/workspace";
 import { chatPlanSchema, type ChatOperation } from "../lib/domain/chat";
 
+const WORKSPACE_KNOWLEDGE_SCOPE = "workspaceKnowledge";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function findWorkspaceKnowledgeThread(ctx: any) {
+  const workspaceThreads = await ctx.db
+    .query("chatThreads")
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .withIndex("by_page_updatedAt", (query: any) => query.eq("pageId", null))
+    .order("desc")
+    .collect();
+
+  return (
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    workspaceThreads.find((thread: any) => thread.scope === WORKSPACE_KNOWLEDGE_SCOPE) ??
+    null
+  );
+}
+
 export const ensureChatThread = mutation({
   args: {
     ownerKey: v.string(),
@@ -46,6 +64,29 @@ export const ensureChatThread = mutation({
   },
 });
 
+export const ensureWorkspaceKnowledgeThread = mutation({
+  args: {
+    ownerKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const existing = await findWorkspaceKnowledgeThread(ctx);
+    if (existing) {
+      return existing._id;
+    }
+
+    const now = Date.now();
+    return await ctx.db.insert("chatThreads", {
+      pageId: null,
+      title: "Workspace Knowledge Chat",
+      scope: WORKSPACE_KNOWLEDGE_SCOPE,
+      createdAt: now,
+      updatedAt: now,
+    });
+  },
+});
+
 export const getChatThread = query({
   args: {
     ownerKey: v.string(),
@@ -71,6 +112,32 @@ export const getChatThread = query({
             .order("desc")
             .first();
 
+    if (!thread) {
+      return null;
+    }
+
+    const messages = await ctx.db
+      .query("chatMessages")
+      .withIndex("by_thread_createdAt", (query) =>
+        query.eq("threadId", thread._id),
+      )
+      .collect();
+
+    return {
+      thread,
+      messages,
+    };
+  },
+});
+
+export const getWorkspaceKnowledgeThread = query({
+  args: {
+    ownerKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const thread = await findWorkspaceKnowledgeThread(ctx);
     if (!thread) {
       return null;
     }
@@ -151,6 +218,7 @@ export const storeAssistantMessage = internalMutation({
   args: {
     threadId: v.id("chatThreads"),
     text: v.string(),
+    metadata: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -161,6 +229,7 @@ export const storeAssistantMessage = internalMutation({
       threadId: args.threadId,
       role: "assistant",
       text: args.text,
+      metadata: args.metadata,
       status: "ready",
       createdAt: now,
     });

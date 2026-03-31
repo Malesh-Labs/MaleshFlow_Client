@@ -5,8 +5,8 @@ import { zodTextFormat } from "openai/helpers/zod";
 import { v } from "convex/values";
 import { z } from "zod";
 import { action, internalAction } from "./_generated/server";
-import { internal } from "./_generated/api";
-import type { Doc } from "./_generated/dataModel";
+import { api, internal } from "./_generated/api";
+import type { Doc, Id } from "./_generated/dataModel";
 import { assertOwnerKey } from "./lib/auth";
 import {
   buildDeterministicEmbedding,
@@ -41,6 +41,14 @@ const saveNodeEmbeddingRef = internal.aiData.saveNodeEmbedding as any;
 const applyTaskMetadataRef = internal.aiData.applyTaskMetadata as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const getLinkedKnowledgeContextRef = internal.workspace.getLinkedKnowledgeContext as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ensureWorkspaceKnowledgeThreadRef = api.chatData.ensureWorkspaceKnowledgeThread as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const getThreadMessagesRef = internal.chatData.getThreadMessages as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const storeUserMessageRef = internal.chatData.storeUserMessage as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const storeAssistantMessageRef = internal.chatData.storeAssistantMessage as any;
 
 function getOpenAIClient() {
   if (!process.env.OPENAI_API_KEY) {
@@ -178,6 +186,248 @@ export const findNodesText = action({
   },
 });
 
+type WorkspaceKnowledgeAnswer = {
+  answer: string;
+  sources: Array<{
+    node: Doc<"nodes">;
+    page: Doc<"pages"> | null;
+    score?: number;
+    content?: string;
+  }>;
+  model: string;
+  error: string | null;
+};
+
+type WorkspaceKnowledgeArgs = {
+  ownerKey: string;
+  question: string;
+  limit?: number;
+  linkedPageIds?: Id<"pages">[];
+  linkedNodeIds?: Id<"nodes">[];
+  conversation?: Array<{
+    role: string;
+    text: string;
+  }>;
+};
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledgeArgs): Promise<WorkspaceKnowledgeAnswer> {
+  assertOwnerKey(args.ownerKey);
+
+  const question = args.question.trim();
+  const messageOnlyQuestion = stripLinkMarkup(question);
+  const semanticQuery = replaceLinkMarkupWithLabels(question);
+  const model = process.env.OPENAI_CHAT_MODEL ?? "gpt-5-mini";
+  if (question.length === 0) {
+    return {
+      answer: "Search your knowledge base or pin context with [[...]].",
+      sources: [],
+      model,
+      error: null,
+    };
+  }
+
+  const linkedContext = (await ctx.runQuery(getLinkedKnowledgeContextRef, {
+    pageIds: args.linkedPageIds ?? [],
+    nodeIds: args.linkedNodeIds ?? [],
+  })) as {
+    pages: Array<{
+      page: Doc<"pages">;
+      representativeNode: Doc<"nodes"> | null;
+      content: string;
+    }>;
+    nodes: Array<{
+      node: Doc<"nodes">;
+      page: Doc<"pages">;
+      content: string;
+    }>;
+  };
+
+  const hasExplicitLinkedContext =
+    linkedContext.pages.length > 0 || linkedContext.nodes.length > 0;
+
+  const shouldUseSemanticSearch =
+    semanticQuery.length > 0 &&
+    (!hasExplicitLinkedContext || messageOnlyQuestion.length > 0);
+
+  const rawSources = shouldUseSemanticSearch
+    ? ((await runSemanticSearch(ctx, {
+        query: semanticQuery,
+        limit: args.limit ?? 10,
+      })) as Array<{
+        node: Doc<"nodes">;
+        page: Doc<"pages"> | null;
+        score?: number;
+        content?: string;
+      }>)
+    : [];
+  const linkedPageSources = linkedContext.pages
+    .filter((entry) => entry.representativeNode !== null)
+    .map((entry) => ({
+      node: entry.representativeNode!,
+      page: entry.page,
+      content: entry.content,
+    }));
+  const linkedNodeSources = linkedContext.nodes.map((entry) => ({
+    node: entry.node,
+    page: entry.page,
+    content: entry.content,
+  }));
+
+  const dedupedSources = new Map<
+    string,
+    {
+      node: Doc<"nodes">;
+      page: Doc<"pages"> | null;
+      score?: number;
+      content?: string;
+    }
+  >();
+  for (const entry of [...linkedNodeSources, ...linkedPageSources, ...rawSources]) {
+    if (!entry.page) {
+      continue;
+    }
+
+    const key = entry.node._id as string;
+    if (!dedupedSources.has(key)) {
+      dedupedSources.set(key, entry);
+    }
+  }
+  const sources = [...dedupedSources.values()].slice(0, 10);
+
+  const explicitLinkedContext = [
+    ...linkedContext.pages
+      .filter((entry) => entry.content.trim().length > 0)
+      .map((entry, index) =>
+        [
+          `Linked page [${index + 1}]: ${entry.page.title}`,
+          entry.content,
+        ].join("\n"),
+      ),
+    ...linkedContext.nodes.map((entry, index) =>
+      [
+        `Linked node [N${index + 1}] on ${entry.page.title}`,
+        entry.content.trim().length > 0 ? entry.content : entry.node.text || "(empty line)",
+      ].join("\n"),
+    ),
+  ].join("\n\n");
+
+  if (sources.length === 0 && explicitLinkedContext.trim().length === 0) {
+    return {
+      answer: "I couldn't find any relevant notes or tasks in your knowledge base yet.",
+      sources: [],
+      model,
+      error: null,
+    };
+  }
+
+  const client = getOpenAIClient();
+  if (!client) {
+    return {
+      answer:
+        "OpenAI is not configured, so I can only show the closest matching notes right now.",
+      sources,
+      model,
+      error: "OPENAI_API_KEY is not configured in Convex.",
+    };
+  }
+
+  const sourceContext = sources
+    .map((entry, index) =>
+      [
+        `[${index + 1}] Page: ${entry.page?.title ?? "Unknown page"}`,
+        `Kind: ${entry.node.kind}`,
+        `Text: ${entry.node.text || "(empty line)"}`,
+        `Context: ${entry.content?.trim() || entry.node.text || "(empty line)"}`,
+      ].join("\n"),
+    )
+    .join("\n\n");
+
+  const conversationContext =
+    args.conversation && args.conversation.length > 0
+      ? args.conversation
+          .slice(-8)
+          .map((message) => `${message.role}: ${message.text}`)
+          .join("\n")
+      : "";
+
+  try {
+    const response = await client.responses.parse({
+      model,
+      input: [
+        {
+          role: "system",
+          content:
+            "Answer the user's question using only the provided knowledge base snippets. If the snippets are insufficient, say so clearly. Keep the answer concise and grounded. Cite source numbers like [1] when helpful. If no explicit question text is provided, summarize the linked context and surface the most important takeaways.",
+        },
+        {
+          role: "user",
+          content: [
+            conversationContext.length > 0 ? "Recent conversation:" : null,
+            conversationContext.length > 0 ? conversationContext : null,
+            conversationContext.length > 0 ? "" : null,
+            messageOnlyQuestion.length > 0 ? `Question: ${semanticQuery}` : null,
+            explicitLinkedContext.trim().length > 0 ? "" : null,
+            explicitLinkedContext.trim().length > 0 ? "Explicitly linked context:" : null,
+            explicitLinkedContext.trim().length > 0 ? explicitLinkedContext : null,
+            sourceContext.trim().length > 0 ? "" : null,
+            sourceContext.trim().length > 0 ? "Knowledge base snippets:" : null,
+            sourceContext.trim().length > 0 ? sourceContext : null,
+          ]
+            .filter((value): value is string => value !== null)
+            .join("\n"),
+        },
+      ],
+      text: {
+        format: zodTextFormat(knowledgeAnswerSchema, "knowledge_base_answer"),
+      },
+    });
+
+    const parsed = response.output_parsed;
+    if (!parsed) {
+      return {
+        answer: "OpenAI returned no answer.",
+        sources,
+        model,
+        error: "OpenAI returned no parsed answer.",
+      };
+    }
+
+    const chosenSources =
+      parsed.sourceIndexes.length > 0
+        ? parsed.sourceIndexes
+            .map((index) => sources[index - 1] ?? null)
+            .filter(
+              (
+                entry,
+              ): entry is {
+                node: Doc<"nodes">;
+                page: Doc<"pages"> | null;
+                score?: number;
+                content?: string;
+              } => entry !== null,
+            )
+        : sources.slice(0, 4);
+
+    return {
+      answer: parsed.answer,
+      sources: chosenSources,
+      model,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      answer:
+        error instanceof Error
+          ? `OpenAI knowledge-base chat failed: ${error.message}`
+          : "OpenAI knowledge-base chat failed.",
+      sources,
+      model,
+      error: error instanceof Error ? error.message : "Unknown OpenAI error.",
+    };
+  }
+}
+
 export const answerWorkspaceQuestion = action({
   args: {
     ownerKey: v.string(),
@@ -189,220 +439,90 @@ export const answerWorkspaceQuestion = action({
   handler: async (
     ctx,
     args,
-  ): Promise<{
-    answer: string;
-    sources: Array<{
-      node: Doc<"nodes">;
-      page: Doc<"pages"> | null;
-      score?: number;
-      content?: string;
-    }>;
-    model: string;
-    error: string | null;
+  ): Promise<WorkspaceKnowledgeAnswer> =>
+    await answerWorkspaceQuestionInternal(ctx, args),
+});
+
+export const chatWithWorkspace = action({
+  args: {
+    ownerKey: v.string(),
+    question: v.string(),
+    limit: v.optional(v.number()),
+    linkedPageIds: v.optional(v.array(v.id("pages"))),
+    linkedNodeIds: v.optional(v.array(v.id("nodes"))),
+  },
+  handler: async (ctx, args): Promise<{
+    threadId: Id<"chatThreads">;
+    response: WorkspaceKnowledgeAnswer;
   }> => {
     assertOwnerKey(args.ownerKey);
 
     const question = args.question.trim();
-    const messageOnlyQuestion = stripLinkMarkup(question);
-    const semanticQuery = replaceLinkMarkupWithLabels(question);
-    const model = process.env.OPENAI_CHAT_MODEL ?? "gpt-5-mini";
     if (question.length === 0) {
-      return {
-        answer: "Ask a question to search your knowledge base.",
-        sources: [],
-        model,
-        error: null,
-      };
+      throw new Error("Enter a message before searching your workspace.");
     }
 
-    const linkedContext = (await ctx.runQuery(getLinkedKnowledgeContextRef, {
-      pageIds: args.linkedPageIds ?? [],
-      nodeIds: args.linkedNodeIds ?? [],
-    })) as {
-      pages: Array<{
-        page: Doc<"pages">;
-        representativeNode: Doc<"nodes"> | null;
-        content: string;
-      }>;
-      nodes: Array<{
-        node: Doc<"nodes">;
-        page: Doc<"pages">;
-        content: string;
-      }>;
-    };
-
-    const hasExplicitLinkedContext =
-      linkedContext.pages.length > 0 || linkedContext.nodes.length > 0;
-
-    const shouldUseSemanticSearch =
-      semanticQuery.length > 0 &&
-      (!hasExplicitLinkedContext || messageOnlyQuestion.length > 0);
-
-    const rawSources = shouldUseSemanticSearch
-      ? ((await runSemanticSearch(ctx, {
-          query: semanticQuery,
-          limit: args.limit ?? 10,
-        })) as Array<{
-          node: Doc<"nodes">;
-          page: Doc<"pages"> | null;
-          score?: number;
-          content?: string;
-        }>)
-      : [];
-    const linkedPageSources = linkedContext.pages
-      .filter((entry) => entry.representativeNode !== null)
-      .map((entry) => ({
-        node: entry.representativeNode!,
-        page: entry.page,
-        content: entry.content,
-      }));
-    const linkedNodeSources = linkedContext.nodes.map((entry) => ({
-      node: entry.node,
-      page: entry.page,
-      content: entry.content,
-    }));
-
-    const dedupedSources = new Map<
-      string,
+    const threadId: Id<"chatThreads"> = await ctx.runMutation(
+      ensureWorkspaceKnowledgeThreadRef,
       {
-        node: Doc<"nodes">;
-        page: Doc<"pages"> | null;
-        score?: number;
-        content?: string;
-      }
-    >();
-    for (const entry of [...linkedNodeSources, ...linkedPageSources, ...rawSources]) {
-      if (!entry.page) {
-        continue;
-      }
+        ownerKey: args.ownerKey,
+      },
+    );
 
-      const key = entry.node._id as string;
-      if (!dedupedSources.has(key)) {
-        dedupedSources.set(key, entry);
-      }
-    }
-    const sources = [...dedupedSources.values()].slice(0, 10);
+    await ctx.runMutation(storeUserMessageRef, {
+      threadId,
+      text: question,
+    });
 
-    const explicitLinkedContext = [
-      ...linkedContext.pages
-        .filter((entry) => entry.content.trim().length > 0)
-        .map((entry, index) =>
-          [
-            `Linked page [${index + 1}]: ${entry.page.title}`,
-            entry.content,
-          ].join("\n"),
-        ),
-      ...linkedContext.nodes.map((entry, index) =>
-        [
-          `Linked node [N${index + 1}] on ${entry.page.title}`,
-          entry.content.trim().length > 0 ? entry.content : entry.node.text || "(empty line)",
-        ].join("\n"),
-      ),
-    ].join("\n\n");
+    const priorMessages = (await ctx.runQuery(getThreadMessagesRef, {
+      threadId,
+    })) as Array<{
+      role: string;
+      text: string;
+    }>;
 
-    if (sources.length === 0 && explicitLinkedContext.trim().length === 0) {
-      return {
-        answer: "I couldn't find any relevant notes or tasks in your knowledge base yet.",
-        sources: [],
-        model,
-        error: null,
-      };
-    }
-
-    const client = getOpenAIClient();
-    if (!client) {
-      return {
-        answer:
-          "OpenAI is not configured, so I can only show the closest matching notes right now.",
-        sources,
-        model,
-        error: "OPENAI_API_KEY is not configured in Convex.",
-      };
-    }
-
-    const sourceContext = sources
-      .map((entry, index) =>
-        [
-          `[${index + 1}] Page: ${entry.page?.title ?? "Unknown page"}`,
-          `Kind: ${entry.node.kind}`,
-          `Text: ${entry.node.text || "(empty line)"}`,
-          `Context: ${entry.content?.trim() || entry.node.text || "(empty line)"}`,
-        ].join("\n"),
-      )
-      .join("\n\n");
-
+    let response: WorkspaceKnowledgeAnswer;
     try {
-      const response = await client.responses.parse({
-        model,
-        input: [
-          {
-            role: "system",
-            content:
-              "Answer the user's question using only the provided knowledge base snippets. If the snippets are insufficient, say so clearly. Keep the answer concise and grounded. Cite source numbers like [1] when helpful. If no explicit question text is provided, summarize the linked context and surface the most important takeaways.",
-          },
-          {
-            role: "user",
-            content: [
-              messageOnlyQuestion.length > 0 ? `Question: ${semanticQuery}` : null,
-              explicitLinkedContext.trim().length > 0 ? "" : null,
-              explicitLinkedContext.trim().length > 0 ? "Explicitly linked context:" : null,
-              explicitLinkedContext.trim().length > 0 ? explicitLinkedContext : null,
-              sourceContext.trim().length > 0 ? "" : null,
-              sourceContext.trim().length > 0 ? "Knowledge base snippets:" : null,
-              sourceContext.trim().length > 0 ? sourceContext : null,
-            ]
-              .filter((value): value is string => value !== null)
-              .join("\n"),
-          },
-        ],
-        text: {
-          format: zodTextFormat(knowledgeAnswerSchema, "knowledge_base_answer"),
-        },
+      response = await answerWorkspaceQuestionInternal(ctx, {
+        ...args,
+        question,
+        conversation: priorMessages.slice(0, -1),
       });
-
-      const parsed = response.output_parsed;
-      if (!parsed) {
-        return {
-          answer: "OpenAI returned no answer.",
-          sources,
-          model,
-          error: "OpenAI returned no parsed answer.",
-        };
-      }
-
-      const chosenSources =
-        parsed.sourceIndexes.length > 0
-          ? parsed.sourceIndexes
-              .map((index) => sources[index - 1] ?? null)
-              .filter(
-                (
-                  entry,
-                ): entry is {
-                  node: Doc<"nodes">;
-                  page: Doc<"pages"> | null;
-                  score?: number;
-                  content?: string;
-                } => entry !== null,
-              )
-          : sources.slice(0, 4);
-
-      return {
-        answer: parsed.answer,
-        sources: chosenSources,
-        model,
-        error: null,
-      };
     } catch (error) {
-      return {
+      const model = process.env.OPENAI_CHAT_MODEL ?? "gpt-5-mini";
+      response = {
         answer:
           error instanceof Error
-            ? `OpenAI knowledge-base chat failed: ${error.message}`
-            : "OpenAI knowledge-base chat failed.",
-        sources,
+            ? `Workspace search failed: ${error.message}`
+            : "Workspace search failed.",
+        sources: [],
         model,
-        error: error instanceof Error ? error.message : "Unknown OpenAI error.",
+        error: error instanceof Error ? error.message : "Unknown workspace chat error.",
       };
     }
+
+    await ctx.runMutation(storeAssistantMessageRef, {
+      threadId,
+      text: response.answer,
+      metadata: {
+        kind: "knowledge_response",
+        model: response.model,
+        error: response.error,
+        sources: response.sources.map((source) => ({
+          nodeId: source.node._id,
+          pageId: source.page?._id ?? null,
+          nodeText: source.node.text,
+          pageTitle: source.page?.title ?? null,
+          nodeKind: source.node.kind,
+          content: source.content ?? null,
+        })),
+      },
+    });
+
+    return {
+      threadId,
+      response,
+    };
   },
 });
 

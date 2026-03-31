@@ -69,6 +69,7 @@ export default defineSchema({
   chatThreads: defineTable({
     pageId: nullablePageIdValidator,
     title: v.string(),
+    scope: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
@@ -85,6 +86,7 @@ export default defineSchema({
     text: v.string(),
     preview: v.optional(v.array(v.string())),
     proposedPlan: v.optional(v.any()),
+    metadata: v.optional(v.any()),
     status: v.union(
       v.literal("ready"),
       v.literal("pending_approval"),

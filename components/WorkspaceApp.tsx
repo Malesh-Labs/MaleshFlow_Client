@@ -59,6 +59,7 @@ const LAST_PAGE_STORAGE_KEY = "maleshflow-last-page-id";
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "maleshflow-sidebar-collapsed";
 const COLLAPSED_NODES_STORAGE_KEY = "maleshflow-collapsed-node-ids";
 const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
+const WORKSPACE_AI_DOCK_TEXTAREA_ID = "workspace-ai-dock-textarea";
 const MODEL_REGENERATE_PROMPT =
   "Regenerate the Model section using the current Model lines and the Recent section as context. Refine it into a concise, useful model while preserving important intent and signal.";
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
@@ -71,8 +72,8 @@ type PageTreeResult = {
   nodes: Doc<"nodes">[];
   backlinks: Doc<"links">[];
 };
-type PaletteMode = "pages" | "find" | "nodes" | "chat";
-const PALETTE_MODE_ORDER: PaletteMode[] = ["pages", "find", "nodes", "chat"];
+type PaletteMode = "pages" | "find" | "nodes";
+const PALETTE_MODE_ORDER: PaletteMode[] = ["pages", "find", "nodes"];
 type NodeSearchResult = {
   node: Doc<"nodes">;
   page: PageDoc | null;
@@ -125,11 +126,19 @@ type LinkPreviewSegment =
       linkKind: "page" | "node";
       pageTypeLabel?: string | null;
     };
-type KnowledgeChatResponse = {
-  answer: string;
-  sources: NodeSearchResult[];
+type WorkspaceKnowledgeSourceSnapshot = {
+  nodeId: string;
+  pageId: string | null;
+  nodeText: string;
+  pageTitle: string | null;
+  nodeKind: string;
+  content: string | null;
+};
+type WorkspaceKnowledgeMessageMetadata = {
+  kind: "knowledge_response";
   model: string;
   error: string | null;
+  sources: WorkspaceKnowledgeSourceSnapshot[];
 };
 type DraggedNodePayload = {
   nodeId: string;
@@ -543,6 +552,19 @@ function readPageIdFromLocation() {
   return url.searchParams.get("page");
 }
 
+function focusWorkspaceAiDock() {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  const input = document.getElementById(WORKSPACE_AI_DOCK_TEXTAREA_ID);
+  if (input instanceof HTMLTextAreaElement) {
+    input.focus();
+    const end = input.value.length;
+    input.setSelectionRange(end, end);
+  }
+}
+
 function writePageIdToHistory(pageId: string | null, mode: "push" | "replace" = "push") {
   if (typeof window === "undefined") {
     return;
@@ -603,6 +625,54 @@ function resolveExplicitKnowledgeLinkTargets(
   return {
     linkedPageIds: [...linkedPageIds],
     linkedNodeIds: [...linkedNodeIds],
+  };
+}
+
+function readWorkspaceKnowledgeMessageMetadata(
+  message: Doc<"chatMessages">,
+): WorkspaceKnowledgeMessageMetadata | null {
+  const metadata = message.metadata;
+  if (!metadata || typeof metadata !== "object") {
+    return null;
+  }
+
+  const record = metadata as Record<string, unknown>;
+  if (record.kind !== "knowledge_response") {
+    return null;
+  }
+
+  const rawSources = Array.isArray(record.sources) ? record.sources : [];
+  const sources = rawSources
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return null;
+      }
+
+      const sourceRecord = entry as Record<string, unknown>;
+      if (typeof sourceRecord.nodeId !== "string") {
+        return null;
+      }
+
+      return {
+        nodeId: sourceRecord.nodeId,
+        pageId: typeof sourceRecord.pageId === "string" ? sourceRecord.pageId : null,
+        nodeText: typeof sourceRecord.nodeText === "string" ? sourceRecord.nodeText : "",
+        pageTitle:
+          typeof sourceRecord.pageTitle === "string" ? sourceRecord.pageTitle : null,
+        nodeKind:
+          typeof sourceRecord.nodeKind === "string" ? sourceRecord.nodeKind : "note",
+        content: typeof sourceRecord.content === "string" ? sourceRecord.content : null,
+      } satisfies WorkspaceKnowledgeSourceSnapshot;
+    })
+    .filter(
+      (entry): entry is WorkspaceKnowledgeSourceSnapshot => entry !== null,
+    );
+
+  return {
+    kind: "knowledge_response",
+    model: typeof record.model === "string" ? record.model : "gpt-5-mini",
+    error: typeof record.error === "string" ? record.error : null,
+    sources,
   };
 }
 
@@ -1238,14 +1308,8 @@ function ConfiguredWorkspace({
   const [nodeSearchResults, setNodeSearchResults] = useState<NodeSearchResult[]>([]);
   const [isTextSearchLoading, setIsTextSearchLoading] = useState(false);
   const [isNodeSearchLoading, setIsNodeSearchLoading] = useState(false);
-  const [knowledgeChatResponse, setKnowledgeChatResponse] = useState<KnowledgeChatResponse | null>(
-    null,
-  );
-  const [isKnowledgeChatLoading, setIsKnowledgeChatLoading] = useState(false);
   const [workspaceChatDraft, setWorkspaceChatDraft] = useState("");
-  const [workspaceChatResponse, setWorkspaceChatResponse] = useState<KnowledgeChatResponse | null>(
-    null,
-  );
+  const [workspaceChatError, setWorkspaceChatError] = useState("");
   const [isWorkspaceChatLoading, setIsWorkspaceChatLoading] = useState(false);
   const [lastResolvedPageTree, setLastResolvedPageTree] = useState<PageTreeResult | null>(null);
   const [activeDraggedNodeId, setActiveDraggedNodeId] = useState<string | null>(null);
@@ -1275,6 +1339,10 @@ function ConfiguredWorkspace({
   );
   const embeddingRebuildProgress = useQuery(
     api.workspace.getEmbeddingRebuildStatus,
+    ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
+  );
+  const workspaceKnowledgeThread = useQuery(
+    api.chatData.getWorkspaceKnowledgeThread,
     ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
   );
   const pageTree = useQuery(
@@ -1307,7 +1375,7 @@ function ConfiguredWorkspace({
   const generateJournalFeedback = useAction(api.chat.generateJournalFeedback);
   const findNodesText = useAction(api.ai.findNodesText);
   const searchNodes = useAction(api.ai.searchNodes);
-  const answerWorkspaceQuestion = useAction(api.ai.answerWorkspaceQuestion);
+  const chatWithWorkspace = useAction(api.ai.chatWithWorkspace);
   const pageTitleInputRef = useRef<HTMLInputElement>(null);
   const pageTitleDraftRef = useRef(pageTitleDraft);
   const paletteInputRef = useRef<HTMLInputElement>(null);
@@ -1344,8 +1412,6 @@ function ConfiguredWorkspace({
     setPaletteHighlightIndex(0);
     setTextSearchResults([]);
     setNodeSearchResults([]);
-    setKnowledgeChatResponse(null);
-    setIsKnowledgeChatLoading(false);
   }, []);
 
   const openPalette = useCallback((mode: PaletteMode) => {
@@ -1519,6 +1585,7 @@ function ConfiguredWorkspace({
       : paletteMode === "nodes"
         ? nodeSearchResults.length
         : 0;
+  const workspaceChatMessages = workspaceKnowledgeThread?.messages ?? [];
   const embeddingProgressLabel = useMemo(() => {
     if (!embeddingRebuildProgress) {
       return "Embedding status unavailable.";
@@ -2478,13 +2545,6 @@ function ConfiguredWorkspace({
   }, [ownerKey, paletteMode, paletteOpen, paletteQuery, searchNodes]);
 
   useEffect(() => {
-    if (paletteMode !== "chat") {
-      setIsKnowledgeChatLoading(false);
-      return;
-    }
-  }, [paletteMode]);
-
-  useEffect(() => {
     if (!pendingRevealNodeId || !activePageTree) {
       return;
     }
@@ -2577,7 +2637,7 @@ function ConfiguredWorkspace({
 
       if (isModifier && event.shiftKey && normalizedKey === "l") {
         event.preventDefault();
-        openPalette("chat");
+        focusWorkspaceAiDock();
         return;
       }
 
@@ -2872,7 +2932,6 @@ function ConfiguredWorkspace({
     setPaletteMode("pages");
     setTextSearchResults([]);
     setNodeSearchResults([]);
-    setKnowledgeChatResponse(null);
     clearNodeSelection();
   }, [clearNodeSelection]);
 
@@ -2890,7 +2949,6 @@ function ConfiguredWorkspace({
     setPaletteHighlightIndex(0);
     setPaletteMode("nodes");
     setTextSearchResults([]);
-    setKnowledgeChatResponse(null);
     clearNodeSelection();
   }, [clearNodeSelection]);
 
@@ -2902,71 +2960,51 @@ function ConfiguredWorkspace({
     clearNodeSelection();
   }, [clearNodeSelection]);
 
-  const askKnowledgeBase = useCallback(
-    async (question: string) => {
+  const handleOpenWorkspaceKnowledgeSource = useCallback(
+    (source: WorkspaceKnowledgeSourceSnapshot) => {
+      if (!source.pageId) {
+        return;
+      }
+
+      setSelectedPageId(source.pageId as Id<"pages">);
+      setLocationPageId(source.pageId);
+      writePageIdToHistory(source.pageId, "push");
+      if (source.nodeId) {
+        setPendingRevealNodeId(source.nodeId);
+      }
+      clearNodeSelection();
+    },
+    [clearNodeSelection],
+  );
+
+  const handleWorkspaceChatSubmit = useCallback(async () => {
+    const question = workspaceChatDraft.trim();
+    if (question.length === 0) {
+      return;
+    }
+
+    setIsWorkspaceChatLoading(true);
+    setWorkspaceChatError("");
+    try {
       const explicitTargets = resolveExplicitKnowledgeLinkTargets(question, pagesByTitle);
-      return (await answerWorkspaceQuestion({
+      await chatWithWorkspace({
         ownerKey,
         question,
         limit: 10,
         linkedPageIds: explicitTargets.linkedPageIds,
         linkedNodeIds: explicitTargets.linkedNodeIds,
-      })) as KnowledgeChatResponse;
-    },
-    [answerWorkspaceQuestion, ownerKey, pagesByTitle],
-  );
-
-  const handleKnowledgeChat = useCallback(async () => {
-    const question = paletteQuery.trim();
-    if (question.length === 0) {
-      setKnowledgeChatResponse(null);
-      return;
-    }
-
-    setIsKnowledgeChatLoading(true);
-    try {
-      const response = await askKnowledgeBase(question);
-      setKnowledgeChatResponse(response);
-    } catch (error) {
-      setKnowledgeChatResponse({
-        answer:
-          error instanceof Error
-            ? `Knowledge-base chat failed: ${error.message}`
-            : "Knowledge-base chat failed.",
-        sources: [],
-        model: "gpt-5-mini",
-        error: error instanceof Error ? error.message : "Unknown error.",
       });
-    } finally {
-      setIsKnowledgeChatLoading(false);
-    }
-  }, [askKnowledgeBase, paletteQuery]);
-
-  const handleWorkspaceChatSubmit = useCallback(async () => {
-    const question = workspaceChatDraft.trim();
-    if (question.length === 0) {
-      setWorkspaceChatResponse(null);
-      return;
-    }
-
-    setIsWorkspaceChatLoading(true);
-    try {
-      const response = await askKnowledgeBase(question);
-      setWorkspaceChatResponse(response);
+      setWorkspaceChatDraft("");
     } catch (error) {
-      setWorkspaceChatResponse({
-        answer:
-          error instanceof Error
-            ? `Knowledge-base chat failed: ${error.message}`
-            : "Knowledge-base chat failed.",
-        sources: [],
-        model: "gpt-5-mini",
-        error: error instanceof Error ? error.message : "Unknown error.",
-      });
+      setWorkspaceChatError(
+        error instanceof Error
+          ? error.message
+          : "Knowledge-base chat failed.",
+      );
     } finally {
       setIsWorkspaceChatLoading(false);
     }
-  }, [askKnowledgeBase, workspaceChatDraft]);
+  }, [chatWithWorkspace, ownerKey, pagesByTitle, workspaceChatDraft]);
 
   const handleArchivePage = async (page: PageDoc, archived: boolean) => {
     await archivePage({
@@ -3063,12 +3101,6 @@ function ConfiguredWorkspace({
       const nextMode = PALETTE_MODE_ORDER[nextIndex] ?? "pages";
 
       switchPaletteMode(nextMode);
-      return;
-    }
-
-    if (paletteMode === "chat" && event.key === "Enter") {
-      event.preventDefault();
-      void handleKnowledgeChat();
       return;
     }
 
@@ -3889,8 +3921,6 @@ function ConfiguredWorkspace({
             setPaletteMode("pages");
             setTextSearchResults([]);
             setNodeSearchResults([]);
-            setKnowledgeChatResponse(null);
-            setIsKnowledgeChatLoading(false);
           }}
         >
           <div
@@ -3941,20 +3971,6 @@ function ConfiguredWorkspace({
                 >
                   Semantic
                 </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    switchPaletteMode("chat");
-                  }}
-                  className={clsx(
-                    "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
-                    paletteMode === "chat"
-                      ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
-                      : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
-                  )}
-                >
-                  Ask
-                </button>
               </div>
               <div className="flex items-center gap-3">
                 <input
@@ -3963,9 +3979,6 @@ function ConfiguredWorkspace({
                   onChange={(event) => {
                     setPaletteQuery(event.target.value);
                     setPaletteHighlightIndex(0);
-                    if (paletteMode === "chat") {
-                      setKnowledgeChatResponse(null);
-                    }
                   }}
                   onKeyDown={handlePaletteKeyDown}
                   placeholder={
@@ -3973,22 +3986,10 @@ function ConfiguredWorkspace({
                       ? "Search pages..."
                       : paletteMode === "find"
                         ? "Find exact text in notes and tasks..."
-                      : paletteMode === "nodes"
-                        ? "Search notes and tasks semantically across the workspace..."
-                        : "Ask your knowledge base a question..."
+                        : "Search notes and tasks semantically across the workspace..."
                   }
                   className="w-full border-0 bg-transparent p-0 text-lg outline-none"
                 />
-                {paletteMode === "chat" ? (
-                  <button
-                    type="button"
-                    onClick={() => void handleKnowledgeChat()}
-                    disabled={isKnowledgeChatLoading || paletteQuery.trim().length === 0}
-                    className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition hover:bg-[var(--workspace-brand-hover)] disabled:cursor-wait disabled:opacity-60"
-                  >
-                    Ask
-                  </button>
-                ) : null}
               </div>
             </div>
             <div className="max-h-[420px] overflow-y-auto py-2">
@@ -4105,66 +4106,7 @@ function ConfiguredWorkspace({
                     </button>
                   );
                 })
-              ) : paletteQuery.trim().length === 0 ? (
-                <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">
-                  Ask questions across all active notes and tasks in all active pages.
-                </p>
-              ) : isKnowledgeChatLoading ? (
-                <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">Thinking with your knowledge base…</p>
-              ) : knowledgeChatResponse ? (
-                <div className="space-y-4 px-5 py-4">
-                  <div>
-                    <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
-                      Answer
-                    </p>
-                    <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[var(--workspace-text)]">
-                      {knowledgeChatResponse.answer}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
-                      Sources
-                    </p>
-                    <div className="mt-2 space-y-2">
-                      {knowledgeChatResponse.sources.length === 0 ? (
-                        <p className="text-sm text-[var(--workspace-text-subtle)]">No source snippets available.</p>
-                      ) : (
-                        knowledgeChatResponse.sources.map((result, index) => {
-                          return (
-                            <button
-                              key={`${result.node._id}:${index}`}
-                              type="button"
-                              onClick={() => handleSelectNodeSearchResult(result)}
-                              className="block w-full border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-4 py-3 text-left transition hover:border-[var(--workspace-border-hover)] hover:bg-[var(--workspace-surface-hover)]"
-                            >
-                              <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
-                                {result.node.text || "(empty line)"}
-                              </span>
-                              <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                                {result.page?.title ?? "Unknown page"}
-                                {result.page ? ` • ${getPageTypeDisplayLabel(result.page)}` : ""}
-                              </span>
-                              {result.content && result.content.trim() !== result.node.text.trim() ? (
-                                <span className="mt-2 block whitespace-pre-wrap text-xs leading-6 text-[var(--workspace-text-subtle)]">
-                                  {result.content}
-                                </span>
-                              ) : null}
-                            </button>
-                          );
-                        })
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between gap-3 border-t border-[var(--workspace-border-subtle)] pt-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                    <span>{knowledgeChatResponse.model}</span>
-                    <span>{knowledgeChatResponse.error ? "OpenAI issue surfaced" : "Grounded with semantic retrieval"}</span>
-                  </div>
-                </div>
-              ) : (
-                <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">
-                  Press Enter to ask your knowledge base.
-                </p>
-              )}
+              ) : null}
             </div>
           </div>
         </div>
@@ -4174,10 +4116,11 @@ function ConfiguredWorkspace({
         draft={workspaceChatDraft}
         onDraftChange={setWorkspaceChatDraft}
         onSubmit={() => void handleWorkspaceChatSubmit()}
-        response={workspaceChatResponse}
+        messages={workspaceChatMessages}
         isLoading={isWorkspaceChatLoading}
-        onDismissResponse={() => setWorkspaceChatResponse(null)}
-        onOpenResult={handleSelectNodeSearchResult}
+        error={workspaceChatError}
+        onClearError={() => setWorkspaceChatError("")}
+        onOpenSource={handleOpenWorkspaceKnowledgeSource}
       />
       </main>
     </WorkspaceHistoryProvider>
@@ -4607,21 +4550,24 @@ function WorkspaceAiDock({
   draft,
   onDraftChange,
   onSubmit,
-  response,
+  messages,
   isLoading,
-  onDismissResponse,
-  onOpenResult,
+  error,
+  onClearError,
+  onOpenSource,
 }: {
   ownerKey: string;
   draft: string;
   onDraftChange: (value: string) => void;
   onSubmit: () => void;
-  response: KnowledgeChatResponse | null;
+  messages: Doc<"chatMessages">[];
   isLoading: boolean;
-  onDismissResponse: () => void;
-  onOpenResult: (result: NodeSearchResult) => void;
+  error: string;
+  onClearError: () => void;
+  onOpenSource: (source: WorkspaceKnowledgeSourceSnapshot) => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const historyRef = useRef<HTMLDivElement>(null);
   const [caretPosition, setCaretPosition] = useState<number | null>(null);
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
@@ -4647,6 +4593,15 @@ function WorkspaceAiDock({
   useEffect(() => {
     autoResizeTextarea(textareaRef.current);
   }, [draft]);
+
+  useEffect(() => {
+    const container = historyRef.current;
+    if (!container) {
+      return;
+    }
+
+    container.scrollTop = container.scrollHeight;
+  }, [error, isLoading, messages]);
 
   const applyLinkSuggestion = (suggestion: LinkSuggestion) => {
     if (!activeLinkToken) {
@@ -4712,66 +4667,114 @@ function WorkspaceAiDock({
     <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 px-3 pb-3 md:px-6 md:pb-6">
       <div className="pointer-events-auto mx-auto max-w-[1600px]">
         <div className="overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface)] shadow-[0_-16px_48px_-32px_rgba(0,0,0,0.65)] backdrop-blur-sm">
-          {response ? (
-            <div className="max-h-[38vh] overflow-y-auto border-b border-[var(--workspace-border-subtle)] px-4 py-4 md:px-6">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
-                    AI Response
-                  </p>
-                  <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[var(--workspace-text)]">
-                    {response.answer}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={onDismissResponse}
-                  className="border border-[var(--workspace-border-control)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                >
-                  Close
-                </button>
-              </div>
-              <div className="mt-4 space-y-2">
-                {response.sources.length === 0 ? (
-                  <p className="text-sm text-[var(--workspace-text-subtle)]">
-                    No source snippets available.
-                  </p>
-                ) : (
-                  response.sources.map((result, index) => (
-                    <button
-                      key={`${result.node._id}:${index}:dock`}
-                      type="button"
-                      onClick={() => onOpenResult(result)}
-                      className="block w-full border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-4 py-3 text-left transition hover:border-[var(--workspace-border-hover)] hover:bg-[var(--workspace-surface-hover)]"
+          {messages.length > 0 || error || isLoading ? (
+            <div
+              ref={historyRef}
+              className="max-h-[38vh] overflow-y-auto border-b border-[var(--workspace-border-subtle)] px-4 py-4 md:px-6"
+            >
+              <div className="space-y-4">
+                {messages.map((message) => {
+                  const metadata =
+                    message.role === "assistant"
+                      ? readWorkspaceKnowledgeMessageMetadata(message)
+                      : null;
+                  const isUser = message.role === "user";
+
+                  return (
+                    <div
+                      key={message._id}
+                      className={clsx(
+                        "flex",
+                        isUser ? "justify-end" : "justify-start",
+                      )}
                     >
-                      <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
-                        {result.node.text || "(empty line)"}
-                      </span>
-                      <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                        {result.page?.title ?? "Unknown page"}
-                        {result.page ? ` • ${getPageTypeDisplayLabel(result.page)}` : ""}
-                      </span>
-                      {result.content && result.content.trim() !== result.node.text.trim() ? (
-                        <span className="mt-2 block whitespace-pre-wrap text-xs leading-6 text-[var(--workspace-text-subtle)]">
-                          {result.content}
-                        </span>
-                      ) : null}
-                    </button>
-                  ))
-                )}
-              </div>
-              <div className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--workspace-border-subtle)] pt-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                <span>{response.model}</span>
-                <span>{response.error ? "OpenAI issue surfaced" : "Grounded with linked + semantic context"}</span>
+                      <div
+                        className={clsx(
+                          "max-w-3xl border px-4 py-3",
+                          isUser
+                            ? "border-[var(--workspace-brand)] bg-[color-mix(in_srgb,var(--workspace-brand)_14%,transparent)]"
+                            : "border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)]",
+                        )}
+                      >
+                        <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                          {isUser ? "You" : "AI"}
+                        </p>
+                        <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[var(--workspace-text)]">
+                          {message.text}
+                        </p>
+                        {!isUser && metadata ? (
+                          <>
+                            <div className="mt-4 space-y-2">
+                              {metadata.sources.map((source, index) => (
+                                <button
+                                  key={`${message._id}:${source.nodeId}:${index}`}
+                                  type="button"
+                                  onClick={() => onOpenSource(source)}
+                                  className="block w-full border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface)] px-4 py-3 text-left transition hover:border-[var(--workspace-border-hover)] hover:bg-[var(--workspace-surface-hover)]"
+                                >
+                                  <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
+                                    {source.nodeText || "(empty line)"}
+                                  </span>
+                                  <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                                    {source.pageTitle ?? "Unknown page"} • {source.nodeKind === "task" ? "Task" : "Note"}
+                                  </span>
+                                  {source.content && source.content.trim() !== source.nodeText.trim() ? (
+                                    <span className="mt-2 block whitespace-pre-wrap text-xs leading-6 text-[var(--workspace-text-subtle)]">
+                                      {source.content}
+                                    </span>
+                                  ) : null}
+                                </button>
+                              ))}
+                            </div>
+                            <div className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--workspace-border-subtle)] pt-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                              <span>{metadata.model}</span>
+                              <span>{metadata.error ? "OpenAI issue surfaced" : "Grounded with linked + semantic context"}</span>
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+                {isLoading ? (
+                  <div className="flex justify-start">
+                    <div className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-4 py-3">
+                      <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                        AI
+                      </p>
+                      <p className="mt-2 text-sm text-[var(--workspace-text-subtle)]">
+                        Thinking…
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
+                {error ? (
+                  <div className="border border-[var(--workspace-danger)]/40 bg-[color-mix(in_srgb,var(--workspace-danger)_10%,transparent)] px-4 py-3 text-sm text-[var(--workspace-text)]">
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="whitespace-pre-wrap leading-6">{error}</p>
+                      <button
+                        type="button"
+                        onClick={onClearError}
+                        className="border border-[var(--workspace-border-control)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                      >
+                        Dismiss
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : null}
           <div className="relative flex items-end gap-3 px-4 py-3 md:px-6 md:py-4">
             <div className="min-w-0 flex-1">
               <textarea
+                id={WORKSPACE_AI_DOCK_TEXTAREA_ID}
                 ref={textareaRef}
                 value={draft}
                 onChange={(event) => {
+                  if (error) {
+                    onClearError();
+                  }
                   onDraftChange(event.target.value);
                   setCaretPosition(event.target.selectionStart ?? event.target.value.length);
                 }}
@@ -4786,10 +4789,11 @@ function WorkspaceAiDock({
                 onKeyDown={handleKeyDown}
                 placeholder="Ask AI about your workspace. Use [[Page]] or [[Node|node:id]] to pin specific context…"
                 rows={1}
+                disabled={isLoading}
                 className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-[15px] leading-6 outline-none"
               />
               <p className="mt-1 text-[11px] leading-5 text-[var(--workspace-text-faint)]">
-                Linked pages and nodes in `[[...]]` are sent as explicit context before semantic retrieval.
+                This chat persists between sessions. Linked pages and nodes in `[[...]]` are sent as explicit context before semantic retrieval.
               </p>
             </div>
             <button
