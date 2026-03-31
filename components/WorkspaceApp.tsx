@@ -26,6 +26,7 @@ import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
 import { extractLinkMatches } from "@/lib/domain/links";
+import { extractTagMatches } from "@/lib/domain/tags";
 import {
   buildNodeSelectionIds,
   filterPagesForCommandPalette,
@@ -59,6 +60,7 @@ const LAST_PAGE_STORAGE_KEY = "maleshflow-last-page-id";
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "maleshflow-sidebar-collapsed";
 const COLLAPSED_NODES_STORAGE_KEY = "maleshflow-collapsed-node-ids";
 const WORKSPACE_AI_DOCK_COLLAPSE_STORAGE_KEY = "maleshflow-workspace-ai-dock-collapsed";
+const TAGS_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-tags-section-collapsed";
 const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
 const WORKSPACE_AI_DOCK_TEXTAREA_ID = "workspace-ai-dock-textarea";
 const MODEL_REGENERATE_PROMPT =
@@ -126,6 +128,13 @@ type LinkPreviewSegment =
       resolved: boolean;
       linkKind: "page" | "node";
       pageTypeLabel?: string | null;
+    }
+  | {
+      key: string;
+      kind: "tag";
+      text: string;
+      value: string;
+      normalizedValue: string;
     };
 type WorkspaceKnowledgeSourceSnapshot = {
   nodeId: string;
@@ -140,6 +149,12 @@ type WorkspaceKnowledgeMessageMetadata = {
   model: string;
   error: string | null;
   sources: WorkspaceKnowledgeSourceSnapshot[];
+};
+type SidebarTagResult = {
+  label: string;
+  value: string;
+  normalizedValue: string;
+  count: number;
 };
 type DraggedNodePayload = {
   nodeId: string;
@@ -814,14 +829,25 @@ function buildLinkPreviewSegments(
   pagesByTitle: Map<string, PageDoc>,
   nodeTargetsById: Map<string, NodeLinkTargetResolution>,
 ): LinkPreviewSegment[] {
-  const matches = extractLinkMatches(value);
+  const linkMatches = extractLinkMatches(value);
+  const tagMatches = extractTagMatches(value).filter(
+    (tagMatch) =>
+      !linkMatches.some(
+        (linkMatch) =>
+          tagMatch.start < linkMatch.end && tagMatch.end > linkMatch.start,
+      ),
+  );
+  const matches = [
+    ...linkMatches.map((match) => ({ ...match, tokenKind: "link" as const })),
+    ...tagMatches.map((match) => ({ ...match, tokenKind: "tag" as const })),
+  ].sort((left, right) => left.start - right.start);
   if (matches.length === 0) {
     return [];
   }
 
   const segments: LinkPreviewSegment[] = [];
   let cursor = 0;
-  let hasRenderableLink = false;
+  let hasRenderableToken = false;
 
   for (const match of matches) {
     if (match.start > cursor) {
@@ -832,8 +858,16 @@ function buildLinkPreviewSegments(
       });
     }
 
-    hasRenderableLink = true;
-    if (match.link.kind === "page") {
+    hasRenderableToken = true;
+    if (match.tokenKind === "tag") {
+      segments.push({
+        key: `tag:${match.start}`,
+        kind: "tag",
+        text: match.label,
+        value: match.value,
+        normalizedValue: match.normalizedValue,
+      });
+    } else if (match.link.kind === "page") {
       const page = pagesByTitle.get(normalizePageTitleKey(match.link.targetPageTitle));
       segments.push({
         key: `page:${match.start}`,
@@ -878,7 +912,7 @@ function buildLinkPreviewSegments(
     });
   }
 
-  return hasRenderableLink ? segments : [];
+  return hasRenderableToken ? segments : [];
 }
 
 function collectChildren(nodes: TreeNode[], excludedIds: Set<string>) {
@@ -1193,41 +1227,6 @@ function stripDimmedSyntaxPrefix(value: string) {
   return value.replace(/^(\s*)%%\s*/, "$1");
 }
 
-function stripDimPrefixFromSegments(segments: LinkPreviewSegment[]) {
-  let shouldStripPrefix = true;
-
-  return segments
-    .map((segment) => {
-      if (!shouldStripPrefix) {
-        return segment;
-      }
-
-      if (segment.kind !== "text") {
-        return segment;
-      }
-
-      const nextText = stripDimmedSyntaxPrefix(segment.text);
-      if (nextText !== segment.text) {
-        shouldStripPrefix = false;
-        if (nextText.length === 0) {
-          return null;
-        }
-
-        return {
-          ...segment,
-          text: nextText,
-        } satisfies LinkPreviewSegment;
-      }
-
-      if (segment.text.length > 0) {
-        shouldStripPrefix = false;
-      }
-
-      return segment;
-    })
-    .filter((segment): segment is LinkPreviewSegment => segment !== null);
-}
-
 function buildNodePlacement(
   pageId: Id<"pages">,
   parentNodeId: Id<"nodes"> | null,
@@ -1361,6 +1360,7 @@ function ConfiguredWorkspace({
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isTagsSectionCollapsed, setIsTagsSectionCollapsed] = useState(false);
   const [isWorkspaceAiDockCollapsed, setIsWorkspaceAiDockCollapsed] = useState(false);
   const [showSidebarDiagnostics, setShowSidebarDiagnostics] = useState(false);
   const [sidebarBootstrapError, setSidebarBootstrapError] = useState<string>("");
@@ -1383,6 +1383,10 @@ function ConfiguredWorkspace({
   );
   const embeddingRebuildProgress = useQuery(
     api.workspace.getEmbeddingRebuildStatus,
+    ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
+  );
+  const tags = useQuery(
+    api.workspace.listTags,
     ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
   );
   const workspaceKnowledgeThread = useQuery(
@@ -1473,6 +1477,16 @@ function ConfiguredWorkspace({
     switchPaletteMode(mode);
     setPaletteOpen(true);
   }, [switchPaletteMode]);
+
+  const openFindPaletteForQuery = useCallback((query: string) => {
+    lastPaletteModeRef.current = "find";
+    setPaletteMode("find");
+    setPaletteQuery(query);
+    setPaletteHighlightIndex(0);
+    setTextSearchResults([]);
+    setNodeSearchResults([]);
+    setPaletteOpen(true);
+  }, []);
 
   const isSidebarQueryLoading =
     Boolean(ownerKey) && isOwnerKeyValid === true && typeof sidebarTree === "undefined";
@@ -1585,6 +1599,7 @@ function ConfiguredWorkspace({
   const uncategorizedPages =
     (pages ?? []).filter((page) => !page.archived && !sidebarLinkedPageIds.has(page._id as string));
   const archivedPages = (pages ?? []).filter((page) => page.archived);
+  const sortedTags: SidebarTagResult[] = tags ?? [];
   const pagesByTitle = useMemo(() => {
     const next = new Map<string, PageDoc>();
     for (const page of pages ?? []) {
@@ -1692,6 +1707,9 @@ function ConfiguredWorkspace({
     }
 
     setIsSidebarCollapsed(window.localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY) === "true");
+    setIsTagsSectionCollapsed(
+      window.localStorage.getItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY) === "true",
+    );
     setIsWorkspaceAiDockCollapsed(
       window.localStorage.getItem(WORKSPACE_AI_DOCK_COLLAPSE_STORAGE_KEY) === "true",
     );
@@ -1723,6 +1741,17 @@ function ConfiguredWorkspace({
       isSidebarCollapsed ? "true" : "false",
     );
   }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      TAGS_SECTION_COLLAPSE_STORAGE_KEY,
+      isTagsSectionCollapsed ? "true" : "false",
+    );
+  }, [isTagsSectionCollapsed]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2002,6 +2031,7 @@ function ConfiguredWorkspace({
 
     window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
     window.localStorage.removeItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
+    window.localStorage.removeItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
     window.localStorage.removeItem(WORKSPACE_AI_DOCK_COLLAPSE_STORAGE_KEY);
     setSelectedPageId(null);
@@ -3409,6 +3439,7 @@ function ConfiguredWorkspace({
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
+                      onOpenTag={openFindPaletteForQuery}
                       mobileIndentStep={SIDEBAR_MOBILE_INDENT_STEP}
                     />
                     <InlineComposer
@@ -3543,6 +3574,48 @@ function ConfiguredWorkspace({
                       ))}
                     </div>
                   )}
+                </div>
+
+                <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
+                  <button
+                    type="button"
+                    onClick={() => setIsTagsSectionCollapsed((current) => !current)}
+                    className="flex w-full items-center justify-between gap-3 text-left"
+                  >
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
+                      Tags
+                    </p>
+                    <span className="text-xs font-semibold text-[var(--workspace-text-faint)]">
+                      {isTagsSectionCollapsed ? "+" : "−"}
+                    </span>
+                  </button>
+                  {!isTagsSectionCollapsed ? (
+                    typeof tags === "undefined" ? (
+                      <p className="mt-3 text-sm text-[var(--workspace-text-faint)]">
+                        Loading tags…
+                      </p>
+                    ) : sortedTags.length === 0 ? (
+                      <p className="mt-3 text-sm text-[var(--workspace-text-faint)]">
+                        No tags yet.
+                      </p>
+                    ) : (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {sortedTags.map((tag) => (
+                          <button
+                            key={tag.normalizedValue}
+                            type="button"
+                            onClick={() => openFindPaletteForQuery(tag.label)}
+                            className="inline-flex items-center gap-2 border border-[var(--workspace-border-control)] px-2 py-1 text-left text-xs text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-brand-hover)]"
+                          >
+                            <span>{tag.label}</span>
+                            <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--workspace-text-faint)] no-underline">
+                              {tag.count}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )
+                  ) : null}
                 </div>
 
                 <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5 opacity-75">
@@ -3742,6 +3815,7 @@ function ConfiguredWorkspace({
                         pagesByTitle={pagesByTitle}
                         onOpenPage={handleSelectPage}
                         onOpenNode={handleOpenLinkedNode}
+                        onOpenTag={openFindPaletteForQuery}
                       />
                       <InlineComposer
                         ownerKey={ownerKey}
@@ -3787,6 +3861,7 @@ function ConfiguredWorkspace({
                           pagesByTitle={pagesByTitle}
                           onOpenPage={handleSelectPage}
                           onOpenNode={handleOpenLinkedNode}
+                          onOpenTag={openFindPaletteForQuery}
                           compact
                         />
                       ) : (
@@ -3830,6 +3905,7 @@ function ConfiguredWorkspace({
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
+                      onOpenTag={openFindPaletteForQuery}
                       depthOffset={sectionDepthOffset}
                       statusMessage={chatStatus}
                       action={
@@ -3876,6 +3952,7 @@ function ConfiguredWorkspace({
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
+                      onOpenTag={openFindPaletteForQuery}
                       depthOffset={sectionDepthOffset}
                     />
                   </div>
@@ -3914,6 +3991,7 @@ function ConfiguredWorkspace({
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
+                      onOpenTag={openFindPaletteForQuery}
                       depthOffset={sectionDepthOffset}
                     />
                   </div>
@@ -3949,6 +4027,7 @@ function ConfiguredWorkspace({
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
+                      onOpenTag={openFindPaletteForQuery}
                       depthOffset={sectionDepthOffset}
                       statusMessage={journalFeedbackStatus}
                       action={
@@ -3998,6 +4077,7 @@ function ConfiguredWorkspace({
                         pagesByTitle={pagesByTitle}
                         onOpenPage={handleSelectPage}
                         onOpenNode={handleOpenLinkedNode}
+                        onOpenTag={openFindPaletteForQuery}
                         depthOffset={sectionDepthOffset}
                       />
                     </div>
@@ -4033,6 +4113,7 @@ function ConfiguredWorkspace({
                         pagesByTitle={pagesByTitle}
                         onOpenPage={handleSelectPage}
                         onOpenNode={handleOpenLinkedNode}
+                        onOpenTag={openFindPaletteForQuery}
                         depthOffset={sectionDepthOffset}
                       />
                     </div>
@@ -4069,6 +4150,7 @@ function ConfiguredWorkspace({
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
+                      onOpenTag={openFindPaletteForQuery}
                     />
                     <InlineComposer
                       ownerKey={ownerKey}
@@ -4371,6 +4453,7 @@ function PageSection({
   pagesByTitle,
   onOpenPage,
   onOpenNode,
+  onOpenTag,
   depthOffset = 0,
   mobileIndentStep = 0,
   action = null,
@@ -4411,6 +4494,7 @@ function PageSection({
   pagesByTitle: Map<string, PageDoc>;
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
+  onOpenTag: (tag: string) => void;
   depthOffset?: number;
   mobileIndentStep?: number;
   action?: ReactNode;
@@ -4478,6 +4562,7 @@ function PageSection({
           pagesByTitle={pagesByTitle}
           onOpenPage={onOpenPage}
           onOpenNode={onOpenNode}
+          onOpenTag={onOpenTag}
           mobileIndentStep={mobileIndentStep}
         />
         <InlineComposer
@@ -4528,6 +4613,7 @@ function OutlineNodeList({
   pagesByTitle,
   onOpenPage,
   onOpenNode,
+  onOpenTag,
   mobileIndentStep = 0,
 }: {
   nodes: TreeNode[];
@@ -4565,6 +4651,7 @@ function OutlineNodeList({
   pagesByTitle: Map<string, PageDoc>;
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
+  onOpenTag: (tag: string) => void;
   mobileIndentStep?: number;
 }) {
   return (
@@ -4607,6 +4694,7 @@ function OutlineNodeList({
           pagesByTitle={pagesByTitle}
           onOpenPage={onOpenPage}
           onOpenNode={onOpenNode}
+          onOpenTag={onOpenTag}
           mobileIndentStep={mobileIndentStep}
         />
       ))}
@@ -4685,6 +4773,7 @@ function LinkedTextPreview({
   onFocusLine,
   onOpenPage,
   onOpenNode,
+  onOpenTag,
   isDisabled,
   className,
 }: {
@@ -4692,6 +4781,7 @@ function LinkedTextPreview({
   onFocusLine: () => void;
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
+  onOpenTag: (tag: string) => void;
   isDisabled: boolean;
   className?: string;
 }) {
@@ -4704,7 +4794,7 @@ function LinkedTextPreview({
       )}
       onMouseDown={(event) => {
         const target = event.target as HTMLElement;
-        if (target.closest("[data-page-link-preview='true']")) {
+        if (target.closest("[data-inline-preview-interactive='true']")) {
           return;
         }
         if (isDisabled) {
@@ -4717,12 +4807,30 @@ function LinkedTextPreview({
       {segments.map((segment) =>
         segment.kind === "text" ? (
           <span key={segment.key}>{segment.text}</span>
+        ) : segment.kind === "tag" ? (
+          <button
+            key={segment.key}
+            type="button"
+            data-inline-preview-interactive="true"
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onOpenTag(segment.text);
+            }}
+            className="inline cursor-pointer text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px] transition hover:text-[var(--workspace-brand-hover)]"
+          >
+            {segment.text}
+          </button>
         ) : (
           segment.pageId !== null ? (
             <button
               key={segment.key}
               type="button"
-              data-page-link-preview="true"
+              data-inline-preview-interactive="true"
               onMouseDown={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -5156,6 +5264,7 @@ function OutlineNodeEditor({
   pagesByTitle,
   onOpenPage,
   onOpenNode,
+  onOpenTag,
   mobileIndentStep = 0,
 }: {
   node: TreeNode;
@@ -5197,6 +5306,7 @@ function OutlineNodeEditor({
   pagesByTitle: Map<string, PageDoc>;
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
+  onOpenTag: (tag: string) => void;
   mobileIndentStep?: number;
 }) {
   const history = useWorkspaceHistory();
@@ -5233,6 +5343,10 @@ function OutlineNodeEditor({
   const isVisualEmptyLine = normalizedDraft === ".";
   const isVisualSeparatorLine = normalizedDraft === "---";
   const isDimmedLine = isDimmedSyntaxLine(draft);
+  const displayDraft = useMemo(
+    () => (isDimmedLine ? stripDimmedSyntaxPrefix(draft) : draft),
+    [draft, isDimmedLine],
+  );
   const shouldRevealVisualPlaceholder = isFocused || isSelected;
   const nodeLinkTargetIds = useMemo(
     () =>
@@ -5260,13 +5374,8 @@ function OutlineNodeEditor({
     return next;
   }, [resolvedNodeLinks]);
   const linkPreviewSegments = useMemo(() => {
-    const segments = buildLinkPreviewSegments(draft, pagesByTitle, nodeTargetsById);
-    return isDimmedLine ? stripDimPrefixFromSegments(segments) : segments;
-  }, [draft, isDimmedLine, nodeTargetsById, pagesByTitle]);
-  const displayDraft = useMemo(
-    () => (isDimmedLine ? stripDimmedSyntaxPrefix(draft) : draft),
-    [draft, isDimmedLine],
-  );
+    return buildLinkPreviewSegments(displayDraft, pagesByTitle, nodeTargetsById);
+  }, [displayDraft, nodeTargetsById, pagesByTitle]);
   const hasPageLinkPreview =
     !isFocused &&
     !isVisualEmptyLine &&
@@ -6554,6 +6663,7 @@ function OutlineNodeEditor({
                 onFocusLine={focusLineEditor}
                 onOpenPage={onOpenPage}
                 onOpenNode={onOpenNode}
+                onOpenTag={onOpenTag}
                 isDisabled={isDisabled || activeDraggedNodeId !== null}
                 className={clsx(
                   node.taskStatus === "done"
@@ -6669,6 +6779,7 @@ function OutlineNodeEditor({
               pagesByTitle={pagesByTitle}
               onOpenPage={onOpenPage}
               onOpenNode={onOpenNode}
+              onOpenTag={onOpenTag}
               mobileIndentStep={mobileIndentStep}
             />
           </div>

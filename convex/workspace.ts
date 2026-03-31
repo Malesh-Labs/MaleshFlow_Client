@@ -15,6 +15,7 @@ import {
   syncLinksForNode,
 } from "./lib/workspace";
 import { nodeKindValidator, nullableNodeIdValidator, priorityValidator, taskStatusValidator } from "./lib/validators";
+import { extractTagMatches } from "../lib/domain/tags";
 
 function getTimestamp() {
   return Date.now();
@@ -428,6 +429,55 @@ export const getEmbeddingRebuildStatus = query({
           ? Math.max(...jobs.map((job) => job.lastQueuedAt))
           : null,
     };
+  },
+});
+
+export const listTags = query({
+  args: {
+    ownerKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const pages = await ctx.db.query("pages").collect();
+    const activePageIds = new Set(
+      pages
+        .filter((page) => !page.archived)
+        .map((page) => page._id as string),
+    );
+    const nodes = (await ctx.db.query("nodes").collect()).filter(
+      (node) => !node.archived && activePageIds.has(node.pageId as string),
+    );
+
+    const tagsByNormalizedValue = new Map<
+      string,
+      { label: string; value: string; normalizedValue: string; count: number }
+    >();
+
+    for (const node of nodes) {
+      for (const match of extractTagMatches(node.text)) {
+        const existing = tagsByNormalizedValue.get(match.normalizedValue);
+        if (existing) {
+          existing.count += 1;
+          continue;
+        }
+
+        tagsByNormalizedValue.set(match.normalizedValue, {
+          label: match.label,
+          value: match.value,
+          normalizedValue: match.normalizedValue,
+          count: 1,
+        });
+      }
+    }
+
+    return [...tagsByNormalizedValue.values()].sort((left, right) => {
+      if (left.normalizedValue !== right.normalizedValue) {
+        return left.normalizedValue.localeCompare(right.normalizedValue);
+      }
+
+      return left.label.localeCompare(right.label);
+    });
   },
 });
 

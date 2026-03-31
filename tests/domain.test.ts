@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { extractLinkMatches, extractLinks } from "../lib/domain/links";
+import { extractTagMatches, extractTags } from "../lib/domain/tags";
 import { parseMarkdownFile, serializePageToMarkdown } from "../lib/domain/markdown";
 import {
   buildDeterministicEmbedding,
@@ -53,6 +54,41 @@ test("extractLinkMatches preserves ranges for inline rendering", () => {
         end: 57,
         kind: "node",
         label: "[[Attachment note|node:node_456]]",
+      },
+    ],
+  );
+});
+
+test("extractTags finds hashtag tags with hyphens and slashes", () => {
+  const tags = extractTags(
+    "Track #dating-model and #work/personal notes, but ignore heading style # not-a-tag.",
+  );
+
+  assert.deepEqual(tags, ["dating-model", "work/personal"]);
+});
+
+test("extractTagMatches preserves ranges for inline rendering", () => {
+  const matches = extractTagMatches("A #dating-model plan and a #work/personal note.");
+
+  assert.deepEqual(
+    matches.map((match) => ({
+      start: match.start,
+      end: match.end,
+      label: match.label,
+      value: match.value,
+    })),
+    [
+      {
+        start: 2,
+        end: 15,
+        label: "#dating-model",
+        value: "dating-model",
+      },
+      {
+        start: 27,
+        end: 41,
+        label: "#work/personal",
+        value: "work/personal",
       },
     ],
   );
