@@ -4839,6 +4839,21 @@ function OutlineNodeList({
 }) {
   return (
     <>
+      {nodes.length === 0 ? (
+        <InlineComposer
+          key={`empty-composer:${pageId}:${parentNodeId ?? "root"}`}
+          ownerKey={ownerKey}
+          pageId={pageId}
+          parentNodeId={parentNodeId}
+          createNodesBatch={createNodesBatch}
+          historyInstanceKey={`empty:${pageId}:${parentNodeId ?? "root"}`}
+          readOnly={isPageReadOnly}
+          depth={depth}
+          mobileIndentStep={mobileIndentStep}
+          persistWhenEmpty
+          onBeginTextEditing={onBeginTextEditing}
+        />
+      ) : null}
       {nodes.map((node, index) => (
         <OutlineNodeEditor
           key={node._id}
