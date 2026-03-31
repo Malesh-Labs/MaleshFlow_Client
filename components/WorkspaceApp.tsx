@@ -5725,6 +5725,7 @@ function OutlineNodeEditor({
       nodeId: node._id as Id<"nodes">,
       text: afterSnapshot.text,
       kind: afterSnapshot.kind,
+      lockKind: true,
       taskStatus: afterSnapshot.taskStatus,
     });
     history.commitTrackedValue(
