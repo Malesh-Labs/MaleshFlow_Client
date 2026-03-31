@@ -7067,7 +7067,7 @@ function OutlineNodeEditor({
               >
                 <span
                   className={
-                    hasNestedGrandchildren ? "translate-x-[1.5px] -translate-y-px" : ""
+                    hasNestedGrandchildren ? "-translate-x-px -translate-y-px" : ""
                   }
                 >
                   ▸
