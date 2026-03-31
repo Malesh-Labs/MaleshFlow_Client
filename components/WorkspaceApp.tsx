@@ -589,6 +589,20 @@ function focusWorkspaceAiDock() {
   }
 }
 
+function blurWorkspaceAiDockIfFocused() {
+  if (typeof document === "undefined") {
+    return;
+  }
+
+  const activeElement = document.activeElement;
+  if (
+    activeElement instanceof HTMLElement &&
+    activeElement.closest("[data-workspace-ai-dock='true']")
+  ) {
+    activeElement.blur();
+  }
+}
+
 function writePageIdToHistory(pageId: string | null, mode: "push" | "replace" = "push") {
   if (typeof window === "undefined") {
     return;
@@ -1558,12 +1572,18 @@ function ConfiguredWorkspace({
     setDragSelection(null);
   }, []);
 
-  const focusWorkspaceAiDockInput = useCallback(() => {
-    setIsWorkspaceAiDockCollapsed(false);
-    window.requestAnimationFrame(() => {
-      focusWorkspaceAiDock();
-    });
-  }, []);
+  const toggleWorkspaceAiDockInput = useCallback(() => {
+    if (isWorkspaceAiDockCollapsed) {
+      setIsWorkspaceAiDockCollapsed(false);
+      window.requestAnimationFrame(() => {
+        focusWorkspaceAiDock();
+      });
+      return;
+    }
+
+    blurWorkspaceAiDockIfFocused();
+    setIsWorkspaceAiDockCollapsed(true);
+  }, [isWorkspaceAiDockCollapsed]);
 
   const selectSingleNode = useCallback((nodeId: string) => {
     setSelectedNodeIds(new Set([nodeId]));
@@ -2937,7 +2957,7 @@ function ConfiguredWorkspace({
 
       if (isModifier && event.shiftKey && normalizedKey === "l") {
         event.preventDefault();
-        focusWorkspaceAiDockInput();
+        toggleWorkspaceAiDockInput();
         return;
       }
 
@@ -3098,7 +3118,7 @@ function ConfiguredWorkspace({
     copyNodeLinkToClipboard,
     deleteHighlightedNodes,
     focusLastVisiblePageNode,
-    focusWorkspaceAiDockInput,
+    toggleWorkspaceAiDockInput,
     indentHighlightedNodeByKeyboard,
     moveHighlightedNodeByKeyboard,
     openPalette,
@@ -5281,7 +5301,10 @@ function WorkspaceAiDock({
   };
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-30 px-3 pb-3 md:px-6 md:pb-6">
+    <div
+      data-workspace-ai-dock="true"
+      className="pointer-events-none fixed inset-x-0 bottom-0 z-30 px-3 pb-3 md:px-6 md:pb-6"
+    >
       <div className="pointer-events-auto mx-auto max-w-[1600px]">
         <div className="overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface)] shadow-[0_-16px_48px_-32px_rgba(0,0,0,0.65)] backdrop-blur-sm">
           <div className="flex items-center justify-between gap-3 border-b border-[var(--workspace-border-subtle)] px-4 py-2 md:px-6">
