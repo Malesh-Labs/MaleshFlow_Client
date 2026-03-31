@@ -5685,6 +5685,7 @@ function OutlineNodeEditor({
     baseTypographyClass,
     hasPageLinkPreview && !isTaskRow && !isHeadingNoteRow ? "py-1" : "",
     hasPageLinkPreview && isTaskRow ? "py-0.5" : "",
+    hasNestedGrandchildren ? "italic" : "",
   );
   const [shouldRenderChildren, setShouldRenderChildren] = useState(hasChildren && !isCollapsed);
   const [isChildrenExpanded, setIsChildrenExpanded] = useState(hasChildren && !isCollapsed);
@@ -7070,7 +7071,7 @@ function OutlineNodeEditor({
                   isCollapsed ? "rotate-0" : "rotate-90",
                 )}
               >
-                ▸
+                <span className={hasNestedGrandchildren ? "translate-x-px" : ""}>▸</span>
               </span>
             </button>
           </div>
