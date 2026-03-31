@@ -3516,7 +3516,8 @@ function ConfiguredWorkspace({
                 onClick={() => setIsSidebarCollapsed(false)}
                 className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
               >
-                &gt;
+                <span className="lg:hidden">˅</span>
+                <span className="hidden lg:inline">&gt;</span>
               </button>
               <div className="mt-auto flex flex-col items-center gap-3">
                 <button
@@ -3544,7 +3545,8 @@ function ConfiguredWorkspace({
                   onClick={() => setIsSidebarCollapsed(true)}
                   className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
                 >
-                  &lt;
+                  <span className="lg:hidden">˄</span>
+                  <span className="hidden lg:inline">&lt;</span>
                 </button>
                 <div className="flex-1" />
               </div>
