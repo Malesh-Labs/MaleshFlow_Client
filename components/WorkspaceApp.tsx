@@ -1266,6 +1266,19 @@ function stripDimmedSyntaxPrefix(value: string) {
   return value.replace(/^(\s*)%%\s*/, "$1");
 }
 
+function readStoredBoolean(key: string, defaultValue: boolean) {
+  if (typeof window === "undefined") {
+    return defaultValue;
+  }
+
+  const storedValue = window.localStorage.getItem(key);
+  if (storedValue === null) {
+    return defaultValue;
+  }
+
+  return storedValue === "true";
+}
+
 function getHeadingPreviewClass(level: 1 | 2 | 3 | null) {
   if (level === 1) {
     return "py-1.5 text-[1.9rem] leading-[2.3rem] font-semibold tracking-tight";
@@ -1766,18 +1779,18 @@ function ConfiguredWorkspace({
       return;
     }
 
-    setIsSidebarCollapsed(window.localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY) === "true");
+    setIsSidebarCollapsed(readStoredBoolean(SIDEBAR_COLLAPSE_STORAGE_KEY, false));
     setIsUncategorizedSectionCollapsed(
-      window.localStorage.getItem(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY) === "true",
+      readStoredBoolean(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY, true),
     );
     setIsTagsSectionCollapsed(
-      window.localStorage.getItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY) === "true",
+      readStoredBoolean(TAGS_SECTION_COLLAPSE_STORAGE_KEY, true),
     );
     setIsArchiveSectionCollapsed(
-      window.localStorage.getItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY) === "true",
+      readStoredBoolean(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY, true),
     );
     setIsWorkspaceAiDockCollapsed(
-      window.localStorage.getItem(WORKSPACE_AI_DOCK_COLLAPSE_STORAGE_KEY) === "true",
+      readStoredBoolean(WORKSPACE_AI_DOCK_COLLAPSE_STORAGE_KEY, false),
     );
     try {
       const storedCollapsedNodeIds = JSON.parse(
@@ -3626,42 +3639,40 @@ function ConfiguredWorkspace({
 
                 <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
                   <div className="flex items-center justify-between gap-3">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        uncategorizedPages.length > 0
-                          ? setIsUncategorizedSectionCollapsed((current) => !current)
-                          : undefined
-                      }
-                      className="flex flex-1 items-center justify-between gap-3 text-left"
+                    <p
+                      className={clsx(
+                        "flex-1 text-xs font-semibold uppercase tracking-[0.22em]",
+                        uncategorizedPages.length === 0
+                          ? "text-[var(--workspace-text-faint)] opacity-60"
+                          : "text-[var(--workspace-text-faint)]",
+                      )}
                     >
-                      <p
-                        className={clsx(
-                          "text-xs font-semibold uppercase tracking-[0.22em]",
-                          uncategorizedPages.length === 0
-                            ? "text-[var(--workspace-text-faint)] opacity-60"
-                            : "text-[var(--workspace-text-faint)]",
-                        )}
+                      Uncategorized
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleRefreshSidebarLinks()}
+                        disabled={isRefreshingSidebarLinks}
+                        className="border border-[var(--workspace-border-control)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
                       >
-                        Uncategorized
-                      </p>
-                      <span
-                        className={clsx(
-                          "text-xs font-semibold text-[var(--workspace-text-faint)]",
-                          uncategorizedPages.length === 0 ? "opacity-60" : "",
-                        )}
-                      >
-                        {showUncategorizedSectionContent ? "−" : "+"}
-                      </span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleRefreshSidebarLinks()}
-                      disabled={isRefreshingSidebarLinks}
-                      className="border border-[var(--workspace-border-control)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
-                    >
-                      {isRefreshingSidebarLinks ? "Refreshing…" : "Refresh"}
-                    </button>
+                        {isRefreshingSidebarLinks ? "Refreshing…" : "Refresh"}
+                      </button>
+                      {uncategorizedPages.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setIsUncategorizedSectionCollapsed((current) => !current)}
+                          className="flex h-7 w-7 items-center justify-center border border-[var(--workspace-border-control)] text-xs font-semibold text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                          aria-label={
+                            showUncategorizedSectionContent
+                              ? "Collapse uncategorized pages"
+                              : "Expand uncategorized pages"
+                          }
+                        >
+                          {showUncategorizedSectionContent ? "−" : "+"}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                   {showUncategorizedSectionContent ? (
                     <div className="mt-3 space-y-1">
