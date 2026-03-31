@@ -60,7 +60,10 @@ const LAST_PAGE_STORAGE_KEY = "maleshflow-last-page-id";
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "maleshflow-sidebar-collapsed";
 const COLLAPSED_NODES_STORAGE_KEY = "maleshflow-collapsed-node-ids";
 const WORKSPACE_AI_DOCK_COLLAPSE_STORAGE_KEY = "maleshflow-workspace-ai-dock-collapsed";
+const UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY =
+  "maleshflow-uncategorized-section-collapsed";
 const TAGS_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-tags-section-collapsed";
+const ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-archive-section-collapsed";
 const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
 const WORKSPACE_AI_DOCK_TEXTAREA_ID = "workspace-ai-dock-textarea";
 const MODEL_REGENERATE_PROMPT =
@@ -1360,7 +1363,9 @@ function ConfiguredWorkspace({
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isUncategorizedSectionCollapsed, setIsUncategorizedSectionCollapsed] = useState(false);
   const [isTagsSectionCollapsed, setIsTagsSectionCollapsed] = useState(false);
+  const [isArchiveSectionCollapsed, setIsArchiveSectionCollapsed] = useState(false);
   const [isWorkspaceAiDockCollapsed, setIsWorkspaceAiDockCollapsed] = useState(false);
   const [showSidebarDiagnostics, setShowSidebarDiagnostics] = useState(false);
   const [sidebarBootstrapError, setSidebarBootstrapError] = useState<string>("");
@@ -1599,6 +1604,9 @@ function ConfiguredWorkspace({
   const uncategorizedPages =
     (pages ?? []).filter((page) => !page.archived && !sidebarLinkedPageIds.has(page._id as string));
   const archivedPages = (pages ?? []).filter((page) => page.archived);
+  const showUncategorizedSectionContent =
+    uncategorizedPages.length > 0 && !isUncategorizedSectionCollapsed;
+  const showArchiveSectionContent = !isArchiveSectionCollapsed;
   const sortedTags: SidebarTagResult[] = tags ?? [];
   const pagesByTitle = useMemo(() => {
     const next = new Map<string, PageDoc>();
@@ -1707,8 +1715,14 @@ function ConfiguredWorkspace({
     }
 
     setIsSidebarCollapsed(window.localStorage.getItem(SIDEBAR_COLLAPSE_STORAGE_KEY) === "true");
+    setIsUncategorizedSectionCollapsed(
+      window.localStorage.getItem(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY) === "true",
+    );
     setIsTagsSectionCollapsed(
       window.localStorage.getItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY) === "true",
+    );
+    setIsArchiveSectionCollapsed(
+      window.localStorage.getItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY) === "true",
     );
     setIsWorkspaceAiDockCollapsed(
       window.localStorage.getItem(WORKSPACE_AI_DOCK_COLLAPSE_STORAGE_KEY) === "true",
@@ -1748,10 +1762,32 @@ function ConfiguredWorkspace({
     }
 
     window.localStorage.setItem(
+      UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY,
+      isUncategorizedSectionCollapsed ? "true" : "false",
+    );
+  }, [isUncategorizedSectionCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
       TAGS_SECTION_COLLAPSE_STORAGE_KEY,
       isTagsSectionCollapsed ? "true" : "false",
     );
   }, [isTagsSectionCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY,
+      isArchiveSectionCollapsed ? "true" : "false",
+    );
+  }, [isArchiveSectionCollapsed]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2031,7 +2067,9 @@ function ConfiguredWorkspace({
 
     window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
     window.localStorage.removeItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
+    window.localStorage.removeItem(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY);
+    window.localStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
     window.localStorage.removeItem(WORKSPACE_AI_DOCK_COLLAPSE_STORAGE_KEY);
     setSelectedPageId(null);
@@ -3536,9 +3574,34 @@ function ConfiguredWorkspace({
 
                 <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
                   <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
-                      Uncategorized
-                    </p>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        uncategorizedPages.length > 0
+                          ? setIsUncategorizedSectionCollapsed((current) => !current)
+                          : undefined
+                      }
+                      className="flex flex-1 items-center justify-between gap-3 text-left"
+                    >
+                      <p
+                        className={clsx(
+                          "text-xs font-semibold uppercase tracking-[0.22em]",
+                          uncategorizedPages.length === 0
+                            ? "text-[var(--workspace-text-faint)] opacity-60"
+                            : "text-[var(--workspace-text-faint)]",
+                        )}
+                      >
+                        Uncategorized
+                      </p>
+                      <span
+                        className={clsx(
+                          "text-xs font-semibold text-[var(--workspace-text-faint)]",
+                          uncategorizedPages.length === 0 ? "opacity-60" : "",
+                        )}
+                      >
+                        {showUncategorizedSectionContent ? "−" : "+"}
+                      </span>
+                    </button>
                     <button
                       type="button"
                       onClick={() => void handleRefreshSidebarLinks()}
@@ -3548,11 +3611,7 @@ function ConfiguredWorkspace({
                       {isRefreshingSidebarLinks ? "Refreshing…" : "Refresh"}
                     </button>
                   </div>
-                  {uncategorizedPages.length === 0 ? (
-                    <p className="mt-3 text-sm text-[var(--workspace-text-faint)]">
-                      Every active page is referenced in the sidebar.
-                    </p>
-                  ) : (
+                  {showUncategorizedSectionContent ? (
                     <div className="mt-3 space-y-1">
                       {uncategorizedPages.map((page) => (
                         <button
@@ -3573,7 +3632,7 @@ function ConfiguredWorkspace({
                         </button>
                       ))}
                     </div>
-                  )}
+                  ) : null}
                 </div>
 
                 <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
@@ -3619,35 +3678,46 @@ function ConfiguredWorkspace({
                 </div>
 
                 <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5 opacity-75">
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
-                    Archive
-                  </p>
-                  {archivedPages.length === 0 ? (
-                    <p className="mt-3 text-sm text-[var(--workspace-text-faint)]">
-                      No archived pages.
+                  <button
+                    type="button"
+                    onClick={() => setIsArchiveSectionCollapsed((current) => !current)}
+                    className="flex w-full items-center justify-between gap-3 text-left"
+                  >
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
+                      Archive
                     </p>
-                  ) : (
-                    <div className="mt-3 space-y-1">
-                      {archivedPages.map((page) => (
-                        <button
-                          key={page._id}
-                          type="button"
-                          onClick={() => handleSelectPage(page._id)}
-                          className={clsx(
-                            "block w-full px-2 py-1.5 text-left text-sm transition",
-                            selectedPageId === page._id
-                              ? "bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
-                              : "text-[var(--workspace-text-faint)] hover:bg-[var(--workspace-surface-accent)] hover:text-[var(--workspace-text)]",
-                          )}
-                        >
-                          <span>{page.title}</span>
-                          <span className="ml-2 text-[10px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]">
-                            {getPageTypeDisplayLabel(page)}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                    <span className="text-xs font-semibold text-[var(--workspace-text-faint)]">
+                      {showArchiveSectionContent ? "−" : "+"}
+                    </span>
+                  </button>
+                  {showArchiveSectionContent ? (
+                    archivedPages.length === 0 ? (
+                      <p className="mt-3 text-sm text-[var(--workspace-text-faint)]">
+                        No archived pages.
+                      </p>
+                    ) : (
+                      <div className="mt-3 space-y-1">
+                        {archivedPages.map((page) => (
+                          <button
+                            key={page._id}
+                            type="button"
+                            onClick={() => handleSelectPage(page._id)}
+                            className={clsx(
+                              "block w-full px-2 py-1.5 text-left text-sm transition",
+                              selectedPageId === page._id
+                                ? "bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
+                                : "text-[var(--workspace-text-faint)] hover:bg-[var(--workspace-surface-accent)] hover:text-[var(--workspace-text)]",
+                            )}
+                          >
+                            <span>{page.title}</span>
+                            <span className="ml-2 text-[10px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]">
+                              {getPageTypeDisplayLabel(page)}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )
+                  ) : null}
                 </div>
               </div>
 
