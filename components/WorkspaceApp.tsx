@@ -3754,56 +3754,56 @@ function ConfiguredWorkspace({
                     )
                   ) : null}
                 </div>
-              </div>
 
-              <div className="mt-6 border-t border-[var(--workspace-border-soft)] pt-4">
-                <div className="flex flex-wrap gap-2">
-                  {SIDEBAR_SECTIONS.map((section) => (
+                <div className="mt-6 border-t border-[var(--workspace-border-soft)] pt-4">
+                  <div className="flex flex-wrap gap-2">
+                    {SIDEBAR_SECTIONS.map((section) => (
+                      <button
+                        key={section}
+                        type="button"
+                        onClick={() => void handleCreatePage(section)}
+                        disabled={isCreatingPage === section}
+                        className="border border-[var(--workspace-border-control)] px-2.5 py-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {isCreatingPage === section ? "Creating…" : `+ ${getPageTypeLabelForSection(section)}`}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-4 space-y-3">
                     <button
-                      key={section}
                       type="button"
-                      onClick={() => void handleCreatePage(section)}
-                      disabled={isCreatingPage === section}
-                      className="border border-[var(--workspace-border-control)] px-2.5 py-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
+                      onClick={() => void handleRebuildEmbeddings()}
+                      disabled={isRebuildingEmbeddings}
+                      className="w-full border border-[var(--workspace-border-control)] px-3 py-2 text-left text-xs font-medium uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
                     >
-                      {isCreatingPage === section ? "Creating…" : `+ ${getPageTypeLabelForSection(section)}`}
+                      {isRebuildingEmbeddings ? "Rebuilding…" : "Rebuild Embeddings"}
                     </button>
-                  ))}
-                </div>
-                <div className="mt-4 space-y-3">
-                  <button
-                    type="button"
-                    onClick={() => void handleRebuildEmbeddings()}
-                    disabled={isRebuildingEmbeddings}
-                    className="w-full border border-[var(--workspace-border-control)] px-3 py-2 text-left text-xs font-medium uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
-                  >
-                    {isRebuildingEmbeddings ? "Rebuilding…" : "Rebuild Embeddings"}
-                  </button>
-                  {embeddingRebuildStatus ? (
+                    {embeddingRebuildStatus ? (
+                      <p className="text-xs leading-5 text-[var(--workspace-text-faint)]">
+                        {embeddingRebuildStatus}
+                      </p>
+                    ) : null}
                     <p className="text-xs leading-5 text-[var(--workspace-text-faint)]">
-                      {embeddingRebuildStatus}
+                      {embeddingProgressLabel}
                     </p>
-                  ) : null}
-                  <p className="text-xs leading-5 text-[var(--workspace-text-faint)]">
-                    {embeddingProgressLabel}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={handleResetLocalState}
-                    className="w-full border border-[var(--workspace-border-control)] px-3 py-2 text-left text-xs font-medium uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                  >
-                    Reset Local State
-                  </button>
-                  <p className="text-xs leading-5 text-[var(--workspace-text-faint)]">
-                    Clears saved browser state for this site and reloads.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setOwnerKey("")}
-                    className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                  >
-                    Lock
-                  </button>
+                    <button
+                      type="button"
+                      onClick={handleResetLocalState}
+                      className="w-full border border-[var(--workspace-border-control)] px-3 py-2 text-left text-xs font-medium uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                    >
+                      Reset Local State
+                    </button>
+                    <p className="text-xs leading-5 text-[var(--workspace-text-faint)]">
+                      Clears saved browser state for this site and reloads.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setOwnerKey("")}
+                      className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                    >
+                      Lock
+                    </button>
+                  </div>
                 </div>
               </div>
             </>
