@@ -3,6 +3,7 @@ export type CommandPalettePage = {
   title: string;
   archived: boolean;
   position: number;
+  searchTerms?: string[];
 };
 
 function normalizeQuery(value: string) {
@@ -27,6 +28,29 @@ function titleScore(title: string, query: string) {
   return Number.POSITIVE_INFINITY;
 }
 
+function metadataScore(terms: string[] | undefined, query: string) {
+  if (!terms || terms.length === 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (const term of terms) {
+    const score = titleScore(term, query);
+    if (score < bestScore) {
+      bestScore = score;
+    }
+  }
+
+  return bestScore === Number.POSITIVE_INFINITY ? bestScore : bestScore + 3;
+}
+
+function pageSearchScore(page: CommandPalettePage, query: string) {
+  return Math.min(
+    titleScore(page.title, query),
+    metadataScore(page.searchTerms, query),
+  );
+}
+
 export function filterPagesForCommandPalette<T extends CommandPalettePage>(
   pages: T[],
   query: string,
@@ -36,13 +60,13 @@ export function filterPagesForCommandPalette<T extends CommandPalettePage>(
   const results =
     normalizedQuery.length === 0
       ? [...pages]
-      : pages.filter((page) => titleScore(page.title, normalizedQuery) !== Number.POSITIVE_INFINITY);
+      : pages.filter((page) => pageSearchScore(page, normalizedQuery) !== Number.POSITIVE_INFINITY);
 
   return results
     .sort((left, right) => {
       if (normalizedQuery.length > 0) {
-        const leftScore = titleScore(left.title, normalizedQuery);
-        const rightScore = titleScore(right.title, normalizedQuery);
+        const leftScore = pageSearchScore(left, normalizedQuery);
+        const rightScore = pageSearchScore(right, normalizedQuery);
         if (leftScore !== rightScore) {
           return leftScore - rightScore;
         }

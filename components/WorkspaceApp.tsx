@@ -1639,7 +1639,13 @@ function ConfiguredWorkspace({
     }
   }, [selectedNodeIds, workspaceNodeMap]);
   const paletteResults = filterPagesForCommandPalette(
-    pages ?? [],
+    (pages ?? []).map((page) => ({
+      ...page,
+      searchTerms: [
+        getPageTypeLabel(page),
+        getPageMeta(page).sidebarSection,
+      ],
+    })),
     paletteQuery,
     14,
   );

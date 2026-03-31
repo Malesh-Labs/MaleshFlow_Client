@@ -31,3 +31,37 @@ test("filterPagesForCommandPalette prioritizes active prefix matches before arch
     ["1", "4", "2"],
   );
 });
+
+test("filterPagesForCommandPalette matches page type search terms", () => {
+  const results = filterPagesForCommandPalette(
+    [
+      {
+        _id: "1",
+        title: "Tokyo Notes",
+        archived: false,
+        position: 1024,
+        searchTerms: ["Scratchpad", "Scratchpads"],
+      },
+      {
+        _id: "2",
+        title: "Dating Model",
+        archived: false,
+        position: 2048,
+        searchTerms: ["Model", "Models"],
+      },
+      {
+        _id: "3",
+        title: "2026-03-31",
+        archived: false,
+        position: 3072,
+        searchTerms: ["Journal"],
+      },
+    ],
+    "scrat",
+  );
+
+  assert.deepEqual(
+    results.map((page) => page._id),
+    ["1"],
+  );
+});
