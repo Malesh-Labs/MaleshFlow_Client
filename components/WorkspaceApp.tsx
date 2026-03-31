@@ -3554,7 +3554,6 @@ function ConfiguredWorkspace({
                       readOnly={false}
                       depth={0}
                       mobileIndentStep={SIDEBAR_MOBILE_INDENT_STEP}
-                      placeholder="New sidebar line…"
                       onBeginTextEditing={clearNodeSelection}
                     />
                   </div>
@@ -7056,7 +7055,7 @@ function InlineComposer({
   mobileIndentStep = 0,
   autoFocusToken = 0,
   persistWhenEmpty = false,
-  placeholder = "New line…",
+  placeholder = "",
   onBeginTextEditing,
   onSubmitted,
   onCancel,
