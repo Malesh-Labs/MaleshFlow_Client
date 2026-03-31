@@ -4870,7 +4870,14 @@ function WorkspaceAiDock({
               type="button"
               onClick={onSubmit}
               disabled={isLoading || draft.trim().length === 0}
-              className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition hover:bg-[var(--workspace-brand-hover)] disabled:cursor-wait disabled:opacity-60"
+              className={clsx(
+                "border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition",
+                isLoading
+                  ? "cursor-wait opacity-60"
+                  : draft.trim().length === 0
+                    ? "cursor-not-allowed opacity-60"
+                    : "hover:bg-[var(--workspace-brand-hover)]",
+              )}
             >
               {isLoading ? "Thinking…" : "Ask AI"}
             </button>
