@@ -5100,13 +5100,15 @@ function LinkedTextPreview({
                 onOpenPage(segment.pageId!);
               }}
               className={clsx(
-                "inline-flex items-center cursor-pointer text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px] transition hover:text-[var(--workspace-brand-hover)]",
+                "inline-flex align-top cursor-pointer flex-col items-start text-[var(--workspace-brand)] transition hover:text-[var(--workspace-brand-hover)]",
                 segment.archived ? "opacity-75" : "",
               )}
             >
-              <span>{segment.text}</span>
+              <span className="underline decoration-[1.5px] underline-offset-[3px]">
+                {segment.text}
+              </span>
               {segment.pageTypeLabel ? (
-                <span className="ml-1 text-[10px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)] no-underline">
+                <span className="mt-0.5 text-[10px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]">
                   {segment.pageTypeLabel}
                 </span>
               ) : null}
@@ -5194,14 +5196,16 @@ function LinkPreviewMeasure({
           <span
             key={segment.key}
             className={clsx(
-              "inline-flex items-center text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px]",
+              "inline-flex align-top flex-col items-start text-[var(--workspace-brand)]",
               segment.archived ? "opacity-75" : "",
               !segment.resolved ? "opacity-80" : "",
             )}
           >
-            <span>{segment.text}</span>
+            <span className="underline decoration-[1.5px] underline-offset-[3px]">
+              {segment.text}
+            </span>
             {segment.pageTypeLabel ? (
-              <span className="ml-1 text-[10px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)] no-underline">
+              <span className="mt-0.5 text-[10px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]">
                 {segment.pageTypeLabel}
               </span>
             ) : null}
