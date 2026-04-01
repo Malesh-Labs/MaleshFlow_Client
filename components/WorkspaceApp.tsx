@@ -140,7 +140,7 @@ type LinkPreviewSegment =
       resolved: boolean;
       linkKind: "page" | "node" | "external";
       href?: string | null;
-      pageTypeLabel?: string | null;
+      pageTypeBadge?: string | null;
     }
   | {
       key: string;
@@ -491,6 +491,31 @@ function getPageTypeDisplayLabel(page: Doc<"pages"> | null | undefined) {
 
   const baseLabel = getPageTypeLabel(page);
   return page.archived ? `${baseLabel} (archived)` : baseLabel;
+}
+
+function getPageTypeEmoji(page: Doc<"pages"> | null | undefined) {
+  if (!page) {
+    return "📄";
+  }
+
+  switch (getPageMeta(page).pageType) {
+    case "model":
+      return "🧠";
+    case "task":
+      return "☑️";
+    case "journal":
+      return "📓";
+    case "scratchpad":
+      return "✏️";
+    case "default":
+    default: {
+      const meta = getPageMeta(page);
+      if (meta.sidebarSection === "Templates") {
+        return "🧩";
+      }
+      return "📄";
+    }
+  }
 }
 
 function isTextEntryElement(target: EventTarget | null) {
@@ -907,7 +932,7 @@ function buildLinkPreviewSegments(
         resolved: true,
         linkKind: "external",
         href: normalizeExternalHref(match.link.targetUrl),
-        pageTypeLabel: null,
+        pageTypeBadge: null,
       });
     } else if (match.link.kind === "page") {
       const page = pagesByTitle.get(normalizePageTitleKey(match.link.targetPageTitle));
@@ -921,7 +946,7 @@ function buildLinkPreviewSegments(
         resolved: Boolean(page),
         linkKind: "page",
         href: null,
-        pageTypeLabel: page ? getPageTypeDisplayLabel(page) : null,
+        pageTypeBadge: page ? getPageTypeEmoji(page) : null,
       });
     } else {
       const targetNode = nodeTargetsById.get(match.link.targetNodeRef);
@@ -941,7 +966,7 @@ function buildLinkPreviewSegments(
         resolved: Boolean(targetNode?.pageId),
         linkKind: "node",
         href: null,
-        pageTypeLabel: null,
+        pageTypeBadge: null,
       });
     }
 
@@ -5100,16 +5125,16 @@ function LinkedTextPreview({
                 onOpenPage(segment.pageId!);
               }}
               className={clsx(
-                "inline-flex align-top cursor-pointer flex-col items-start text-[var(--workspace-brand)] transition hover:text-[var(--workspace-brand-hover)]",
+                "inline-flex align-top cursor-pointer items-center gap-1 text-[var(--workspace-brand)] transition hover:text-[var(--workspace-brand-hover)]",
                 segment.archived ? "opacity-75" : "",
               )}
             >
               <span className="underline decoration-[1.5px] underline-offset-[3px]">
                 {segment.text}
               </span>
-              {segment.pageTypeLabel ? (
-                <span className="mt-0.5 text-[10px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]">
-                  {segment.pageTypeLabel}
+              {segment.pageTypeBadge ? (
+                <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none no-underline">
+                  {segment.pageTypeBadge}
                 </span>
               ) : null}
             </button>
@@ -5196,7 +5221,7 @@ function LinkPreviewMeasure({
           <span
             key={segment.key}
             className={clsx(
-              "inline-flex align-top flex-col items-start text-[var(--workspace-brand)]",
+              "inline-flex align-top items-center gap-1 text-[var(--workspace-brand)]",
               segment.archived ? "opacity-75" : "",
               !segment.resolved ? "opacity-80" : "",
             )}
@@ -5204,9 +5229,9 @@ function LinkPreviewMeasure({
             <span className="underline decoration-[1.5px] underline-offset-[3px]">
               {segment.text}
             </span>
-            {segment.pageTypeLabel ? (
-              <span className="mt-0.5 text-[10px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]">
-                {segment.pageTypeLabel}
+            {segment.pageTypeBadge ? (
+              <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none no-underline">
+                {segment.pageTypeBadge}
               </span>
             ) : null}
           </span>
