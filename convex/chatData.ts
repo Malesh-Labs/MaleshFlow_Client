@@ -247,6 +247,7 @@ export const replaceSectionLines = internalMutation({
     const normalizedLines = args.lines
       .map((line) => line.trim())
       .filter((line) => line.length > 0);
+    const lockKind = args.generatedFrom === "journal_feedback";
 
     const existingChildren = await ctx.db
       .query("nodes")
@@ -281,6 +282,7 @@ export const replaceSectionLines = internalMutation({
         sourceMeta: {
           sourceType: "chat",
           generatedFrom: args.generatedFrom ?? "chat_section",
+          ...(lockKind ? { taskKindLocked: true } : {}),
         },
         createdAt: Date.now(),
         updatedAt: Date.now(),
