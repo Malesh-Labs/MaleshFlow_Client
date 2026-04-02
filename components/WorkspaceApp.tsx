@@ -60,13 +60,12 @@ const OWNER_KEY_EVENT = "maleshflow-owner-key-change";
 const LAST_PAGE_STORAGE_KEY = "maleshflow-last-page-id";
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "maleshflow-sidebar-collapsed";
 const COLLAPSED_NODES_STORAGE_KEY = "maleshflow-collapsed-node-ids";
-const WORKSPACE_AI_DOCK_COLLAPSE_STORAGE_KEY = "maleshflow-workspace-ai-dock-collapsed";
 const UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY =
   "maleshflow-uncategorized-section-collapsed";
 const TAGS_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-tags-section-collapsed";
 const ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-archive-section-collapsed";
 const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
-const WORKSPACE_AI_DOCK_TEXTAREA_ID = "workspace-ai-dock-textarea";
+const WORKSPACE_AI_CHAT_TEXTAREA_ID = "workspace-ai-chat-textarea";
 const MODEL_REGENERATE_PROMPT =
   "Regenerate the Model section using the current Model lines and the Recent section as context. Refine it into a concise, useful model while preserving important intent and signal.";
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
@@ -87,8 +86,8 @@ type SidebarTreeResult = {
   linkedPageIds: Id<"pages">[];
   nodeBacklinkCounts: Record<string, number>;
 };
-type PaletteMode = "pages" | "find" | "nodes" | "new";
-const PALETTE_MODE_ORDER: PaletteMode[] = ["pages", "find", "nodes", "new"];
+type PaletteMode = "pages" | "find" | "nodes" | "new" | "chat" | "actions";
+const PALETTE_MODE_ORDER: PaletteMode[] = ["pages", "find", "nodes", "new", "chat", "actions"];
 type NodeSearchResult = {
   node: Doc<"nodes">;
   page: PageDoc | null;
@@ -100,6 +99,15 @@ type NewPagePaletteResult = {
   title: string;
   subtitle: string;
   keywords: string[];
+};
+type ActionPaletteResult = {
+  key: string;
+  title: string;
+  subtitle: string;
+  keywords: string[];
+  actionLabel: string;
+  disabled?: boolean;
+  onSelect: () => void | Promise<void>;
 };
 type LinkTargetSearchResults = {
   pages: PageDoc[];
@@ -639,6 +647,13 @@ function normalizePageTitleKey(value: string) {
   return value.trim().toLowerCase();
 }
 
+function getDocumentTitle(pageTitle: string | null | undefined) {
+  const trimmedTitle = pageTitle?.trim();
+  return trimmedTitle && trimmedTitle.length > 0
+    ? `${trimmedTitle} - Malesh Flow`
+    : "Malesh Flow";
+}
+
 function readPageIdFromLocation() {
   if (typeof window === "undefined") {
     return null;
@@ -648,12 +663,12 @@ function readPageIdFromLocation() {
   return url.searchParams.get("page");
 }
 
-function focusWorkspaceAiDock() {
+function focusWorkspaceAiChatInput() {
   if (typeof document === "undefined") {
     return;
   }
 
-  const input = document.getElementById(WORKSPACE_AI_DOCK_TEXTAREA_ID);
+  const input = document.getElementById(WORKSPACE_AI_CHAT_TEXTAREA_ID);
   if (input instanceof HTMLTextAreaElement) {
     input.focus();
     const end = input.value.length;
@@ -661,21 +676,11 @@ function focusWorkspaceAiDock() {
   }
 }
 
-function blurWorkspaceAiDockIfFocused() {
-  if (typeof document === "undefined") {
-    return;
-  }
-
-  const activeElement = document.activeElement;
-  if (
-    activeElement instanceof HTMLElement &&
-    activeElement.closest("[data-workspace-ai-dock='true']")
-  ) {
-    activeElement.blur();
-  }
-}
-
-function writePageIdToHistory(pageId: string | null, mode: "push" | "replace" = "push") {
+function writePageIdToHistory(
+  pageId: string | null,
+  mode: "push" | "replace" = "push",
+  pageTitle?: string | null,
+) {
   if (typeof window === "undefined") {
     return;
   }
@@ -689,12 +694,16 @@ function writePageIdToHistory(pageId: string | null, mode: "push" | "replace" = 
   }
 
   const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+  const nextTitle = getDocumentTitle(pageTitle);
+  if (document.title !== nextTitle) {
+    document.title = nextTitle;
+  }
   if (mode === "replace") {
-    window.history.replaceState({}, "", nextUrl);
+    window.history.replaceState({}, nextTitle, nextUrl);
     return;
   }
 
-  window.history.pushState({}, "", nextUrl);
+  window.history.pushState({}, nextTitle, nextUrl);
 }
 
 function buildNodeLinkInsertText(node: Doc<"nodes">) {
@@ -1717,7 +1726,6 @@ function ConfiguredWorkspace({
   const [isUncategorizedSectionCollapsed, setIsUncategorizedSectionCollapsed] = useState(false);
   const [isTagsSectionCollapsed, setIsTagsSectionCollapsed] = useState(false);
   const [isArchiveSectionCollapsed, setIsArchiveSectionCollapsed] = useState(false);
-  const [isWorkspaceAiDockCollapsed, setIsWorkspaceAiDockCollapsed] = useState(false);
   const [showSidebarDiagnostics, setShowSidebarDiagnostics] = useState(false);
   const [sidebarBootstrapError, setSidebarBootstrapError] = useState<string>("");
   const [dragSelection, setDragSelection] = useState<{
@@ -1795,19 +1803,6 @@ function ConfiguredWorkspace({
     setSelectedNodeIds(new Set());
     setDragSelection(null);
   }, []);
-
-  const toggleWorkspaceAiDockInput = useCallback(() => {
-    if (isWorkspaceAiDockCollapsed) {
-      setIsWorkspaceAiDockCollapsed(false);
-      window.requestAnimationFrame(() => {
-        focusWorkspaceAiDock();
-      });
-      return;
-    }
-
-    blurWorkspaceAiDockIfFocused();
-    setIsWorkspaceAiDockCollapsed(true);
-  }, [isWorkspaceAiDockCollapsed]);
 
   const selectSingleNode = useCallback((nodeId: string) => {
     setSelectedNodeIds(new Set([nodeId]));
@@ -2065,16 +2060,6 @@ function ConfiguredWorkspace({
       ),
     );
   }, [paletteQuery]);
-  const activePaletteResultsCount =
-    paletteMode === "pages"
-      ? paletteResults.length
-      : paletteMode === "find"
-        ? textSearchResults.length
-      : paletteMode === "nodes"
-        ? nodeSearchResults.length
-        : paletteMode === "new"
-          ? newPageResults.length
-        : 0;
   const workspaceChatMessages = workspaceKnowledgeThread?.messages ?? [];
   const embeddingProgressLabel = useMemo(() => {
     if (!embeddingRebuildProgress) {
@@ -2118,9 +2103,6 @@ function ConfiguredWorkspace({
     );
     setIsArchiveSectionCollapsed(
       readStoredBoolean(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY, true),
-    );
-    setIsWorkspaceAiDockCollapsed(
-      readStoredBoolean(WORKSPACE_AI_DOCK_COLLAPSE_STORAGE_KEY, false),
     );
     try {
       const storedCollapsedNodeIds = JSON.parse(
@@ -2183,17 +2165,6 @@ function ConfiguredWorkspace({
       isArchiveSectionCollapsed ? "true" : "false",
     );
   }, [isArchiveSectionCollapsed]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    window.localStorage.setItem(
-      WORKSPACE_AI_DOCK_COLLAPSE_STORAGE_KEY,
-      isWorkspaceAiDockCollapsed ? "true" : "false",
-    );
-  }, [isWorkspaceAiDockCollapsed]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2332,7 +2303,7 @@ function ConfiguredWorkspace({
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
       }
-      writePageIdToHistory(null, "replace");
+      writePageIdToHistory(null, "replace", null);
       return;
     }
 
@@ -2351,7 +2322,7 @@ function ConfiguredWorkspace({
       if (matchingStoredPage) {
         setSelectedPageId(matchingStoredPage._id);
         setLocationPageId(matchingStoredPage._id);
-        writePageIdToHistory(matchingStoredPage._id, "replace");
+        writePageIdToHistory(matchingStoredPage._id, "replace", matchingStoredPage.title);
       } else {
         window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
       }
@@ -2364,7 +2335,7 @@ function ConfiguredWorkspace({
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
       }
-      writePageIdToHistory(null, "replace");
+      writePageIdToHistory(null, "replace", null);
       return;
     }
 
@@ -2384,6 +2355,24 @@ function ConfiguredWorkspace({
       window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
     }
   }, [selectedPageId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const nextPageTitle =
+      selectedPage?.title ??
+      (selectedPageId ? pagesById.get(selectedPageId as string)?.title ?? null : null);
+    const nextDocumentTitle = getDocumentTitle(nextPageTitle);
+
+    if (document.title !== nextDocumentTitle) {
+      document.title = nextDocumentTitle;
+    }
+
+    const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    window.history.replaceState(window.history.state, nextDocumentTitle, currentUrl);
+  }, [pagesById, selectedPage?.title, selectedPageId]);
 
   useEffect(() => {
     setPageTitleDraft(activePageTree?.page?.title ?? "");
@@ -2411,7 +2400,7 @@ function ConfiguredWorkspace({
     }
   }, [ensureSidebarPage, ownerKey]);
 
-  const handleRebuildEmbeddings = async () => {
+  const handleRebuildEmbeddings = useCallback(async () => {
     setIsRebuildingEmbeddings(true);
     setEmbeddingRebuildStatus("");
     try {
@@ -2435,7 +2424,7 @@ function ConfiguredWorkspace({
     } finally {
       setIsRebuildingEmbeddings(false);
     }
-  };
+  }, [ownerKey, rebuildEmbeddings]);
 
   const handleRefreshSidebarLinks = async () => {
     setIsRefreshingSidebarLinks(true);
@@ -2466,13 +2455,79 @@ function ConfiguredWorkspace({
     window.localStorage.removeItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
-    window.localStorage.removeItem(WORKSPACE_AI_DOCK_COLLAPSE_STORAGE_KEY);
     setSelectedPageId(null);
     setLocationPageId(null);
-    writePageIdToHistory(null, "replace");
+    writePageIdToHistory(null, "replace", null);
     setOwnerKey("");
     window.location.reload();
   }, [setOwnerKey]);
+
+  const actionResults = useMemo(() => {
+    const results: ActionPaletteResult[] = [
+      {
+        key: "rebuild-embeddings",
+        title: isRebuildingEmbeddings ? "Rebuilding Embeddings…" : "Rebuild Embeddings",
+        subtitle: embeddingRebuildStatus || embeddingProgressLabel,
+        keywords: ["rebuild", "embeddings", "refresh", "vectors", "knowledge"],
+        actionLabel: isRebuildingEmbeddings ? "Running…" : "Run",
+        disabled: isRebuildingEmbeddings,
+        onSelect: () => {
+          void handleRebuildEmbeddings();
+        },
+      },
+      {
+        key: "reset-local-state",
+        title: "Reset Local State",
+        subtitle: "Clear saved browser state for this site and reload.",
+        keywords: ["reset", "local", "state", "reload", "cache", "storage"],
+        actionLabel: "Reset",
+        onSelect: handleResetLocalState,
+      },
+      {
+        key: "lock-workspace",
+        title: "Lock Workspace",
+        subtitle: "Clear the owner token and return to the lock screen.",
+        keywords: ["lock", "logout", "owner", "token", "workspace"],
+        actionLabel: "Lock",
+        onSelect: () => {
+          setOwnerKey("");
+          setPaletteOpen(false);
+        },
+      },
+    ];
+
+    const normalizedQuery = paletteQuery.trim().toLowerCase();
+    if (normalizedQuery.length === 0) {
+      return results;
+    }
+
+    return results.filter((result) =>
+      [result.title, result.subtitle, ...result.keywords].some((value) =>
+        value.toLowerCase().includes(normalizedQuery),
+      ),
+    );
+  }, [
+    embeddingProgressLabel,
+    embeddingRebuildStatus,
+    handleRebuildEmbeddings,
+    handleResetLocalState,
+    isRebuildingEmbeddings,
+    paletteQuery,
+    setOwnerKey,
+  ]);
+
+  const activePaletteResultsCount =
+    paletteMode === "pages"
+      ? paletteResults.length
+      : paletteMode === "find"
+        ? textSearchResults.length
+      : paletteMode === "nodes"
+        ? nodeSearchResults.length
+        : paletteMode === "new"
+          ? newPageResults.length
+          : paletteMode === "actions"
+            ? actionResults.length
+            : 0;
 
   useEffect(() => {
     if (!dragSelection) {
@@ -3093,7 +3148,14 @@ function ConfiguredWorkspace({
     }
 
     setPaletteHighlightIndex(0);
-    window.setTimeout(() => paletteInputRef.current?.focus(), 0);
+    window.setTimeout(() => {
+      if (paletteMode === "chat") {
+        focusWorkspaceAiChatInput();
+        return;
+      }
+
+      paletteInputRef.current?.focus();
+    }, 0);
   }, [paletteOpen, paletteMode]);
 
   useEffect(() => {
@@ -3279,11 +3341,11 @@ function ConfiguredWorkspace({
 
       if (isModifier && event.shiftKey && normalizedKey === "l") {
         event.preventDefault();
-        toggleWorkspaceAiDockInput();
+        openPalette("chat");
         return;
       }
 
-      if (event.metaKey && event.ctrlKey && normalizedKey === "n") {
+      if (isModifier && event.altKey && normalizedKey === "n") {
         event.preventDefault();
         openPalette("new");
         return;
@@ -3479,7 +3541,6 @@ function ConfiguredWorkspace({
     copyNodeLinkToClipboard,
     deleteHighlightedNodes,
     focusLastVisiblePageNode,
-    toggleWorkspaceAiDockInput,
     indentHighlightedNodeByKeyboard,
     moveHighlightedNodeByKeyboard,
     openPalette,
@@ -3570,7 +3631,7 @@ function ConfiguredWorkspace({
       });
       setSelectedPageId(pageId);
       setLocationPageId(pageId);
-      writePageIdToHistory(pageId, "push");
+      writePageIdToHistory(pageId, "push", title);
       setPendingRevealNodeId(null);
       setPaletteOpen(false);
       setPaletteQuery("");
@@ -3617,9 +3678,10 @@ function ConfiguredWorkspace({
   };
 
   const handleSelectPage = useCallback((pageId: Id<"pages">) => {
+    const page = pagesById.get(pageId as string);
     setSelectedPageId(pageId);
     setLocationPageId(pageId);
-    writePageIdToHistory(pageId, "push");
+    writePageIdToHistory(pageId, "push", page?.title ?? null);
     setPendingRevealNodeId(null);
     setPaletteOpen(false);
     setPaletteQuery("");
@@ -3628,7 +3690,7 @@ function ConfiguredWorkspace({
     setTextSearchResults([]);
     setNodeSearchResults([]);
     clearNodeSelection();
-  }, [clearNodeSelection]);
+  }, [clearNodeSelection, pagesById]);
 
   const handleSelectNodeSearchResult = useCallback((result: NodeSearchResult) => {
     if (!result.page) {
@@ -3637,7 +3699,7 @@ function ConfiguredWorkspace({
 
     setSelectedPageId(result.page._id);
     setLocationPageId(result.page._id);
-    writePageIdToHistory(result.page._id, "push");
+    writePageIdToHistory(result.page._id, "push", result.page.title);
     setPendingRevealNodeId(result.node._id as string);
     setPaletteOpen(false);
     setPaletteQuery("");
@@ -3650,10 +3712,10 @@ function ConfiguredWorkspace({
   const handleOpenLinkedNode = useCallback((pageId: Id<"pages">, nodeId: Id<"nodes">) => {
     setSelectedPageId(pageId);
     setLocationPageId(pageId);
-    writePageIdToHistory(pageId, "push");
+    writePageIdToHistory(pageId, "push", pagesById.get(pageId as string)?.title ?? null);
     setPendingRevealNodeId(nodeId as string);
     clearNodeSelection();
-  }, [clearNodeSelection]);
+  }, [clearNodeSelection, pagesById]);
 
   const handleOpenWorkspaceKnowledgeSource = useCallback(
     (source: WorkspaceKnowledgeSourceSnapshot) => {
@@ -3663,7 +3725,7 @@ function ConfiguredWorkspace({
 
       setSelectedPageId(source.pageId as Id<"pages">);
       setLocationPageId(source.pageId);
-      writePageIdToHistory(source.pageId, "push");
+      writePageIdToHistory(source.pageId, "push", source.pageTitle);
       if (source.nodeId) {
         setPendingRevealNodeId(source.nodeId);
       }
@@ -3829,6 +3891,14 @@ function ConfiguredWorkspace({
         const highlighted = newPageResults[paletteHighlightIndex];
         if (highlighted) {
           void handleCreatePage(highlighted.section);
+        }
+        return;
+      }
+
+      if (paletteMode === "actions") {
+        const highlighted = actionResults[paletteHighlightIndex];
+        if (highlighted) {
+          void highlighted.onSelect();
         }
         return;
       }
@@ -4255,41 +4325,6 @@ function ConfiguredWorkspace({
                         </div>
                       )}
                     </div>
-                  </div>
-                </div>
-
-                <div className="mt-6 border-t border-[var(--workspace-border-soft)] pt-4">
-                  <div className="space-y-3">
-                    <button
-                      type="button"
-                      onClick={() => void handleRebuildEmbeddings()}
-                      disabled={isRebuildingEmbeddings}
-                      className="w-full border border-[var(--workspace-border-control)] px-3 py-2 text-left text-xs font-medium uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
-                    >
-                      {isRebuildingEmbeddings ? "Rebuilding…" : "Rebuild Embeddings"}
-                    </button>
-                    {embeddingRebuildStatus ? (
-                      <p className="text-xs leading-5 text-[var(--workspace-text-faint)]">
-                        {embeddingRebuildStatus}
-                      </p>
-                    ) : null}
-                    <p className="text-xs leading-5 text-[var(--workspace-text-faint)]">
-                      {embeddingProgressLabel}
-                    </p>
-                    <button
-                      type="button"
-                      onClick={handleResetLocalState}
-                      className="w-full border border-[var(--workspace-border-control)] px-3 py-2 text-left text-xs font-medium uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                    >
-                      Reset Local State
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setOwnerKey("")}
-                      className="border border-[var(--workspace-border-control)] px-3 py-1 text-xs font-medium text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                    >
-                      Lock
-                    </button>
                   </div>
                 </div>
                   </div>
@@ -4813,11 +4848,14 @@ function ConfiguredWorkspace({
           }}
         >
           <div
-            className="mx-auto mt-16 w-full max-w-2xl border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]"
+            className={clsx(
+              "mx-auto mt-16 w-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]",
+              paletteMode === "chat" ? "max-w-4xl" : "max-w-2xl",
+            )}
             onClick={(event) => event.stopPropagation()}
           >
             <div className="border-b border-[var(--workspace-border-subtle)] px-5 py-4">
-              <div className="mb-4 flex items-center gap-2">
+              <div className="mb-4 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -4874,30 +4912,72 @@ function ConfiguredWorkspace({
                 >
                   New
                 </button>
-              </div>
-              <div className="flex items-center gap-3">
-                <input
-                  ref={paletteInputRef}
-                  value={paletteQuery}
-                  onChange={(event) => {
-                    setPaletteQuery(event.target.value);
-                    setPaletteHighlightIndex(0);
+                <button
+                  type="button"
+                  onClick={() => {
+                    switchPaletteMode("chat");
                   }}
-                  onKeyDown={handlePaletteKeyDown}
-                  placeholder={
-                    paletteMode === "pages"
-                      ? "Search pages..."
-                      : paletteMode === "find"
-                        ? "Find exact text in notes and tasks..."
-                        : paletteMode === "nodes"
-                          ? "Search notes and tasks semantically across the workspace..."
-                          : "Create a new page by type..."
-                  }
-                  className="w-full border-0 bg-transparent p-0 text-lg outline-none"
-                />
+                  className={clsx(
+                    "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
+                    paletteMode === "chat"
+                      ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
+                      : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                  )}
+                >
+                  Chat
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    switchPaletteMode("actions");
+                  }}
+                  className={clsx(
+                    "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
+                    paletteMode === "actions"
+                      ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
+                      : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                  )}
+                >
+                  Actions
+                </button>
               </div>
+              {paletteMode === "chat" ? (
+                <p className="text-sm text-[var(--workspace-text-subtle)]">
+                  Persistent workspace chat
+                </p>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <input
+                    ref={paletteInputRef}
+                    value={paletteQuery}
+                    onChange={(event) => {
+                      setPaletteQuery(event.target.value);
+                      setPaletteHighlightIndex(0);
+                    }}
+                    onKeyDown={handlePaletteKeyDown}
+                    placeholder={
+                      paletteMode === "pages"
+                        ? "Search pages..."
+                        : paletteMode === "find"
+                          ? "Find exact text in notes and tasks..."
+                          : paletteMode === "nodes"
+                            ? "Search notes and tasks semantically across the workspace..."
+                            : paletteMode === "new"
+                              ? "Create a new page by type..."
+                              : "Run a workspace action..."
+                    }
+                    className="w-full border-0 bg-transparent p-0 text-lg outline-none"
+                  />
+                </div>
+              )}
             </div>
-            <div className="max-h-[420px] overflow-y-auto py-2">
+            <div
+              className={clsx(
+                paletteMode === "chat"
+                  ? "h-[min(72vh,720px)]"
+                  : "max-h-[420px] overflow-y-auto py-2",
+              )}
+            >
               {paletteMode === "pages" ? (
                 paletteResults.length === 0 ? (
                   <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">No matching pages.</p>
@@ -5048,27 +5128,61 @@ function ConfiguredWorkspace({
                     </button>
                   ))
                 )
+              ) : paletteMode === "actions" ? (
+                actionResults.length === 0 ? (
+                  <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">
+                    No matching actions.
+                  </p>
+                ) : (
+                  actionResults.map((result, index) => (
+                    <button
+                      key={result.key}
+                      type="button"
+                      disabled={result.disabled}
+                      onMouseEnter={() => setPaletteHighlightIndex(index)}
+                      onClick={() => {
+                        void result.onSelect();
+                      }}
+                      className={clsx(
+                        "flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition",
+                        result.disabled ? "cursor-wait opacity-70" : "",
+                        index === paletteHighlightIndex
+                          ? "bg-[var(--workspace-sidebar-bg)]"
+                          : "hover:bg-[var(--workspace-surface-hover)]",
+                      )}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
+                          {result.title}
+                        </span>
+                        <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                          {result.subtitle}
+                        </span>
+                      </span>
+                      <span className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                        {result.actionLabel}
+                      </span>
+                    </button>
+                  ))
+                )
+              ) : paletteMode === "chat" ? (
+                <WorkspaceAiChatPanel
+                  ownerKey={ownerKey}
+                  availableTags={sortedTags}
+                  draft={workspaceChatDraft}
+                  onDraftChange={setWorkspaceChatDraft}
+                  onSubmit={() => void handleWorkspaceChatSubmit()}
+                  messages={workspaceChatMessages}
+                  isLoading={isWorkspaceChatLoading}
+                  error={workspaceChatError}
+                  onClearError={() => setWorkspaceChatError("")}
+                  onOpenSource={handleOpenWorkspaceKnowledgeSource}
+                />
               ) : null}
             </div>
           </div>
         </div>
       ) : null}
-      <WorkspaceAiDock
-        ownerKey={ownerKey}
-        availableTags={sortedTags}
-        draft={workspaceChatDraft}
-        onDraftChange={setWorkspaceChatDraft}
-        onSubmit={() => void handleWorkspaceChatSubmit()}
-        messages={workspaceChatMessages}
-        isLoading={isWorkspaceChatLoading}
-        error={workspaceChatError}
-        onClearError={() => setWorkspaceChatError("")}
-        onOpenSource={handleOpenWorkspaceKnowledgeSource}
-        isCollapsed={isWorkspaceAiDockCollapsed}
-        onToggleCollapsed={() =>
-          setIsWorkspaceAiDockCollapsed((current) => !current)
-        }
-      />
       </main>
     </WorkspaceHistoryProvider>
   );
@@ -5762,7 +5876,7 @@ function getNodeTypographyClass({
   return "py-0.5 text-[15px] leading-[1.45rem]";
 }
 
-function WorkspaceAiDock({
+function WorkspaceAiChatPanel({
   ownerKey,
   availableTags,
   draft,
@@ -5773,8 +5887,6 @@ function WorkspaceAiDock({
   error,
   onClearError,
   onOpenSource,
-  isCollapsed,
-  onToggleCollapsed,
 }: {
   ownerKey: string;
   availableTags: SidebarTagResult[];
@@ -5786,8 +5898,6 @@ function WorkspaceAiDock({
   error: string;
   onClearError: () => void;
   onOpenSource: (source: WorkspaceKnowledgeSourceSnapshot) => void;
-  isCollapsed: boolean;
-  onToggleCollapsed: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
@@ -5896,203 +6006,178 @@ function WorkspaceAiDock({
   };
 
   return (
-    <div
-      data-workspace-ai-dock="true"
-      className="pointer-events-none fixed inset-x-0 bottom-0 z-30 px-3 pb-3 md:px-6 md:pb-6"
-    >
-      <div className="pointer-events-auto mx-auto max-w-[1600px]">
-        <div className="overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface)] shadow-[0_-16px_48px_-32px_rgba(0,0,0,0.65)] backdrop-blur-sm">
-          <div className="flex items-center justify-between gap-3 border-b border-[var(--workspace-border-subtle)] px-4 py-2 md:px-6">
-            <div className="min-w-0">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
-                AI Chat
-              </p>
-              <p className="text-[11px] text-[var(--workspace-text-faint)]">
-                {messages.length > 0
-                  ? `${messages.length} message${messages.length === 1 ? "" : "s"} saved`
-                  : "Persistent workspace conversation"}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={onToggleCollapsed}
-              className="border border-[var(--workspace-border-control)] px-3 py-1.5 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-            >
-              {isCollapsed ? "Expand" : "Collapse"}
-            </button>
-          </div>
-          <div
-            className={clsx(
-              "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
-              isCollapsed
-                ? "pointer-events-none grid-rows-[0fr] opacity-0"
-                : "grid-rows-[1fr] opacity-100",
-            )}
-          >
-            <div
-              aria-hidden={isCollapsed}
-              className="min-h-0 overflow-hidden"
-            >
-              {showHistoryPanel ? (
-                <div
-                  ref={historyRef}
-                  className="max-h-[38vh] overflow-y-auto border-b border-[var(--workspace-border-subtle)] px-4 py-4 md:px-6"
-                >
-                  <div className="space-y-4">
-                    {messages.map((message) => {
-                      const metadata =
-                        message.role === "assistant"
-                          ? readWorkspaceKnowledgeMessageMetadata(message)
-                          : null;
-                      const isUser = message.role === "user";
+    <div data-workspace-ai-chat-panel="true" className="flex h-full min-h-0 flex-col">
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--workspace-border-subtle)] px-5 py-3">
+        <div className="min-w-0">
+          <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+            AI Chat
+          </p>
+          <p className="text-[11px] text-[var(--workspace-text-faint)]">
+            {messages.length > 0
+              ? `${messages.length} message${messages.length === 1 ? "" : "s"} saved`
+              : "Persistent workspace conversation"}
+          </p>
+        </div>
+      </div>
+      {showHistoryPanel ? (
+        <div
+          ref={historyRef}
+          className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--workspace-border-subtle)] px-5 py-4"
+        >
+          <div className="space-y-4">
+            {messages.map((message) => {
+              const metadata =
+                message.role === "assistant"
+                  ? readWorkspaceKnowledgeMessageMetadata(message)
+                  : null;
+              const isUser = message.role === "user";
 
-                      return (
-                        <div
-                          key={message._id}
-                          className={clsx(
-                            "flex",
-                            isUser ? "justify-end" : "justify-start",
-                          )}
-                        >
-                          <div
-                            className={clsx(
-                              "max-w-3xl border px-4 py-3",
-                              isUser
-                                ? "border-[var(--workspace-brand)] bg-[color-mix(in_srgb,var(--workspace-brand)_14%,transparent)]"
-                                : "border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)]",
-                            )}
-                          >
-                            <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
-                              {isUser ? "You" : "AI"}
-                            </p>
-                            <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[var(--workspace-text)]">
-                              {message.text}
-                            </p>
-                            {!isUser && metadata ? (
-                              <>
-                                <div className="mt-4 space-y-2">
-                                  {metadata.sources.map((source, index) => (
-                                    <button
-                                      key={`${message._id}:${source.nodeId}:${index}`}
-                                      type="button"
-                                      onClick={() => onOpenSource(source)}
-                                      className="block w-full border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface)] px-4 py-3 text-left transition hover:border-[var(--workspace-border-hover)] hover:bg-[var(--workspace-surface-hover)]"
-                                    >
-                                      <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
-                                        {source.nodeText || "(empty line)"}
-                                      </span>
-                                      <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                                        {source.pageTitle ?? "Unknown page"} • {source.nodeKind === "task" ? "Task" : "Note"}
-                                      </span>
-                                      {source.content && source.content.trim() !== source.nodeText.trim() ? (
-                                        <span className="mt-2 block whitespace-pre-wrap text-xs leading-6 text-[var(--workspace-text-subtle)]">
-                                          {source.content}
-                                        </span>
-                                      ) : null}
-                                    </button>
-                                  ))}
-                                </div>
-                                <div className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--workspace-border-subtle)] pt-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                                  <span>{metadata.model}</span>
-                                  <span>{metadata.error ? "OpenAI issue surfaced" : "Grounded with linked + semantic context"}</span>
-                                </div>
-                              </>
-                            ) : null}
-                          </div>
+              return (
+                <div
+                  key={message._id}
+                  className={clsx(
+                    "flex",
+                    isUser ? "justify-end" : "justify-start",
+                  )}
+                >
+                  <div
+                    className={clsx(
+                      "max-w-3xl border px-4 py-3",
+                      isUser
+                        ? "border-[var(--workspace-brand)] bg-[color-mix(in_srgb,var(--workspace-brand)_14%,transparent)]"
+                        : "border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)]",
+                    )}
+                  >
+                    <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                      {isUser ? "You" : "AI"}
+                    </p>
+                    <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[var(--workspace-text)]">
+                      {message.text}
+                    </p>
+                    {!isUser && metadata ? (
+                      <>
+                        <div className="mt-4 space-y-2">
+                          {metadata.sources.map((source, index) => (
+                            <button
+                              key={`${message._id}:${source.nodeId}:${index}`}
+                              type="button"
+                              onClick={() => onOpenSource(source)}
+                              className="block w-full border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface)] px-4 py-3 text-left transition hover:border-[var(--workspace-border-hover)] hover:bg-[var(--workspace-surface-hover)]"
+                            >
+                              <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
+                                {source.nodeText || "(empty line)"}
+                              </span>
+                              <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                                {source.pageTitle ?? "Unknown page"} • {source.nodeKind === "task" ? "Task" : "Note"}
+                              </span>
+                              {source.content && source.content.trim() !== source.nodeText.trim() ? (
+                                <span className="mt-2 block whitespace-pre-wrap text-xs leading-6 text-[var(--workspace-text-subtle)]">
+                                  {source.content}
+                                </span>
+                              ) : null}
+                            </button>
+                          ))}
                         </div>
-                      );
-                    })}
-                    {isLoading ? (
-                      <div className="flex justify-start">
-                        <div className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-4 py-3">
-                          <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
-                            AI
-                          </p>
-                          <p className="mt-2 text-sm text-[var(--workspace-text-subtle)]">
-                            Thinking…
-                          </p>
+                        <div className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--workspace-border-subtle)] pt-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                          <span>{metadata.model}</span>
+                          <span>{metadata.error ? "OpenAI issue surfaced" : "Grounded with linked + semantic context"}</span>
                         </div>
-                      </div>
-                    ) : null}
-                    {error ? (
-                      <div className="border border-[var(--workspace-danger)]/40 bg-[color-mix(in_srgb,var(--workspace-danger)_10%,transparent)] px-4 py-3 text-sm text-[var(--workspace-text)]">
-                        <div className="flex items-start justify-between gap-3">
-                          <p className="whitespace-pre-wrap leading-6">{error}</p>
-                          <button
-                            type="button"
-                            onClick={onClearError}
-                            className="border border-[var(--workspace-border-control)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                          >
-                            Dismiss
-                          </button>
-                        </div>
-                      </div>
+                      </>
                     ) : null}
                   </div>
                 </div>
-              ) : null}
-              <div className="relative flex items-end gap-3 px-4 py-3 md:px-6 md:py-4">
-              <div className="min-w-0 flex-1">
-                <textarea
-                  id={WORKSPACE_AI_DOCK_TEXTAREA_ID}
-                  ref={textareaRef}
-                  value={draft}
-                  onChange={(event) => {
-                    if (error) {
-                      onClearError();
-                    }
-                    onDraftChange(event.target.value);
-                    setCaretPosition(event.target.selectionStart ?? event.target.value.length);
-                  }}
-                  onFocus={(event) => {
-                    setCaretPosition(event.target.selectionStart ?? event.target.value.length);
-                  }}
-                  onSelect={(event) => {
-                    setCaretPosition(
-                      event.currentTarget.selectionStart ?? event.currentTarget.value.length,
-                    );
-                  }}
-                  onKeyDown={handleKeyDown}
-                  placeholder="Ask AI…"
-                  rows={1}
-                  disabled={isLoading}
-                  tabIndex={isCollapsed ? -1 : 0}
-                  className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-[15px] leading-6 outline-none"
-                />
+              );
+            })}
+            {isLoading ? (
+              <div className="flex justify-start">
+                <div className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-4 py-3">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                    AI
+                  </p>
+                  <p className="mt-2 text-sm text-[var(--workspace-text-subtle)]">
+                    Thinking…
+                  </p>
+                </div>
               </div>
-              <button
-                type="button"
-                onClick={onSubmit}
-                disabled={isLoading || draft.trim().length === 0}
-                className={clsx(
-                  "border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition",
-                  isLoading
-                    ? "cursor-wait opacity-60"
-                    : draft.trim().length === 0
-                      ? "cursor-not-allowed opacity-60"
-                      : "hover:bg-[var(--workspace-brand-hover)]",
-                )}
-              >
-                {isLoading ? "Thinking…" : "Ask AI"}
-              </button>
-              {autocompleteToken ? (
-                <LinkAutocompleteMenu
-                  anchorRef={textareaRef}
-                  suggestions={autocompleteSuggestions}
-                  highlightIndex={activeLinkHighlightIndex}
-                  onHover={setLinkHighlightIndex}
-                  onSelect={applyLinkSuggestion}
-                  emptyMessage={
-                    activeLinkToken
-                      ? "No matching pages or nodes."
-                      : "No matching tags."
-                  }
-                />
-              ) : null}
+            ) : null}
+            {error ? (
+              <div className="border border-[var(--workspace-danger)]/40 bg-[color-mix(in_srgb,var(--workspace-danger)_10%,transparent)] px-4 py-3 text-sm text-[var(--workspace-text)]">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="whitespace-pre-wrap leading-6">{error}</p>
+                  <button
+                    type="button"
+                    onClick={onClearError}
+                    className="border border-[var(--workspace-border-control)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                  >
+                    Dismiss
+                  </button>
+                </div>
               </div>
-            </div>
+            ) : null}
           </div>
         </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 items-center justify-center px-5 py-8 text-sm text-[var(--workspace-text-subtle)]">
+          Start a persistent workspace conversation.
+        </div>
+      )}
+      <div className="relative flex items-end gap-3 px-5 py-4">
+        <div className="min-w-0 flex-1">
+          <textarea
+            id={WORKSPACE_AI_CHAT_TEXTAREA_ID}
+            ref={textareaRef}
+            value={draft}
+            onChange={(event) => {
+              if (error) {
+                onClearError();
+              }
+              onDraftChange(event.target.value);
+              setCaretPosition(event.target.selectionStart ?? event.target.value.length);
+            }}
+            onFocus={(event) => {
+              setCaretPosition(event.target.selectionStart ?? event.target.value.length);
+            }}
+            onSelect={(event) => {
+              setCaretPosition(
+                event.currentTarget.selectionStart ?? event.currentTarget.value.length,
+              );
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask AI…"
+            rows={1}
+            disabled={isLoading}
+            className="w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-[15px] leading-6 outline-none"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={onSubmit}
+          disabled={isLoading || draft.trim().length === 0}
+          className={clsx(
+            "border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition",
+            isLoading
+              ? "cursor-wait opacity-60"
+              : draft.trim().length === 0
+                ? "cursor-not-allowed opacity-60"
+                : "hover:bg-[var(--workspace-brand-hover)]",
+          )}
+        >
+          {isLoading ? "Thinking…" : "Ask AI"}
+        </button>
+        {autocompleteToken ? (
+          <LinkAutocompleteMenu
+            anchorRef={textareaRef}
+            suggestions={autocompleteSuggestions}
+            highlightIndex={activeLinkHighlightIndex}
+            onHover={setLinkHighlightIndex}
+            onSelect={applyLinkSuggestion}
+            emptyMessage={
+              activeLinkToken
+                ? "No matching pages or nodes."
+                : "No matching tags."
+            }
+          />
+        ) : null}
       </div>
     </div>
   );
