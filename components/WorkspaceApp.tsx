@@ -507,9 +507,12 @@ function getPageMeta(page: Doc<"pages"> | null | undefined) {
     page && typeof page.sourceMeta === "object" && page.sourceMeta
       ? (page.sourceMeta as Record<string, unknown>)
       : {};
+  const isSidebarPage = sourceMeta.specialPage === "sidebar";
 
   const pageType: PageType =
-    sourceMeta.pageType === "model"
+    isSidebarPage
+      ? "note"
+      : sourceMeta.pageType === "model"
       ? "model"
       : sourceMeta.pageType === "journal"
         ? "journal"
@@ -522,7 +525,9 @@ function getPageMeta(page: Doc<"pages"> | null | undefined) {
           : "default";
   const sidebarSection = SIDEBAR_SECTIONS.includes(sourceMeta.sidebarSection as SidebarSection)
     ? (sourceMeta.sidebarSection as SidebarSection)
-    : pageType === "model"
+    : isSidebarPage
+      ? "Notes"
+      : pageType === "model"
       ? "Models"
       : pageType === "journal"
         ? "Journal"

@@ -311,6 +311,17 @@ export const ensureSidebarPage = mutation({
     const pages = await ctx.db.query("pages").collect();
     const existingSidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
     if (existingSidebarPage) {
+      const sourceMeta = getPageSourceMeta(existingSidebarPage);
+      if (sourceMeta.pageType !== "note" || sourceMeta.sidebarSection !== "Notes") {
+        await ctx.db.patch(existingSidebarPage._id, {
+          sourceMeta: {
+            ...sourceMeta,
+            pageType: "note",
+            sidebarSection: "Notes",
+          },
+          updatedAt: getTimestamp(),
+        });
+      }
       return existingSidebarPage._id;
     }
 
@@ -326,7 +337,8 @@ export const ensureSidebarPage = mutation({
         sourceType: "system",
         specialPage: "sidebar",
         hidden: true,
-        pageType: "default",
+        pageType: "note",
+        sidebarSection: "Notes",
       },
       createdAt: now,
       updatedAt: now,
