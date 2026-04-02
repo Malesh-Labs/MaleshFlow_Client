@@ -23,6 +23,7 @@ export type NodeValueSnapshot = {
   text: string;
   kind: NodeKind;
   taskStatus: TaskStatus;
+  noteCompleted: boolean;
 };
 
 export type NodePlacement = {
@@ -119,6 +120,7 @@ type UpdateNodeFn = (args: {
   text?: string;
   kind?: NodeKind;
   taskStatus?: TaskStatus;
+  noteCompleted?: boolean;
 }) => Promise<unknown>;
 
 type MoveNodeFn = (args: {
@@ -578,6 +580,7 @@ export function useWorkspaceHistoryController({
             text: nextSnapshot.text,
             kind: nextSnapshot.kind,
             taskStatus: nextSnapshot.taskStatus,
+            noteCompleted: nextSnapshot.noteCompleted,
           });
           syncCommittedValue(entry.focusEditorId, nextSnapshot.text, {
             kind: "node",

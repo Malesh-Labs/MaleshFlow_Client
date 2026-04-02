@@ -1288,6 +1288,7 @@ export const updateNode = mutation({
     kind: v.optional(nodeKindValidator),
     lockKind: v.optional(v.boolean()),
     taskStatus: v.optional(taskStatusValidator),
+    noteCompleted: v.optional(v.boolean()),
     priority: v.optional(priorityValidator),
     dueAt: v.optional(v.union(v.number(), v.null())),
   },
@@ -1321,12 +1322,22 @@ export const updateNode = mutation({
       patch.dueAt = args.dueAt;
     }
 
-    if (args.lockKind !== undefined) {
+    if (args.lockKind !== undefined || args.noteCompleted !== undefined || args.kind !== undefined) {
       const sourceMeta =
         node.sourceMeta && typeof node.sourceMeta === "object"
           ? { ...(node.sourceMeta as Record<string, unknown>) }
           : {};
-      sourceMeta.taskKindLocked = args.lockKind;
+
+      if (args.lockKind !== undefined) {
+        sourceMeta.taskKindLocked = args.lockKind;
+      }
+
+      if (args.noteCompleted !== undefined) {
+        sourceMeta.noteCompleted = args.noteCompleted;
+      } else if (args.kind === "task") {
+        sourceMeta.noteCompleted = false;
+      }
+
       patch.sourceMeta = sourceMeta;
     }
 

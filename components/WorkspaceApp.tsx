@@ -162,6 +162,10 @@ type LinkPreviewSegment =
       value: string;
       normalizedValue: string;
     };
+type RenderedPreviewSegment =
+  | (LinkPreviewSegment & {
+      strike: boolean;
+    });
 type WorkspaceKnowledgeSourceSnapshot = {
   nodeId: string;
   pageId: string | null;
@@ -562,6 +566,28 @@ function getNodeMeta(node: Doc<"nodes"> | TreeNode | null | undefined) {
   }
 
   return node.sourceMeta as Record<string, unknown>;
+}
+
+function isNodeNoteCompleted(
+  node:
+    | Pick<Doc<"nodes">, "kind" | "sourceMeta">
+    | Pick<NodeValueSnapshot, "kind" | "noteCompleted">
+    | null
+    | undefined,
+) {
+  if (!node || node.kind !== "note") {
+    return false;
+  }
+
+  if ("noteCompleted" in node) {
+    return node.noteCompleted === true;
+  }
+
+  const sourceMeta =
+    node.sourceMeta && typeof node.sourceMeta === "object"
+      ? (node.sourceMeta as Record<string, unknown>)
+      : {};
+  return sourceMeta.noteCompleted === true;
 }
 
 function findSectionNode(nodes: TreeNode[], slot: SectionSlot) {
@@ -1379,16 +1405,23 @@ function splitPastedLines(text: string) {
 function toNodeValueSnapshot(
   value:
     | Pick<Doc<"nodes">, "text" | "kind" | "taskStatus">
+    | Pick<Doc<"nodes">, "text" | "kind" | "taskStatus" | "sourceMeta">
     | {
         text: string;
         kind: "note" | "task";
         taskStatus: "todo" | "in_progress" | "done" | "cancelled" | null;
+        noteCompleted?: boolean;
       },
 ): NodeValueSnapshot {
   return {
     text: value.text,
     kind: value.kind as "note" | "task",
     taskStatus: (value.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
+    noteCompleted: isNodeNoteCompleted(
+      value as
+        | Pick<Doc<"nodes">, "kind" | "sourceMeta">
+        | Pick<NodeValueSnapshot, "kind" | "noteCompleted">,
+    ),
   };
 }
 
@@ -1398,6 +1431,76 @@ function isDimmedSyntaxLine(value: string) {
 
 function stripDimmedSyntaxPrefix(value: string) {
   return value.replace(/^(\s*)%%\s*/, "$1");
+}
+
+function splitTextForStrikethrough(text: string) {
+  const segments: Array<{ key: string; text: string; strike: boolean }> = [];
+  let remaining = text;
+  let strike = false;
+  let index = 0;
+
+  while (remaining.length > 0) {
+    const markerIndex = remaining.indexOf("~~");
+    if (markerIndex === -1) {
+      segments.push({
+        key: `text:${index}`,
+        text: remaining,
+        strike,
+      });
+      break;
+    }
+
+    const before = remaining.slice(0, markerIndex);
+    if (before.length > 0) {
+      segments.push({
+        key: `text:${index}`,
+        text: before,
+        strike,
+      });
+    }
+
+    remaining = remaining.slice(markerIndex + 2);
+    strike = !strike;
+    index += 1;
+  }
+
+  return segments;
+}
+
+function applyStrikethroughToPreviewSegments(segments: LinkPreviewSegment[]) {
+  const rendered: RenderedPreviewSegment[] = [];
+  let strike = false;
+
+  for (const segment of segments) {
+    if (segment.kind !== "text") {
+      rendered.push({
+        ...segment,
+        strike,
+      });
+      continue;
+    }
+
+    for (const textSegment of splitTextForStrikethrough(segment.text)) {
+      rendered.push({
+        key: `${segment.key}:${textSegment.key}`,
+        kind: "text",
+        text: textSegment.text,
+        strike: textSegment.strike,
+      });
+    }
+
+    const toggles = (segment.text.match(/~~/g) ?? []).length;
+    if (toggles % 2 === 1) {
+      strike = !strike;
+    }
+  }
+
+  return rendered;
+}
+
+function isEntireLineStruck(value: string) {
+  const match = value.match(/^(\s*)~~([\s\S]*?)~~(\s*)$/);
+  return Boolean(match && match[2].trim().length > 0);
 }
 
 function readStoredBoolean(key: string, defaultValue: boolean) {
@@ -1501,6 +1604,7 @@ function toCreatedNodeSnapshot(
     text: node.text,
     kind: node.kind as "note" | "task",
     taskStatus: (node.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
+    noteCompleted: isNodeNoteCompleted(node),
   };
 }
 
@@ -2733,11 +2837,13 @@ function ConfiguredWorkspace({
             text: node.text,
             kind: "note",
             taskStatus: null,
+            noteCompleted: false,
           }
         : {
             text: node.text,
             kind: "task",
             taskStatus: "todo",
+            noteCompleted: false,
           };
 
     await updateNode({
@@ -2747,6 +2853,64 @@ function ConfiguredWorkspace({
       kind: afterSnapshot.kind,
       lockKind: true,
       taskStatus: afterSnapshot.taskStatus,
+      noteCompleted: false,
+    });
+
+    history.pushUndoEntry({
+      type: "update_node",
+      pageId: node.pageId as Id<"pages">,
+      nodeId: node._id as Id<"nodes">,
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      focusEditorId: getNodeEditorId(node._id as Id<"nodes">),
+    });
+    selectSingleNode(nodeId);
+  }, [history, ownerKey, pagesById, selectSingleNode, selectedNodeIds, updateNode, workspaceNodeMap]);
+
+  const toggleHighlightedNodeCompletion = useCallback(async () => {
+    if (selectedNodeIds.size !== 1) {
+      return;
+    }
+
+    const nodeId = [...selectedNodeIds][0];
+    if (!nodeId) {
+      return;
+    }
+
+    const node = workspaceNodeMap.get(nodeId);
+    if (!node || getNodeMeta(node).locked === true) {
+      return;
+    }
+
+    const page = pagesById.get(node.pageId as string);
+    if (page?.archived) {
+      return;
+    }
+
+    const beforeSnapshot = toNodeValueSnapshot(node);
+    const afterSnapshot: NodeValueSnapshot =
+      node.kind === "task"
+        ? {
+            text: node.text,
+            kind: "task",
+            taskStatus: node.taskStatus === "done" ? "todo" : "done",
+            noteCompleted: false,
+          }
+        : {
+            text: node.text,
+            kind: "note",
+            taskStatus: null,
+            noteCompleted: !isNodeNoteCompleted(node),
+          };
+
+    await updateNode({
+      ownerKey,
+      nodeId: node._id,
+      text: afterSnapshot.text,
+      kind: afterSnapshot.kind,
+      lockKind: true,
+      taskStatus: afterSnapshot.taskStatus,
+      noteCompleted: afterSnapshot.noteCompleted,
     });
 
     history.pushUndoEntry({
@@ -3133,6 +3297,17 @@ function ConfiguredWorkspace({
 
       if (
         isModifier &&
+        normalizedKey === "enter" &&
+        selectedNodeIds.size > 0 &&
+        !isTextEntryElement(event.target)
+      ) {
+        event.preventDefault();
+        void toggleHighlightedNodeCompletion();
+        return;
+      }
+
+      if (
+        isModifier &&
         event.shiftKey &&
         normalizedKey === "c" &&
         selectedNodeIds.size > 0 &&
@@ -3314,6 +3489,7 @@ function ConfiguredWorkspace({
     selectSingleNode,
     selectedNodeIds,
     setHighlightedNodeCollapsedByKeyboard,
+    toggleHighlightedNodeCompletion,
     toggleHighlightedNodeKind,
     visibleNodeOrder,
   ]);
@@ -5287,6 +5463,8 @@ function LinkedTextPreview({
   isDisabled: boolean;
   className?: string;
 }) {
+  const renderedSegments = applyStrikethroughToPreviewSegments(segments);
+
   return (
     <div
       className={clsx(
@@ -5306,9 +5484,14 @@ function LinkedTextPreview({
         onFocusLine();
       }}
     >
-      {segments.map((segment) =>
+      {renderedSegments.map((segment) =>
         segment.kind === "text" ? (
-          <span key={segment.key}>{segment.text}</span>
+          <span
+            key={segment.key}
+            className={segment.strike ? "line-through" : undefined}
+          >
+            {segment.text}
+          </span>
         ) : segment.kind === "tag" ? (
           <button
             key={segment.key}
@@ -5323,7 +5506,10 @@ function LinkedTextPreview({
               event.stopPropagation();
               onOpenTag(segment.text);
             }}
-            className="inline cursor-pointer text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px] transition hover:text-[var(--workspace-brand-hover)]"
+            className={clsx(
+              "inline cursor-pointer text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px] transition hover:text-[var(--workspace-brand-hover)]",
+              segment.strike ? "line-through" : "",
+            )}
           >
             {segment.text}
           </button>
@@ -5342,7 +5528,10 @@ function LinkedTextPreview({
               onClick={(event) => {
                 event.stopPropagation();
               }}
-              className="inline cursor-pointer text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px] transition hover:text-[var(--workspace-brand-hover)]"
+              className={clsx(
+                "inline cursor-pointer text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px] transition hover:text-[var(--workspace-brand-hover)]",
+                segment.strike ? "line-through" : "",
+              )}
             >
               {segment.text}
             </a>
@@ -5369,7 +5558,12 @@ function LinkedTextPreview({
                 segment.archived ? "opacity-75" : "",
               )}
             >
-              <span className="underline decoration-[1.5px] underline-offset-[3px]">
+              <span
+                className={clsx(
+                  "underline decoration-[1.5px] underline-offset-[3px]",
+                  segment.strike ? "line-through" : "",
+                )}
+              >
                 {segment.text}
               </span>
               {segment.pageTypeBadge ? (
@@ -5387,6 +5581,7 @@ function LinkedTextPreview({
                   ? "decoration-dotted"
                   : "decoration-[var(--workspace-brand)]/70",
                 segment.resolved ? "" : "opacity-80",
+                segment.strike ? "line-through" : "",
               )}
             >
               {segment.text}
@@ -5409,6 +5604,8 @@ function PlainTextPreview({
   isDisabled: boolean;
   className?: string;
 }) {
+  const renderedSegments = splitTextForStrikethrough(text);
+
   return (
     <div
       className={clsx(
@@ -5424,7 +5621,14 @@ function PlainTextPreview({
         onFocusLine();
       }}
     >
-      {text}
+      {renderedSegments.map((segment) => (
+        <span
+          key={segment.key}
+          className={segment.strike ? "line-through" : undefined}
+        >
+          {segment.text}
+        </span>
+      ))}
     </div>
   );
 }
@@ -5438,6 +5642,8 @@ function LinkPreviewMeasure({
   className?: string;
   measureRef?: RefObject<HTMLDivElement | null>;
 }) {
+  const renderedSegments = applyStrikethroughToPreviewSegments(segments);
+
   return (
     <div
       ref={measureRef}
@@ -5447,13 +5653,21 @@ function LinkPreviewMeasure({
         className,
       )}
     >
-      {segments.map((segment) =>
+      {renderedSegments.map((segment) =>
         segment.kind === "text" ? (
-          <span key={segment.key}>{segment.text}</span>
+          <span
+            key={segment.key}
+            className={segment.strike ? "line-through" : undefined}
+          >
+            {segment.text}
+          </span>
         ) : segment.kind === "tag" ? (
           <span
             key={segment.key}
-            className="inline text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px]"
+            className={clsx(
+              "inline text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px]",
+              segment.strike ? "line-through" : "",
+            )}
           >
             {segment.text}
           </span>
@@ -5466,7 +5680,12 @@ function LinkPreviewMeasure({
               !segment.resolved ? "opacity-80" : "",
             )}
           >
-            <span className="underline decoration-[1.5px] underline-offset-[3px]">
+            <span
+              className={clsx(
+                "underline decoration-[1.5px] underline-offset-[3px]",
+                segment.strike ? "line-through" : "",
+              )}
+            >
               {segment.text}
             </span>
             {segment.pageTypeBadge ? (
@@ -5490,6 +5709,8 @@ function PlainTextMeasure({
   className?: string;
   measureRef?: RefObject<HTMLDivElement | null>;
 }) {
+  const renderedSegments = splitTextForStrikethrough(text);
+
   return (
     <div
       ref={measureRef}
@@ -5499,7 +5720,14 @@ function PlainTextMeasure({
         className,
       )}
     >
-      {text}
+      {renderedSegments.map((segment) => (
+        <span
+          key={segment.key}
+          className={segment.strike ? "line-through" : undefined}
+        >
+          {segment.text}
+        </span>
+      ))}
     </div>
   );
 }
@@ -5511,12 +5739,12 @@ function getNodeTypographyClass({
   isTaskRow: boolean;
   headingLevel: 1 | 2 | 3 | null;
 }) {
-  if (isTaskRow) {
-    return "py-0 text-[15px] leading-[1.35rem]";
-  }
-
   if (headingLevel !== null) {
     return clsx("py-0", getHeadingPreviewClass(headingLevel));
+  }
+
+  if (isTaskRow) {
+    return "py-0 text-[15px] leading-[1.35rem]";
   }
 
   return "py-0.5 text-[15px] leading-[1.45rem]";
@@ -5959,6 +6187,9 @@ function OutlineNodeEditor({
   const childrenAnimationFrameRef = useRef<number | null>(null);
 
   const nodeMeta = getNodeMeta(node);
+  const isNoteCompleted = node.kind === "note" && nodeMeta.noteCompleted === true;
+  const isTaskCompleted = node.kind === "task" && node.taskStatus === "done";
+  const isCompleted = isTaskCompleted || isNoteCompleted;
   const isLocked = nodeMeta.locked === true;
   const isDisabled = isLocked || isPageReadOnly;
   const editorId = getNodeEditorId(node._id as Id<"nodes">);
@@ -5985,14 +6216,13 @@ function OutlineNodeEditor({
     [draft, isDimmedLine],
   );
   const headingSyntax = useMemo(
-    () =>
-      node.kind === "note"
-        ? parseHeadingSyntax(syntaxDisplayDraft)
-        : { level: null, text: syntaxDisplayDraft },
-    [node.kind, syntaxDisplayDraft],
+    () => parseHeadingSyntax(syntaxDisplayDraft),
+    [syntaxDisplayDraft],
   );
   const displayDraft = headingSyntax.text;
   const isHeadingLine = headingSyntax.level !== null;
+  const hasStrikethroughSyntax = displayDraft.includes("~~");
+  const isFullyStruckLine = isEntireLineStruck(displayDraft);
   const shouldHideNoteMarker = false;
   const shouldRevealVisualPlaceholder = isFocused || isSelected;
   const nodeLinkTargetIds = useMemo(
@@ -6032,7 +6262,7 @@ function OutlineNodeEditor({
     !isFocused &&
     !isVisualEmptyLine &&
     !isVisualSeparatorLine &&
-    (isDimmedLine || isHeadingLine) &&
+    (isDimmedLine || isHeadingLine || hasStrikethroughSyntax) &&
     !hasPageLinkPreview;
   const hasDisplayPreview = hasPageLinkPreview || hasPlainTextPreview;
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
@@ -6504,11 +6734,18 @@ function OutlineNodeEditor({
       return null;
     }
 
-    const beforeSnapshot = toNodeValueSnapshot(beforeParsed);
+    const beforeSnapshot: NodeValueSnapshot = {
+      ...toNodeValueSnapshot(beforeParsed),
+      noteCompleted:
+        beforeParsed.kind === "note"
+          ? isNoteCompleted
+          : false,
+    };
     if (
       beforeSnapshot.text === afterValue.text &&
       beforeSnapshot.kind === afterValue.kind &&
-      beforeSnapshot.taskStatus === afterValue.taskStatus
+      beforeSnapshot.taskStatus === afterValue.taskStatus &&
+      beforeSnapshot.noteCompleted === afterValue.noteCompleted
     ) {
       return null;
     }
@@ -6538,6 +6775,7 @@ function OutlineNodeEditor({
           text: node.text,
           kind: node.kind as "note" | "task",
           taskStatus: (node.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
+          noteCompleted: isNoteCompleted,
         }),
       };
     }
@@ -6567,7 +6805,13 @@ function OutlineNodeEditor({
       };
     }
 
-    const nextSnapshot = toNodeValueSnapshot(parsed);
+    const nextSnapshot: NodeValueSnapshot = {
+      ...toNodeValueSnapshot(parsed),
+      noteCompleted:
+        parsed.kind === "note"
+          ? isNoteCompleted
+          : false,
+    };
     if (
       parsed.text !== node.text ||
       parsed.kind !== node.kind ||
@@ -6579,6 +6823,7 @@ function OutlineNodeEditor({
         text: parsed.text,
         kind: parsed.kind,
         taskStatus: parsed.taskStatus,
+        noteCompleted: parsed.kind === "note" ? isNoteCompleted : false,
       });
     }
 
@@ -6617,11 +6862,13 @@ function OutlineNodeEditor({
       text: saveResult.parsed.text,
       kind: "task",
       taskStatus: (node.taskStatus ?? "todo") as NodeValueSnapshot["taskStatus"],
+      noteCompleted: false,
     };
     const afterSnapshot: NodeValueSnapshot = {
       text: saveResult.parsed.text,
       kind: "task",
       taskStatus: node.taskStatus === "done" ? "todo" : "done",
+      noteCompleted: false,
     };
 
     await updateNode({
@@ -6631,6 +6878,7 @@ function OutlineNodeEditor({
       kind: afterSnapshot.kind,
       lockKind: true,
       taskStatus: afterSnapshot.taskStatus,
+      noteCompleted: false,
     });
     history.commitTrackedValue(
       editorId,
@@ -6638,6 +6886,73 @@ function OutlineNodeEditor({
       afterSnapshot.text,
     );
     setDraft(afterSnapshot.text);
+    const toggleEntry: HistoryEntry = {
+      type: "update_node",
+      pageId,
+      nodeId: node._id as Id<"nodes">,
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      focusEditorId: editorId,
+    };
+
+    if (saveResult.updateEntry) {
+      history.pushUndoEntry({
+        type: "compound",
+        pageId,
+        entries: [saveResult.updateEntry, toggleEntry],
+        focusAfterUndoId: editorId,
+        focusAfterRedoId: editorId,
+      });
+      return;
+    }
+
+    history.pushUndoEntry(toggleEntry);
+  };
+
+  const handleToggleCompletion = async () => {
+    if (isDisabled) {
+      return;
+    }
+
+    if (node.kind === "task") {
+      await handleToggleTask();
+      return;
+    }
+
+    const saveResult = await commitNodeText(draft);
+    if (saveResult.deleted || !saveResult.parsed) {
+      return;
+    }
+
+    const beforeSnapshot: NodeValueSnapshot = {
+      text: saveResult.parsed.text,
+      kind: "note",
+      taskStatus: null,
+      noteCompleted: isNoteCompleted,
+    };
+    const afterSnapshot: NodeValueSnapshot = {
+      text: saveResult.parsed.text,
+      kind: "note",
+      taskStatus: null,
+      noteCompleted: !isNoteCompleted,
+    };
+
+    await updateNode({
+      ownerKey,
+      nodeId: node._id as Id<"nodes">,
+      text: afterSnapshot.text,
+      kind: afterSnapshot.kind,
+      lockKind: true,
+      taskStatus: null,
+      noteCompleted: afterSnapshot.noteCompleted,
+    });
+    history.commitTrackedValue(
+      editorId,
+      editorTarget,
+      afterSnapshot.text,
+    );
+    setDraft(afterSnapshot.text);
+
     const toggleEntry: HistoryEntry = {
       type: "update_node",
       pageId,
@@ -6678,11 +6993,13 @@ function OutlineNodeEditor({
             text: beforeSnapshot.text,
             kind: "note",
             taskStatus: null,
+            noteCompleted: false,
           }
         : {
             text: beforeSnapshot.text,
             kind: "task",
             taskStatus: "todo",
+            noteCompleted: false,
           };
 
     await updateNode({
@@ -6849,6 +7166,12 @@ function OutlineNodeEditor({
     if (isModifier && event.shiftKey && normalizedKey === "c") {
       event.preventDefault();
       await handleToggleNodeKind();
+      return;
+    }
+
+    if (isModifier && normalizedKey === "enter") {
+      event.preventDefault();
+      await handleToggleCompletion();
       return;
     }
 
@@ -7359,8 +7682,8 @@ function OutlineNodeEditor({
                 "w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 text-[15px] outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]",
                 previewTypographyClass,
                 isDraggingAnotherNode ? "pointer-events-none select-none" : "",
-                node.taskStatus === "done" ? "text-[var(--workspace-text-faint)] line-through" : "",
-                isDimmedLine && node.taskStatus !== "done"
+                isCompleted ? "text-[var(--workspace-text-faint)] line-through" : "",
+                isDimmedLine && !isCompleted
                   ? "text-[var(--workspace-text-subtle)]"
                   : "",
                 (isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder
@@ -7375,7 +7698,7 @@ function OutlineNodeEditor({
                 segments={linkPreviewSegments}
                 className={clsx(
                   previewTypographyClass,
-                  node.taskStatus === "done"
+                  isCompleted || isFullyStruckLine
                     ? "text-[var(--workspace-text-faint)] line-through"
                     : isDimmedLine
                       ? "text-[var(--workspace-text-subtle)]"
@@ -7388,7 +7711,7 @@ function OutlineNodeEditor({
                 text={displayDraft}
                 className={clsx(
                   previewTypographyClass,
-                  node.taskStatus === "done"
+                  isCompleted || isFullyStruckLine
                     ? "text-[var(--workspace-text-faint)] line-through"
                     : isDimmedLine
                       ? "text-[var(--workspace-text-subtle)]"
@@ -7406,7 +7729,7 @@ function OutlineNodeEditor({
                 isDisabled={isDisabled || activeDraggedNodeId !== null}
                 className={clsx(
                   previewTypographyClass,
-                  node.taskStatus === "done"
+                  isCompleted || isFullyStruckLine
                     ? "text-[var(--workspace-text-faint)] line-through"
                     : isDimmedLine
                       ? "text-[var(--workspace-text-subtle)]"
@@ -7420,7 +7743,7 @@ function OutlineNodeEditor({
                 isDisabled={isDisabled || activeDraggedNodeId !== null}
                 className={clsx(
                   previewTypographyClass,
-                  node.taskStatus === "done"
+                  isCompleted || isFullyStruckLine
                     ? "text-[var(--workspace-text-faint)] line-through"
                     : isDimmedLine
                       ? "text-[var(--workspace-text-subtle)]"
@@ -7575,7 +7898,19 @@ function OutlineNodeEditor({
           persistWhenEmpty
           placeholder="Write a line…"
           onBeginTextEditing={onBeginTextEditing}
-          onSubmitted={() => {
+          onSubmitted={(createdNodes, reason) => {
+            if (reason === "enter") {
+              const lastCreatedNode = createdNodes[createdNodes.length - 1];
+              if (lastCreatedNode) {
+                onOpenInsertedComposer(
+                  pageId,
+                  parentNodeId,
+                  lastCreatedNode._id as Id<"nodes">,
+                );
+                return;
+              }
+            }
+
             onClearInsertedComposer();
           }}
           onCancel={() => {
@@ -7619,7 +7954,10 @@ function InlineComposer({
   persistWhenEmpty?: boolean;
   placeholder?: string;
   onBeginTextEditing?: () => void;
-  onSubmitted?: () => void;
+  onSubmitted?: (
+    createdNodes: Doc<"nodes">[],
+    reason: "enter" | "blur" | "escape" | "paste",
+  ) => void;
   onCancel?: () => void;
 }) {
   const history = useWorkspaceHistory();
@@ -7724,14 +8062,17 @@ function InlineComposer({
     });
   };
 
-  const submitLines = async (value: string) => {
+  const submitLines = async (
+    value: string,
+    reason: "enter" | "blur" | "escape" | "paste",
+  ) => {
     if (readOnly || isSubmittingRef.current) {
-      return;
+      return [];
     }
 
     const lines = splitPastedLines(value);
     if (lines.length === 0) {
-      return;
+      return [];
     }
 
     let nextAfterNodeId: Id<"nodes"> | null | undefined = afterNodeId ?? null;
@@ -7751,14 +8092,15 @@ function InlineComposer({
       });
 
     if (batch.length === 0) {
-      return;
+      return [];
     }
 
     isSubmittingRef.current = true;
     setIsSubmitting(true);
+    let createdNodes: Doc<"nodes">[] = [];
 
     try {
-      const createdNodes = (await createNodesBatch({
+      createdNodes = (await createNodesBatch({
         ownerKey,
         pageId,
         nodes: batch,
@@ -7775,7 +8117,7 @@ function InlineComposer({
 
       history.resetTrackedValue(editorId, editorTarget, "");
       setDraft("");
-      onSubmitted?.();
+      onSubmitted?.(createdNodes, reason);
       history.pushUndoEntry({
         type: "create_nodes",
         pageId,
@@ -7790,6 +8132,8 @@ function InlineComposer({
       isSubmittingRef.current = false;
       setIsSubmitting(false);
     }
+
+    return createdNodes;
   };
 
   const handleKeyDown = async (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
@@ -7806,7 +8150,7 @@ function InlineComposer({
       }
 
       const textarea = event.currentTarget;
-      await submitLines(draft);
+      await submitLines(draft, "escape");
       window.requestAnimationFrame(() => {
         textarea.blur();
       });
@@ -7848,7 +8192,7 @@ function InlineComposer({
     }
 
     event.preventDefault();
-    await submitLines(draft);
+    await submitLines(draft, "enter");
   };
 
   const handlePaste = async (event: TextareaClipboardEvent<HTMLTextAreaElement>) => {
@@ -7863,7 +8207,7 @@ function InlineComposer({
     }
 
     event.preventDefault();
-    await submitLines(pastedText);
+    await submitLines(pastedText, "paste");
   };
 
   const handleBlur = () => {
@@ -7882,7 +8226,7 @@ function InlineComposer({
       return;
     }
 
-    void submitLines(currentDraft);
+    void submitLines(currentDraft, "blur");
   };
 
   return (

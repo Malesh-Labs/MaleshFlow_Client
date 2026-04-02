@@ -210,11 +210,13 @@ function TrackedNodeInput({
         text: before,
         kind: "note",
         taskStatus: null,
+        noteCompleted: false,
       };
       const afterSnapshot: NodeValueSnapshot = {
         text: draft,
         kind: "note",
         taskStatus: null,
+        noteCompleted: false,
       };
       history.pushUndoEntry({
         type: "update_node",
