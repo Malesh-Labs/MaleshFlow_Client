@@ -2160,7 +2160,10 @@ function ConfiguredWorkspace({
     () => new Map(Object.entries(sidebarTree?.nodeBacklinkCounts ?? {})),
     [sidebarTree?.nodeBacklinkCounts],
   );
-  const sidebarLinkedPageIds = new Set((sidebarTree?.linkedPageIds ?? []).map((pageId) => pageId as string));
+  const sidebarLinkedPageIds = useMemo(
+    () => new Set((sidebarTree?.linkedPageIds ?? []).map((pageId) => pageId as string)),
+    [sidebarTree?.linkedPageIds],
+  );
   const pageBacklinkCount = activePageTree?.pageBacklinkCount ?? 0;
 
   const modelSection = findSectionNode(tree, "model");
@@ -2236,8 +2239,15 @@ function ConfiguredWorkspace({
 
     return null;
   }, [activePageTree?.nodes, pendingRevealNodeId, sidebarTree?.nodes]);
-  const uncategorizedPages =
-    (pages ?? []).filter((page) => !page.archived && !sidebarLinkedPageIds.has(page._id as string));
+  const uncategorizedPages = useMemo(
+    () =>
+      (pages ?? [])
+        .filter((page) => !page.archived && !sidebarLinkedPageIds.has(page._id as string))
+        .sort((left, right) =>
+          left.title.localeCompare(right.title, undefined, { sensitivity: "base" }),
+        ),
+    [pages, sidebarLinkedPageIds],
+  );
   const archivedPages = (pages ?? []).filter((page) => page.archived);
   const showUncategorizedSectionContent =
     uncategorizedPages.length > 0 && !isUncategorizedSectionCollapsed;
