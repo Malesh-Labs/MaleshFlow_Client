@@ -2038,6 +2038,7 @@ function ConfiguredWorkspace({
   const pageTitleInputRef = useRef<HTMLInputElement>(null);
   const pageTitleDraftRef = useRef(pageTitleDraft);
   const paletteInputRef = useRef<HTMLInputElement>(null);
+  const paletteResultsRef = useRef<HTMLDivElement>(null);
   const lastPaletteModeRef = useRef<PaletteMode>("pages");
   const hasResolvedInitialPageSelection = useRef(false);
   const hasRequestedSidebarPage = useRef(false);
@@ -3697,6 +3698,23 @@ function ConfiguredWorkspace({
       paletteInputRef.current?.focus();
     }, 0);
   }, [paletteOpen, paletteMode]);
+
+  useEffect(() => {
+    if (!paletteOpen || paletteMode === "chat" || activePaletteResultsCount === 0) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      const activeItem = paletteResultsRef.current?.querySelector<HTMLElement>(
+        `[data-palette-item-index="${paletteHighlightIndex}"]`,
+      );
+      activeItem?.scrollIntoView({
+        block: "nearest",
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [activePaletteResultsCount, paletteHighlightIndex, paletteMode, paletteOpen]);
 
   useEffect(() => {
     if (!paletteOpen || paletteMode !== "find") {
@@ -5536,6 +5554,7 @@ function ConfiguredWorkspace({
               )}
             </div>
             <div
+              ref={paletteResultsRef}
               className={clsx(
                 paletteMode === "chat"
                   ? "h-[min(72vh,720px)]"
@@ -5551,6 +5570,7 @@ function ConfiguredWorkspace({
                     <button
                       key={page._id}
                       type="button"
+                      data-palette-item-index={index}
                       onMouseEnter={() => setPaletteHighlightIndex(index)}
                       onClick={() => handleSelectPage(page._id)}
                       className={clsx(
@@ -5593,6 +5613,7 @@ function ConfiguredWorkspace({
                     <button
                       key={`${result.node._id}:${result.page?._id ?? "page"}:find`}
                       type="button"
+                      data-palette-item-index={index}
                       onMouseEnter={() => setPaletteHighlightIndex(index)}
                       onClick={() => handleSelectNodeSearchResult(result)}
                       className={clsx(
@@ -5631,6 +5652,7 @@ function ConfiguredWorkspace({
                     <button
                       key={`${result.node._id}:${result.page?._id ?? "page"}`}
                       type="button"
+                      data-palette-item-index={index}
                       onMouseEnter={() => setPaletteHighlightIndex(index)}
                       onClick={() => handleSelectNodeSearchResult(result)}
                       className={clsx(
@@ -5665,6 +5687,7 @@ function ConfiguredWorkspace({
                     <button
                       key={result.key}
                       type="button"
+                      data-palette-item-index={index}
                       disabled={result.disabled}
                       onMouseEnter={() => setPaletteHighlightIndex(index)}
                       onClick={() => {
