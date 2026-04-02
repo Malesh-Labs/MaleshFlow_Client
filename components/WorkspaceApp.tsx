@@ -1868,6 +1868,7 @@ function ConfiguredWorkspace({
   const archivedPages = (pages ?? []).filter((page) => page.archived);
   const showUncategorizedSectionContent =
     uncategorizedPages.length > 0 && !isUncategorizedSectionCollapsed;
+  const showTagsSectionContent = !isTagsSectionCollapsed;
   const showArchiveSectionContent = !isArchiveSectionCollapsed;
   const sortedTags: SidebarTagResult[] = tags ?? [];
   const pagesByTitle = useMemo(() => {
@@ -3118,7 +3119,7 @@ function ConfiguredWorkspace({
         return;
       }
 
-      if (isModifier && event.altKey && normalizedKey === "n") {
+      if (event.metaKey && event.ctrlKey && normalizedKey === "n") {
         event.preventDefault();
         openPalette("new");
         return;
@@ -3720,61 +3721,61 @@ function ConfiguredWorkspace({
       </div>
       <div
         className={clsx(
-          "mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 pb-36 md:pb-44",
-          isSidebarCollapsed
-            ? "lg:grid-cols-[56px_minmax(0,1fr)]"
-            : "lg:grid-cols-[320px_minmax(0,1fr)]",
+          "mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 pb-36 transition-[grid-template-columns] duration-200 ease-out motion-reduce:transition-none md:pb-44",
         )}
+        style={
+          isMobileLayout
+            ? undefined
+            : {
+                gridTemplateColumns: isSidebarCollapsed
+                  ? "72px minmax(0,1fr)"
+                  : "320px minmax(0,1fr)",
+              }
+        }
       >
         <aside
           className={clsx(
-            "flex flex-col border-b border-[var(--workspace-border)] bg-[var(--workspace-sidebar-bg)] lg:border-b-0 lg:border-r",
-            isSidebarCollapsed ? "px-2 py-4" : "p-6",
+            "overflow-hidden border-b border-[var(--workspace-border)] bg-[var(--workspace-sidebar-bg)] lg:border-b-0 lg:border-r",
           )}
         >
-          {isSidebarCollapsed ? (
-            <div className="flex h-full flex-col items-center gap-3">
+          <div
+            className={clsx(
+              "flex h-full flex-col transition-[padding] duration-200 ease-out motion-reduce:transition-none",
+              isSidebarCollapsed ? "px-3 py-4 md:px-4 md:py-5" : "p-6",
+            )}
+          >
+            <div
+              className={clsx(
+                "flex items-start",
+                isSidebarCollapsed
+                  ? isMobileLayout
+                    ? "justify-start"
+                    : "justify-center"
+                  : "justify-between gap-4",
+              )}
+            >
               <button
                 type="button"
-                onClick={() => setIsSidebarCollapsed(false)}
+                onClick={() => setIsSidebarCollapsed((current) => !current)}
                 className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
               >
-                <span className="lg:hidden">˅</span>
-                <span className="hidden lg:inline">&gt;</span>
+                <span className="lg:hidden">{isSidebarCollapsed ? "˅" : "˄"}</span>
+                <span className="hidden lg:inline">{isSidebarCollapsed ? ">" : "<"}</span>
               </button>
-              <div className="mt-auto flex flex-col items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => void handleRebuildEmbeddings()}
-                  disabled={isRebuildingEmbeddings}
-                  className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
-                >
-                  Emb
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOwnerKey("")}
-                  className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                >
-                  Lock
-                </button>
-              </div>
+              {!isSidebarCollapsed ? <div className="flex-1" /> : null}
             </div>
-          ) : (
-            <>
-              <div className="flex items-start justify-between gap-4">
-                <button
-                  type="button"
-                  onClick={() => setIsSidebarCollapsed(true)}
-                  className="flex h-9 w-9 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                >
-                  <span className="lg:hidden">˄</span>
-                  <span className="hidden lg:inline">&lt;</span>
-                </button>
-                <div className="flex-1" />
-              </div>
 
-              <div className="mt-6 flex-1 overflow-y-auto">
+            <div
+              className={clsx(
+                "grid min-h-0 flex-1 transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out motion-reduce:transition-none",
+                isSidebarCollapsed
+                  ? "pointer-events-none mt-0 grid-rows-[0fr] opacity-0"
+                  : "mt-6 grid-rows-[1fr] opacity-100",
+              )}
+            >
+              <div aria-hidden={isSidebarCollapsed} className="min-h-0 overflow-hidden">
+                <div className="flex h-full min-h-0 flex-col">
+                  <div className="flex-1 overflow-y-auto">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                     Sidebar
@@ -3934,28 +3935,40 @@ function ConfiguredWorkspace({
                       ) : null}
                     </div>
                   </div>
-                  {showUncategorizedSectionContent ? (
-                    <div className="mt-3 space-y-1">
-                      {uncategorizedPages.map((page) => (
-                        <button
-                          key={page._id}
-                          type="button"
-                          onClick={() => handleSelectPage(page._id)}
-                          className={clsx(
-                            "block w-full px-2 py-1.5 text-left text-sm transition",
-                            selectedPageId === page._id
-                              ? "bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
-                              : "text-[var(--workspace-text-strong)] hover:bg-[var(--workspace-surface-accent)]",
-                          )}
-                        >
-                          <span>{page.title}</span>
-                          <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none text-[var(--workspace-text-faint)]">
-                            {getPageTypeEmoji(page)}
-                          </span>
-                        </button>
-                      ))}
+                  <div
+                    className={clsx(
+                      "grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out motion-reduce:transition-none",
+                      showUncategorizedSectionContent
+                        ? "mt-3 grid-rows-[1fr] opacity-100"
+                        : "pointer-events-none mt-0 grid-rows-[0fr] opacity-0",
+                    )}
+                  >
+                    <div
+                      aria-hidden={!showUncategorizedSectionContent}
+                      className="min-h-0 overflow-hidden"
+                    >
+                      <div className="space-y-1">
+                        {uncategorizedPages.map((page) => (
+                          <button
+                            key={page._id}
+                            type="button"
+                            onClick={() => handleSelectPage(page._id)}
+                            className={clsx(
+                              "block w-full px-2 py-1.5 text-left text-sm transition",
+                              selectedPageId === page._id
+                                ? "bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
+                                : "text-[var(--workspace-text-strong)] hover:bg-[var(--workspace-surface-accent)]",
+                            )}
+                          >
+                            <span>{page.title}</span>
+                            <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none text-[var(--workspace-text-faint)]">
+                              {getPageTypeEmoji(page)}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  ) : null}
+                  </div>
                 </div>
 
                 <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
@@ -3972,33 +3985,45 @@ function ConfiguredWorkspace({
                       {isTagsSectionCollapsed ? "+" : "−"}
                     </button>
                   </div>
-                  {!isTagsSectionCollapsed ? (
-                    typeof tags === "undefined" ? (
-                      <p className="mt-3 text-sm text-[var(--workspace-text-faint)]">
-                        Loading tags…
-                      </p>
-                    ) : sortedTags.length === 0 ? (
-                      <p className="mt-3 text-sm text-[var(--workspace-text-faint)]">
-                        No tags yet.
-                      </p>
-                    ) : (
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {sortedTags.map((tag) => (
-                          <button
-                            key={tag.normalizedValue}
-                            type="button"
-                            onClick={() => openFindPaletteForQuery(tag.label)}
-                            className="inline-flex items-center gap-2 border border-[var(--workspace-border-control)] px-2 py-1 text-left text-xs text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-brand-hover)]"
-                          >
-                            <span>{tag.label}</span>
-                            <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--workspace-text-faint)] no-underline">
-                              {tag.count}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    )
-                  ) : null}
+                  <div
+                    className={clsx(
+                      "grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out motion-reduce:transition-none",
+                      showTagsSectionContent
+                        ? "mt-3 grid-rows-[1fr] opacity-100"
+                        : "pointer-events-none mt-0 grid-rows-[0fr] opacity-0",
+                    )}
+                  >
+                    <div
+                      aria-hidden={!showTagsSectionContent}
+                      className="min-h-0 overflow-hidden"
+                    >
+                      {typeof tags === "undefined" ? (
+                        <p className="text-sm text-[var(--workspace-text-faint)]">
+                          Loading tags…
+                        </p>
+                      ) : sortedTags.length === 0 ? (
+                        <p className="text-sm text-[var(--workspace-text-faint)]">
+                          No tags yet.
+                        </p>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {sortedTags.map((tag) => (
+                            <button
+                              key={tag.normalizedValue}
+                              type="button"
+                              onClick={() => openFindPaletteForQuery(tag.label)}
+                              className="inline-flex items-center gap-2 border border-[var(--workspace-border-control)] px-2 py-1 text-left text-xs text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-brand-hover)]"
+                            >
+                              <span>{tag.label}</span>
+                              <span className="text-[10px] uppercase tracking-[0.14em] text-[var(--workspace-text-faint)] no-underline">
+                                {tag.count}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
 
                 <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5 opacity-75">
@@ -4015,34 +4040,46 @@ function ConfiguredWorkspace({
                       {showArchiveSectionContent ? "−" : "+"}
                     </button>
                   </div>
-                  {showArchiveSectionContent ? (
-                    archivedPages.length === 0 ? (
-                      <p className="mt-3 text-sm text-[var(--workspace-text-faint)]">
-                        No archived pages.
-                      </p>
-                    ) : (
-                      <div className="mt-3 space-y-1">
-                        {archivedPages.map((page) => (
-                          <button
-                            key={page._id}
-                            type="button"
-                            onClick={() => handleSelectPage(page._id)}
-                            className={clsx(
-                              "block w-full px-2 py-1.5 text-left text-sm transition",
-                              selectedPageId === page._id
-                                ? "bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
-                                : "text-[var(--workspace-text-faint)] hover:bg-[var(--workspace-surface-accent)] hover:text-[var(--workspace-text)]",
-                            )}
-                          >
-                            <span>{page.title}</span>
-                            <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none text-[var(--workspace-text-faint)]">
-                              {getPageTypeEmoji(page)}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    )
-                  ) : null}
+                  <div
+                    className={clsx(
+                      "grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out motion-reduce:transition-none",
+                      showArchiveSectionContent
+                        ? "mt-3 grid-rows-[1fr] opacity-100"
+                        : "pointer-events-none mt-0 grid-rows-[0fr] opacity-0",
+                    )}
+                  >
+                    <div
+                      aria-hidden={!showArchiveSectionContent}
+                      className="min-h-0 overflow-hidden"
+                    >
+                      {archivedPages.length === 0 ? (
+                        <p className="text-sm text-[var(--workspace-text-faint)]">
+                          No archived pages.
+                        </p>
+                      ) : (
+                        <div className="space-y-1">
+                          {archivedPages.map((page) => (
+                            <button
+                              key={page._id}
+                              type="button"
+                              onClick={() => handleSelectPage(page._id)}
+                              className={clsx(
+                                "block w-full px-2 py-1.5 text-left text-sm transition",
+                                selectedPageId === page._id
+                                  ? "bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
+                                  : "text-[var(--workspace-text-faint)] hover:bg-[var(--workspace-surface-accent)] hover:text-[var(--workspace-text)]",
+                              )}
+                            >
+                              <span>{page.title}</span>
+                              <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none text-[var(--workspace-text-faint)]">
+                                {getPageTypeEmoji(page)}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
 
                 <div className="mt-6 border-t border-[var(--workspace-border-soft)] pt-4">
@@ -4079,9 +4116,11 @@ function ConfiguredWorkspace({
                     </button>
                   </div>
                 </div>
+                  </div>
+                </div>
               </div>
-            </>
-          )}
+            </div>
+          </div>
         </aside>
 
         <section className="p-6 md:p-10">
