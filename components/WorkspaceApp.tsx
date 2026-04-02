@@ -2010,6 +2010,12 @@ function ConfiguredWorkspace({
   const hasResolvedInitialPageSelection = useRef(false);
   const hasRequestedSidebarPage = useRef(false);
   const hasRequestedTaskSidebarSection = useRef(new Set<string>());
+  const textSelectionGestureRef = useRef<{
+    anchorNodeId: string;
+    lastNodeId: string;
+    startY: number;
+    convertedToItemSelection: boolean;
+  } | null>(null);
 
   const clearNodeSelection = useCallback(() => {
     setSelectedNodeIds(new Set());
@@ -3225,61 +3231,83 @@ function ConfiguredWorkspace({
   );
 
   const toggleHighlightedNodeKind = useCallback(async () => {
-    if (selectedNodeIds.size !== 1) {
+    if (selectedNodeIds.size === 0) {
       return;
     }
 
-    const nodeId = [...selectedNodeIds][0];
-    if (!nodeId) {
+    const orderedSelectedNodeIds = visibleNodeOrder.filter((nodeId) =>
+      selectedNodeIds.has(nodeId),
+    );
+    if (orderedSelectedNodeIds.length === 0) {
       return;
     }
 
-    const node = workspaceNodeMap.get(nodeId);
-    if (!node || getNodeMeta(node).locked === true) {
+    const historyEntries: Array<Extract<HistoryEntry, { type: "update_node" }>> = [];
+
+    for (const nodeId of orderedSelectedNodeIds) {
+      const node = workspaceNodeMap.get(nodeId);
+      if (!node || getNodeMeta(node).locked === true) {
+        continue;
+      }
+
+      const page = pagesById.get(node.pageId as string);
+      if (page?.archived) {
+        continue;
+      }
+
+      const beforeSnapshot = toNodeValueSnapshot(node);
+      const afterSnapshot: NodeValueSnapshot =
+        node.kind === "task"
+          ? {
+              text: node.text,
+              kind: "note",
+              taskStatus: null,
+              noteCompleted: false,
+            }
+          : {
+              text: node.text,
+              kind: "task",
+              taskStatus: "todo",
+              noteCompleted: false,
+            };
+
+      await updateNode({
+        ownerKey,
+        nodeId: node._id,
+        text: afterSnapshot.text,
+        kind: afterSnapshot.kind,
+        lockKind: true,
+        taskStatus: afterSnapshot.taskStatus,
+        noteCompleted: false,
+      });
+
+      historyEntries.push({
+        type: "update_node",
+        pageId: node.pageId as Id<"pages">,
+        nodeId: node._id as Id<"nodes">,
+        before: beforeSnapshot,
+        after: afterSnapshot,
+        focusEditorId: getNodeEditorId(node._id as Id<"nodes">),
+      });
+    }
+
+    if (historyEntries.length === 0) {
       return;
     }
 
-    const page = pagesById.get(node.pageId as string);
-    if (page?.archived) {
+    if (historyEntries.length === 1) {
+      history.pushUndoEntry(historyEntries[0]!);
       return;
     }
-
-    const beforeSnapshot = toNodeValueSnapshot(node);
-    const afterSnapshot: NodeValueSnapshot =
-      node.kind === "task"
-        ? {
-            text: node.text,
-            kind: "note",
-            taskStatus: null,
-            noteCompleted: false,
-          }
-        : {
-            text: node.text,
-            kind: "task",
-            taskStatus: "todo",
-            noteCompleted: false,
-          };
-
-    await updateNode({
-      ownerKey,
-      nodeId: node._id,
-      text: afterSnapshot.text,
-      kind: afterSnapshot.kind,
-      lockKind: true,
-      taskStatus: afterSnapshot.taskStatus,
-      noteCompleted: false,
-    });
 
     history.pushUndoEntry({
-      type: "update_node",
-      pageId: node.pageId as Id<"pages">,
-      nodeId: node._id as Id<"nodes">,
-      before: beforeSnapshot,
-      after: afterSnapshot,
-      focusEditorId: getNodeEditorId(node._id as Id<"nodes">),
+      type: "compound",
+      pageId: historyEntries[0]!.pageId,
+      entries: historyEntries,
+      focusAfterUndoId: historyEntries[0]!.focusEditorId,
+      focusAfterRedoId: historyEntries[historyEntries.length - 1]!.focusEditorId,
     });
-    selectSingleNode(nodeId);
-  }, [history, ownerKey, pagesById, selectSingleNode, selectedNodeIds, updateNode, workspaceNodeMap]);
+  }, [history, ownerKey, pagesById, selectedNodeIds, updateNode, visibleNodeOrder, workspaceNodeMap]);
 
   const toggleHighlightedNodeCompletion = useCallback(async () => {
     if (selectedNodeIds.size !== 1) {
@@ -3465,6 +3493,7 @@ function ConfiguredWorkspace({
 
   useEffect(() => {
     const handleMouseUp = () => {
+      textSelectionGestureRef.current = null;
       setDragSelection(null);
     };
 
@@ -3484,6 +3513,65 @@ function ConfiguredWorkspace({
       document.body.style.userSelect = previousUserSelect;
     };
   }, [dragSelection]);
+
+  useEffect(() => {
+    const handleMouseMove = (event: MouseEvent) => {
+      const gesture = textSelectionGestureRef.current;
+      if (!gesture || typeof document === "undefined") {
+        return;
+      }
+
+      if ((event.buttons & 1) !== 1) {
+        textSelectionGestureRef.current = null;
+        return;
+      }
+
+      const targetElement = document.elementFromPoint(event.clientX, event.clientY);
+      const hoveredNodeId =
+        targetElement instanceof HTMLElement
+          ? targetElement.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId ?? null
+          : null;
+      const nextNodeId = hoveredNodeId ?? gesture.anchorNodeId;
+
+      if (!gesture.convertedToItemSelection) {
+        if (Math.abs(event.clientY - gesture.startY) < 10) {
+          return;
+        }
+
+        gesture.convertedToItemSelection = true;
+        gesture.lastNodeId = nextNodeId;
+        window.getSelection()?.removeAllRanges();
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        setDragSelection({
+          anchorNodeId: gesture.anchorNodeId,
+          currentNodeId: nextNodeId,
+        });
+        return;
+      }
+
+      if (gesture.lastNodeId === nextNodeId) {
+        return;
+      }
+
+      gesture.lastNodeId = nextNodeId;
+      setDragSelection((current) =>
+        current
+          ? {
+              ...current,
+              currentNodeId: nextNodeId,
+            }
+          : {
+              anchorNodeId: gesture.anchorNodeId,
+              currentNodeId: nextNodeId,
+            },
+      );
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    return () => window.removeEventListener("mousemove", handleMouseMove);
+  }, []);
 
   useEffect(() => {
     if (!activeDraggedNodeId || typeof document === "undefined") {
@@ -4329,7 +4417,29 @@ function ConfiguredWorkspace({
 
   return (
     <WorkspaceHistoryProvider value={history}>
-      <main className="relative min-h-screen bg-[var(--workspace-bg)] text-[var(--workspace-text)]">
+      <main
+        className="relative min-h-screen bg-[var(--workspace-bg)] text-[var(--workspace-text)]"
+        onMouseDownCapture={(event) => {
+          if (event.button !== 0 || !(event.target instanceof HTMLTextAreaElement)) {
+            textSelectionGestureRef.current = null;
+            return;
+          }
+
+          const nodeId =
+            event.target.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId ?? null;
+          if (!nodeId) {
+            textSelectionGestureRef.current = null;
+            return;
+          }
+
+          textSelectionGestureRef.current = {
+            anchorNodeId: nodeId,
+            lastNodeId: nodeId,
+            startY: event.clientY,
+            convertedToItemSelection: false,
+          };
+        }}
+      >
       <div className="pointer-events-none fixed right-4 top-4 z-40 md:right-6 md:top-6">
         <div className="pointer-events-auto flex items-center gap-2 border border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface)_88%,transparent)] px-2 py-2 shadow-[0_18px_40px_-28px_rgba(0,0,0,0.5)] backdrop-blur-sm">
           <button
