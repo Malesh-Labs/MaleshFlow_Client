@@ -8275,10 +8275,10 @@ function OutlineNodeEditor({
           <div
             className={clsx(
               "flex w-4 flex-none justify-center text-[var(--workspace-text-faint)]",
-              isTaskRow
-                ? "items-start pt-[2px]"
-                : isHeadingRow
-                  ? clsx("items-start", headingMarkerOffsetClass)
+              isHeadingRow
+                ? clsx("items-start", headingMarkerOffsetClass)
+                : isTaskRow
+                  ? "items-start pt-[2px]"
                   : "items-start pt-[5px]",
             )}
           >
@@ -8472,10 +8472,10 @@ function OutlineNodeEditor({
           <div
             className={clsx(
               "ml-1 flex flex-none gap-1",
-              isTaskRow
-                ? "items-start pt-[1px]"
-                : isHeadingRow
-                  ? clsx("items-start", headingControlOffsetClass)
+              isHeadingRow
+                ? clsx("items-start", headingControlOffsetClass)
+                : isTaskRow
+                  ? "items-start pt-[1px]"
                   : "items-start pt-[2px]",
             )}
           >
