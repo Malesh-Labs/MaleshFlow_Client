@@ -3414,61 +3414,84 @@ function ConfiguredWorkspace({
   }, [history, ownerKey, pagesById, selectedNodeIds, updateNode, visibleNodeOrder, workspaceNodeMap]);
 
   const toggleHighlightedNodeCompletion = useCallback(async () => {
-    if (selectedNodeIds.size !== 1) {
+    if (selectedNodeIds.size === 0) {
       return;
     }
 
-    const nodeId = [...selectedNodeIds][0];
-    if (!nodeId) {
+    const orderedSelectedNodeIds = visibleNodeOrder.filter((nodeId) =>
+      selectedNodeIds.has(nodeId),
+    );
+    if (orderedSelectedNodeIds.length === 0) {
       return;
     }
 
-    const node = workspaceNodeMap.get(nodeId);
-    if (!node || getNodeMeta(node).locked === true) {
+    const historyEntries: Array<Extract<HistoryEntry, { type: "update_node" }>> = [];
+
+    for (const nodeId of orderedSelectedNodeIds) {
+      const node = workspaceNodeMap.get(nodeId);
+      if (!node || getNodeMeta(node).locked === true) {
+        continue;
+      }
+
+      const page = pagesById.get(node.pageId as string);
+      if (page?.archived) {
+        continue;
+      }
+
+      const beforeSnapshot = toNodeValueSnapshot(node);
+      const afterSnapshot: NodeValueSnapshot =
+        node.kind === "task"
+          ? {
+              text: node.text,
+              kind: "task",
+              taskStatus: node.taskStatus === "done" ? "todo" : "done",
+              noteCompleted: false,
+            }
+          : {
+              text: node.text,
+              kind: "note",
+              taskStatus: null,
+              noteCompleted: !isNodeNoteCompleted(node),
+            };
+
+      await updateNode({
+        ownerKey,
+        nodeId: node._id,
+        text: afterSnapshot.text,
+        kind: afterSnapshot.kind,
+        lockKind: true,
+        taskStatus: afterSnapshot.taskStatus,
+        noteCompleted: afterSnapshot.noteCompleted,
+      });
+
+      historyEntries.push({
+        type: "update_node",
+        pageId: node.pageId as Id<"pages">,
+        nodeId: node._id as Id<"nodes">,
+        before: beforeSnapshot,
+        after: afterSnapshot,
+        focusEditorId: getNodeEditorId(node._id as Id<"nodes">),
+      });
+    }
+
+    if (historyEntries.length === 0) {
       return;
     }
 
-    const page = pagesById.get(node.pageId as string);
-    if (page?.archived) {
+    if (historyEntries.length === 1) {
+      history.pushUndoEntry(historyEntries[0]!);
+      selectSingleNode(historyEntries[0]!.nodeId as string);
       return;
     }
-
-    const beforeSnapshot = toNodeValueSnapshot(node);
-    const afterSnapshot: NodeValueSnapshot =
-      node.kind === "task"
-        ? {
-            text: node.text,
-            kind: "task",
-            taskStatus: node.taskStatus === "done" ? "todo" : "done",
-            noteCompleted: false,
-          }
-        : {
-            text: node.text,
-            kind: "note",
-            taskStatus: null,
-            noteCompleted: !isNodeNoteCompleted(node),
-          };
-
-    await updateNode({
-      ownerKey,
-      nodeId: node._id,
-      text: afterSnapshot.text,
-      kind: afterSnapshot.kind,
-      lockKind: true,
-      taskStatus: afterSnapshot.taskStatus,
-      noteCompleted: afterSnapshot.noteCompleted,
-    });
 
     history.pushUndoEntry({
-      type: "update_node",
-      pageId: node.pageId as Id<"pages">,
-      nodeId: node._id as Id<"nodes">,
-      before: beforeSnapshot,
-      after: afterSnapshot,
-      focusEditorId: getNodeEditorId(node._id as Id<"nodes">),
+      type: "compound",
+      pageId: historyEntries[0]!.pageId,
+      entries: historyEntries,
+      focusAfterUndoId: historyEntries[0]!.focusEditorId,
+      focusAfterRedoId: historyEntries[historyEntries.length - 1]!.focusEditorId,
     });
-    selectSingleNode(nodeId);
-  }, [history, ownerKey, pagesById, selectSingleNode, selectedNodeIds, updateNode, workspaceNodeMap]);
+  }, [history, ownerKey, pagesById, selectSingleNode, selectedNodeIds, updateNode, visibleNodeOrder, workspaceNodeMap]);
 
   const deleteHighlightedNodes = useCallback(async () => {
     if (selectedNodeIds.size === 0) {
