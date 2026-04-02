@@ -87,13 +87,19 @@ type SidebarTreeResult = {
   linkedPageIds: Id<"pages">[];
   nodeBacklinkCounts: Record<string, number>;
 };
-type PaletteMode = "pages" | "find" | "nodes";
-const PALETTE_MODE_ORDER: PaletteMode[] = ["pages", "find", "nodes"];
+type PaletteMode = "pages" | "find" | "nodes" | "new";
+const PALETTE_MODE_ORDER: PaletteMode[] = ["pages", "find", "nodes", "new"];
 type NodeSearchResult = {
   node: Doc<"nodes">;
   page: PageDoc | null;
   score?: number;
   content?: string;
+};
+type NewPagePaletteResult = {
+  section: SidebarSection;
+  title: string;
+  subtitle: string;
+  keywords: string[];
 };
 type LinkTargetSearchResults = {
   pages: PageDoc[];
@@ -120,6 +126,13 @@ type LinkSuggestion =
   | {
       key: string;
       kind: "node";
+      title: string;
+      subtitle: string;
+      insertText: string;
+    }
+  | {
+      key: string;
+      kind: "tag";
       title: string;
       subtitle: string;
       insertText: string;
@@ -772,6 +785,33 @@ function getActiveLinkToken(value: string, caretPosition: number | null) {
   };
 }
 
+function getActiveTagToken(value: string, caretPosition: number | null) {
+  if (caretPosition === null) {
+    return null;
+  }
+
+  const beforeCaret = value.slice(0, caretPosition);
+  const match = beforeCaret.match(/(^|[^A-Za-z0-9_])#([A-Za-z0-9/-]*)$/);
+  if (!match) {
+    return null;
+  }
+
+  const query = match[2] ?? "";
+  if (query.length === 0) {
+    return null;
+  }
+
+  const startIndex = beforeCaret.length - query.length - 1;
+  const trailingMatch = value.slice(caretPosition).match(/^[A-Za-z0-9/-]*/);
+  const trailing = trailingMatch?.[0] ?? "";
+
+  return {
+    startIndex,
+    endIndex: caretPosition + trailing.length,
+    query,
+  };
+}
+
 function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): LinkSuggestion[] {
   if (!results) {
     return [];
@@ -796,6 +836,53 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
     }));
 
   return [...pageSuggestions, ...nodeSuggestions];
+}
+
+function buildTagSuggestions(
+  tags: SidebarTagResult[],
+  query: string,
+  limit = 6,
+): LinkSuggestion[] {
+  const normalizedQuery = query.trim().replace(/^#/, "").toLowerCase();
+  if (normalizedQuery.length === 0) {
+    return [];
+  }
+
+  const rankedMatches = [...tags]
+    .filter((tag) => tag.normalizedValue.includes(normalizedQuery))
+    .sort((left, right) => {
+      const leftRank =
+        left.normalizedValue === normalizedQuery
+          ? 0
+          : left.normalizedValue.startsWith(normalizedQuery)
+            ? 1
+            : 2;
+      const rightRank =
+        right.normalizedValue === normalizedQuery
+          ? 0
+          : right.normalizedValue.startsWith(normalizedQuery)
+            ? 1
+            : 2;
+
+      if (leftRank !== rightRank) {
+        return leftRank - rightRank;
+      }
+
+      if (left.count !== right.count) {
+        return right.count - left.count;
+      }
+
+      return left.normalizedValue.localeCompare(right.normalizedValue);
+    })
+    .slice(0, limit);
+
+  return rankedMatches.map((tag) => ({
+    key: `tag:${tag.normalizedValue}`,
+    kind: "tag",
+    title: tag.label,
+    subtitle: `Tag • ${tag.count} use${tag.count === 1 ? "" : "s"}`,
+    insertText: tag.label,
+  }));
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -1847,6 +1934,32 @@ function ConfiguredWorkspace({
     paletteQuery,
     14,
   );
+  const newPageResults = useMemo(() => {
+    const normalizedQuery = paletteQuery.trim().toLowerCase();
+    const results: NewPagePaletteResult[] = SIDEBAR_SECTIONS.map((section) => {
+      const title = getPageTypeLabelForSection(section);
+      const subtitle = `Create a new ${title.toLowerCase()} page`;
+      const singular =
+        section === "Scratchpads" ? "scratchpad" : section.toLowerCase().replace(/s$/, "");
+
+      return {
+        section,
+        title,
+        subtitle,
+        keywords: [title.toLowerCase(), section.toLowerCase(), singular],
+      };
+    });
+
+    if (normalizedQuery.length === 0) {
+      return results;
+    }
+
+    return results.filter((result) =>
+      [result.title, result.subtitle, ...result.keywords].some((value) =>
+        value.toLowerCase().includes(normalizedQuery),
+      ),
+    );
+  }, [paletteQuery]);
   const activePaletteResultsCount =
     paletteMode === "pages"
       ? paletteResults.length
@@ -1854,6 +1967,8 @@ function ConfiguredWorkspace({
         ? textSearchResults.length
       : paletteMode === "nodes"
         ? nodeSearchResults.length
+        : paletteMode === "new"
+          ? newPageResults.length
         : 0;
   const workspaceChatMessages = workspaceKnowledgeThread?.messages ?? [];
   const embeddingProgressLabel = useMemo(() => {
@@ -3003,6 +3118,12 @@ function ConfiguredWorkspace({
         return;
       }
 
+      if (isModifier && event.altKey && normalizedKey === "n") {
+        event.preventDefault();
+        openPalette("new");
+        return;
+      }
+
       if (isModifier && event.shiftKey && normalizedKey === "k") {
         event.preventDefault();
         void copyNodeLinkToClipboard(event.target);
@@ -3271,6 +3392,16 @@ function ConfiguredWorkspace({
         pageType,
       });
       setSelectedPageId(pageId);
+      setLocationPageId(pageId);
+      writePageIdToHistory(pageId, "push");
+      setPendingRevealNodeId(null);
+      setPaletteOpen(false);
+      setPaletteQuery("");
+      setPaletteHighlightIndex(0);
+      setPaletteMode("pages");
+      setTextSearchResults([]);
+      setNodeSearchResults([]);
+      clearNodeSelection();
     } finally {
       setIsCreatingPage(null);
     }
@@ -3517,6 +3648,14 @@ function ConfiguredWorkspace({
         return;
       }
 
+      if (paletteMode === "new") {
+        const highlighted = newPageResults[paletteHighlightIndex];
+        if (highlighted) {
+          void handleCreatePage(highlighted.section);
+        }
+        return;
+      }
+
       const highlighted =
         paletteMode === "find"
           ? textSearchResults[paletteHighlightIndex]
@@ -3671,6 +3810,7 @@ function ConfiguredWorkspace({
                       onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
+                      availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
@@ -4068,6 +4208,7 @@ function ConfiguredWorkspace({
                         onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
                         onSelectionStart={beginNodeSelection}
                         onSelectionExtend={extendNodeSelection}
+                        availableTags={sortedTags}
                         pagesByTitle={pagesByTitle}
                         onOpenPage={handleSelectPage}
                         onOpenNode={handleOpenLinkedNode}
@@ -4105,6 +4246,7 @@ function ConfiguredWorkspace({
                           onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
                           onSelectionStart={beginNodeSelection}
                           onSelectionExtend={extendNodeSelection}
+                          availableTags={sortedTags}
                           pagesByTitle={pagesByTitle}
                           onOpenPage={handleSelectPage}
                           onOpenNode={handleOpenLinkedNode}
@@ -4151,6 +4293,7 @@ function ConfiguredWorkspace({
                       onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
+                      availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
@@ -4199,6 +4342,7 @@ function ConfiguredWorkspace({
                       onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
+                      availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
@@ -4239,6 +4383,7 @@ function ConfiguredWorkspace({
                       onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
+                      availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
@@ -4276,6 +4421,7 @@ function ConfiguredWorkspace({
                       onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
+                      availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
@@ -4327,6 +4473,7 @@ function ConfiguredWorkspace({
                         onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
                         onSelectionStart={beginNodeSelection}
                         onSelectionExtend={extendNodeSelection}
+                        availableTags={sortedTags}
                         pagesByTitle={pagesByTitle}
                         onOpenPage={handleSelectPage}
                         onOpenNode={handleOpenLinkedNode}
@@ -4364,6 +4511,7 @@ function ConfiguredWorkspace({
                         onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
                         onSelectionStart={beginNodeSelection}
                         onSelectionExtend={extendNodeSelection}
+                        availableTags={sortedTags}
                         pagesByTitle={pagesByTitle}
                         onOpenPage={handleSelectPage}
                         onOpenNode={handleOpenLinkedNode}
@@ -4402,6 +4550,7 @@ function ConfiguredWorkspace({
                       onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
+                      availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
@@ -4507,6 +4656,20 @@ function ConfiguredWorkspace({
                 >
                   Semantic
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    switchPaletteMode("new");
+                  }}
+                  className={clsx(
+                    "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
+                    paletteMode === "new"
+                      ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
+                      : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                  )}
+                >
+                  New
+                </button>
               </div>
               <div className="flex items-center gap-3">
                 <input
@@ -4522,7 +4685,9 @@ function ConfiguredWorkspace({
                       ? "Search pages..."
                       : paletteMode === "find"
                         ? "Find exact text in notes and tasks..."
-                        : "Search notes and tasks semantically across the workspace..."
+                        : paletteMode === "nodes"
+                          ? "Search notes and tasks semantically across the workspace..."
+                          : "Create a new page by type..."
                   }
                   className="w-full border-0 bg-transparent p-0 text-lg outline-none"
                 />
@@ -4642,6 +4807,39 @@ function ConfiguredWorkspace({
                     </button>
                   );
                 })
+              ) : paletteMode === "new" ? (
+                newPageResults.length === 0 ? (
+                  <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">
+                    No matching page types.
+                  </p>
+                ) : (
+                  newPageResults.map((result, index) => (
+                    <button
+                      key={result.section}
+                      type="button"
+                      onMouseEnter={() => setPaletteHighlightIndex(index)}
+                      onClick={() => void handleCreatePage(result.section)}
+                      className={clsx(
+                        "flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition",
+                        index === paletteHighlightIndex
+                          ? "bg-[var(--workspace-sidebar-bg)]"
+                          : "hover:bg-[var(--workspace-surface-hover)]",
+                      )}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
+                          {result.title}
+                        </span>
+                        <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                          {result.subtitle}
+                        </span>
+                      </span>
+                      <span className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                        Create
+                      </span>
+                    </button>
+                  ))
+                )
               ) : null}
             </div>
           </div>
@@ -4649,6 +4847,7 @@ function ConfiguredWorkspace({
       ) : null}
       <WorkspaceAiDock
         ownerKey={ownerKey}
+        availableTags={sortedTags}
         draft={workspaceChatDraft}
         onDraftChange={setWorkspaceChatDraft}
         onSubmit={() => void handleWorkspaceChatSubmit()}
@@ -4696,6 +4895,7 @@ function PageSection({
   onSetActiveDraggedNodePayload,
   onSelectionStart,
   onSelectionExtend,
+  availableTags,
   pagesByTitle,
   onOpenPage,
   onOpenNode,
@@ -4739,6 +4939,7 @@ function PageSection({
   onSetActiveDraggedNodePayload: (payload: DraggedNodePayload | null) => void;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
+  availableTags: SidebarTagResult[];
   pagesByTitle: Map<string, PageDoc>;
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
@@ -4813,6 +5014,7 @@ function PageSection({
           onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
           onSelectionStart={onSelectionStart}
           onSelectionExtend={onSelectionExtend}
+          availableTags={availableTags}
           pagesByTitle={pagesByTitle}
           onOpenPage={onOpenPage}
           onOpenNode={onOpenNode}
@@ -4854,6 +5056,7 @@ function OutlineNodeList({
   onSetActiveDraggedNodePayload,
   onSelectionStart,
   onSelectionExtend,
+  availableTags,
   pagesByTitle,
   onOpenPage,
   onOpenNode,
@@ -4893,6 +5096,7 @@ function OutlineNodeList({
   onSetActiveDraggedNodePayload: (payload: DraggedNodePayload | null) => void;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
+  availableTags: SidebarTagResult[];
   pagesByTitle: Map<string, PageDoc>;
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
@@ -4907,6 +5111,7 @@ function OutlineNodeList({
           ownerKey={ownerKey}
           pageId={pageId}
           parentNodeId={parentNodeId}
+          availableTags={availableTags}
           createNodesBatch={createNodesBatch}
           historyInstanceKey={`empty:${pageId}:${parentNodeId ?? "root"}`}
           readOnly={isPageReadOnly}
@@ -4949,10 +5154,11 @@ function OutlineNodeList({
         onBeginTextEditing={onBeginTextEditing}
         activeDraggedNodeId={activeDraggedNodeId}
         activeDraggedNodePayload={activeDraggedNodePayload}
-        onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
-        onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
+          onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
+          onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
           onSelectionStart={onSelectionStart}
           onSelectionExtend={onSelectionExtend}
+          availableTags={availableTags}
           pagesByTitle={pagesByTitle}
           onOpenPage={onOpenPage}
           onOpenNode={onOpenNode}
@@ -4970,12 +5176,14 @@ function LinkAutocompleteMenu({
   onHover,
   onSelect,
   anchorRef,
+  emptyMessage = "No matching suggestions.",
 }: {
   suggestions: LinkSuggestion[];
   highlightIndex: number;
   onHover: (index: number) => void;
   onSelect: (suggestion: LinkSuggestion) => void;
   anchorRef: RefObject<HTMLElement | null>;
+  emptyMessage?: string;
 }) {
   const position = useFloatingMenuPosition(anchorRef, true);
 
@@ -4995,7 +5203,7 @@ function LinkAutocompleteMenu({
     >
       {suggestions.length === 0 ? (
         <p className="px-3 py-2 text-sm text-[var(--workspace-text-subtle)]">
-          No matching pages or nodes.
+          {emptyMessage}
         </p>
       ) : (
         <div className="overflow-y-auto py-1" style={{ maxHeight: position.maxHeight }}>
@@ -5284,6 +5492,7 @@ function getNodeTypographyClass({
 
 function WorkspaceAiDock({
   ownerKey,
+  availableTags,
   draft,
   onDraftChange,
   onSubmit,
@@ -5296,6 +5505,7 @@ function WorkspaceAiDock({
   onToggleCollapsed,
 }: {
   ownerKey: string;
+  availableTags: SidebarTagResult[];
   draft: string;
   onDraftChange: (value: string) => void;
   onSubmit: () => void;
@@ -5312,6 +5522,7 @@ function WorkspaceAiDock({
   const [caretPosition, setCaretPosition] = useState<number | null>(null);
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
+  const activeTagToken = activeLinkToken ? null : getActiveTagToken(draft, caretPosition);
   const linkTargetResults = useQuery(
     api.workspace.searchLinkTargets,
     ownerKey && activeLinkToken
@@ -5326,10 +5537,17 @@ function WorkspaceAiDock({
     () => buildLinkSuggestions(linkTargetResults),
     [linkTargetResults],
   );
+  const tagSuggestions = useMemo(
+    () =>
+      activeTagToken ? buildTagSuggestions(availableTags, activeTagToken.query) : [],
+    [activeTagToken, availableTags],
+  );
+  const autocompleteToken = activeLinkToken ?? activeTagToken;
+  const autocompleteSuggestions = activeLinkToken ? linkSuggestions : tagSuggestions;
   const activeLinkHighlightIndex =
-    linkSuggestions.length === 0
+    autocompleteSuggestions.length === 0
       ? 0
-      : Math.min(linkHighlightIndex, linkSuggestions.length - 1);
+      : Math.min(linkHighlightIndex, autocompleteSuggestions.length - 1);
   const showHistoryPanel = messages.length > 0 || error.length > 0 || isLoading;
 
   useEffect(() => {
@@ -5346,15 +5564,15 @@ function WorkspaceAiDock({
   }, [error, isLoading, messages]);
 
   const applyLinkSuggestion = (suggestion: LinkSuggestion) => {
-    if (!activeLinkToken) {
+    if (!autocompleteToken) {
       return;
     }
 
     const nextValue =
-      draft.slice(0, activeLinkToken.startIndex) +
+      draft.slice(0, autocompleteToken.startIndex) +
       suggestion.insertText +
-      draft.slice(activeLinkToken.endIndex);
-    const nextCaretPosition = activeLinkToken.startIndex + suggestion.insertText.length;
+      draft.slice(autocompleteToken.endIndex);
+    const nextCaretPosition = autocompleteToken.startIndex + suggestion.insertText.length;
 
     onDraftChange(nextValue);
     setCaretPosition(nextCaretPosition);
@@ -5365,11 +5583,11 @@ function WorkspaceAiDock({
   };
 
   const handleKeyDown = (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
-    if (activeLinkToken && linkSuggestions.length > 0) {
+    if (autocompleteToken && autocompleteSuggestions.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
         setLinkHighlightIndex((current) =>
-          Math.min(current + 1, linkSuggestions.length - 1),
+          Math.min(current + 1, autocompleteSuggestions.length - 1),
         );
         return;
       }
@@ -5382,7 +5600,7 @@ function WorkspaceAiDock({
 
       if (event.key === "Enter" && !event.shiftKey) {
         event.preventDefault();
-        const highlighted = linkSuggestions[activeLinkHighlightIndex];
+        const highlighted = autocompleteSuggestions[activeLinkHighlightIndex];
         if (highlighted) {
           applyLinkSuggestion(highlighted);
         }
@@ -5390,7 +5608,7 @@ function WorkspaceAiDock({
       }
 
       if (event.key === "Tab") {
-        const highlighted = linkSuggestions[activeLinkHighlightIndex];
+        const highlighted = autocompleteSuggestions[activeLinkHighlightIndex];
         if (highlighted) {
           event.preventDefault();
           applyLinkSuggestion(highlighted);
@@ -5585,13 +5803,18 @@ function WorkspaceAiDock({
               >
                 {isLoading ? "Thinking…" : "Ask AI"}
               </button>
-              {activeLinkToken && linkSuggestions.length > 0 ? (
+              {autocompleteToken ? (
                 <LinkAutocompleteMenu
                   anchorRef={textareaRef}
-                  suggestions={linkSuggestions}
+                  suggestions={autocompleteSuggestions}
                   highlightIndex={activeLinkHighlightIndex}
                   onHover={setLinkHighlightIndex}
                   onSelect={applyLinkSuggestion}
+                  emptyMessage={
+                    activeLinkToken
+                      ? "No matching pages or nodes."
+                      : "No matching tags."
+                  }
                 />
               ) : null}
               </div>
@@ -5638,6 +5861,7 @@ function OutlineNodeEditor({
   onSetActiveDraggedNodePayload,
   onSelectionStart,
   onSelectionExtend,
+  availableTags,
   pagesByTitle,
   onOpenPage,
   onOpenNode,
@@ -5682,6 +5906,7 @@ function OutlineNodeEditor({
   onSetActiveDraggedNodePayload: (payload: DraggedNodePayload | null) => void;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
+  availableTags: SidebarTagResult[];
   pagesByTitle: Map<string, PageDoc>;
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
@@ -5779,6 +6004,7 @@ function OutlineNodeEditor({
     !hasPageLinkPreview;
   const hasDisplayPreview = hasPageLinkPreview || hasPlainTextPreview;
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
+  const activeTagToken = activeLinkToken ? null : getActiveTagToken(draft, caretPosition);
   const linkTargetResults = useQuery(
     api.workspace.searchLinkTargets,
     ownerKey && isFocused && activeLinkToken
@@ -5794,10 +6020,17 @@ function OutlineNodeEditor({
     () => buildLinkSuggestions(linkTargetResults),
     [linkTargetResults],
   );
+  const tagSuggestions = useMemo(
+    () =>
+      activeTagToken ? buildTagSuggestions(availableTags, activeTagToken.query) : [],
+    [activeTagToken, availableTags],
+  );
+  const autocompleteToken = activeLinkToken ?? activeTagToken;
+  const autocompleteSuggestions = activeLinkToken ? linkSuggestions : tagSuggestions;
   const activeLinkHighlightIndex =
-    linkSuggestions.length === 0
+    autocompleteSuggestions.length === 0
       ? 0
-      : Math.min(linkHighlightIndex, linkSuggestions.length - 1);
+      : Math.min(linkHighlightIndex, autocompleteSuggestions.length - 1);
   const pendingSiblingComposerVisible =
     pendingInsertedComposer?.pageId === pageId &&
     pendingInsertedComposer?.parentNodeId === parentNodeId &&
@@ -5929,15 +6162,15 @@ function OutlineNodeEditor({
   }, [hasChildren, isChildrenExpanded, isCollapsed, shouldRenderChildren]);
 
   const applyLinkSuggestion = (suggestion: LinkSuggestion) => {
-    if (!activeLinkToken) {
+    if (!autocompleteToken) {
       return;
     }
 
     const nextValue =
-      draft.slice(0, activeLinkToken.startIndex) +
+      draft.slice(0, autocompleteToken.startIndex) +
       suggestion.insertText +
-      draft.slice(activeLinkToken.endIndex);
-    const nextCaretPosition = activeLinkToken.startIndex + suggestion.insertText.length;
+      draft.slice(autocompleteToken.endIndex);
+    const nextCaretPosition = autocompleteToken.startIndex + suggestion.insertText.length;
 
     setDraft(nextValue);
     history.updateDraftValue(editorId, editorTarget, nextValue);
@@ -6555,17 +6788,17 @@ function OutlineNodeEditor({
     const isModifier = event.metaKey || event.ctrlKey;
     const normalizedKey = event.key.toLowerCase();
 
-    if (activeLinkToken && linkSuggestions.length > 0) {
+    if (autocompleteToken && autocompleteSuggestions.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        setLinkHighlightIndex((current) => (current + 1) % linkSuggestions.length);
+        setLinkHighlightIndex((current) => (current + 1) % autocompleteSuggestions.length);
         return;
       }
 
       if (event.key === "ArrowUp") {
         event.preventDefault();
         setLinkHighlightIndex((current) =>
-          (current - 1 + linkSuggestions.length) % linkSuggestions.length,
+          (current - 1 + autocompleteSuggestions.length) % autocompleteSuggestions.length,
         );
         return;
       }
@@ -6573,7 +6806,7 @@ function OutlineNodeEditor({
       if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
         const suggestion =
-          linkSuggestions[activeLinkHighlightIndex] ?? linkSuggestions[0];
+          autocompleteSuggestions[activeLinkHighlightIndex] ?? autocompleteSuggestions[0];
         if (suggestion) {
           applyLinkSuggestion(suggestion);
         }
@@ -7163,13 +7396,18 @@ function OutlineNodeEditor({
                 )}
               />
             ) : null}
-            {isFocused && activeLinkToken ? (
+            {isFocused && autocompleteToken ? (
               <LinkAutocompleteMenu
                 anchorRef={textareaRef}
-                suggestions={linkSuggestions}
+                suggestions={autocompleteSuggestions}
                 highlightIndex={activeLinkHighlightIndex}
                 onHover={setLinkHighlightIndex}
                 onSelect={applyLinkSuggestion}
+                emptyMessage={
+                  activeLinkToken
+                    ? "No matching pages or nodes."
+                    : "No matching tags."
+                }
               />
             ) : null}
           </div>
@@ -7278,6 +7516,7 @@ function OutlineNodeEditor({
               onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
               onSelectionStart={onSelectionStart}
               onSelectionExtend={onSelectionExtend}
+              availableTags={availableTags}
               pagesByTitle={pagesByTitle}
               onOpenPage={onOpenPage}
               onOpenNode={onOpenNode}
@@ -7294,6 +7533,7 @@ function OutlineNodeEditor({
           pageId={pageId}
           parentNodeId={parentNodeId}
           afterNodeId={node._id as Id<"nodes">}
+          availableTags={availableTags}
           createNodesBatch={createNodesBatch}
           historyInstanceKey={`inserted:${node._id}`}
           readOnly={isPageReadOnly}
@@ -7320,6 +7560,7 @@ function InlineComposer({
   pageId,
   parentNodeId,
   afterNodeId,
+  availableTags,
   createNodesBatch,
   historyInstanceKey,
   readOnly = false,
@@ -7336,6 +7577,7 @@ function InlineComposer({
   pageId: Id<"pages">;
   parentNodeId: Id<"nodes"> | null | undefined;
   afterNodeId?: Id<"nodes">;
+  availableTags: SidebarTagResult[];
   createNodesBatch: CreateNodesBatchMutation;
   historyInstanceKey?: string;
   readOnly?: boolean;
@@ -7372,6 +7614,7 @@ function InlineComposer({
     [pageId, parentNodeId],
   );
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
+  const activeTagToken = activeLinkToken ? null : getActiveTagToken(draft, caretPosition);
   const linkTargetResults = useQuery(
     api.workspace.searchLinkTargets,
     ownerKey && isFocused && activeLinkToken
@@ -7386,10 +7629,17 @@ function InlineComposer({
     () => buildLinkSuggestions(linkTargetResults),
     [linkTargetResults],
   );
+  const tagSuggestions = useMemo(
+    () =>
+      activeTagToken ? buildTagSuggestions(availableTags, activeTagToken.query) : [],
+    [activeTagToken, availableTags],
+  );
+  const autocompleteToken = activeLinkToken ?? activeTagToken;
+  const autocompleteSuggestions = activeLinkToken ? linkSuggestions : tagSuggestions;
   const activeLinkHighlightIndex =
-    linkSuggestions.length === 0
+    autocompleteSuggestions.length === 0
       ? 0
-      : Math.min(linkHighlightIndex, linkSuggestions.length - 1);
+      : Math.min(linkHighlightIndex, autocompleteSuggestions.length - 1);
 
   useEffect(() => {
     draftRef.current = draft;
@@ -7423,15 +7673,15 @@ function InlineComposer({
   }, [autoFocusToken]);
 
   const applyLinkSuggestion = (suggestion: LinkSuggestion) => {
-    if (!activeLinkToken) {
+    if (!autocompleteToken) {
       return;
     }
 
     const nextValue =
-      draft.slice(0, activeLinkToken.startIndex) +
+      draft.slice(0, autocompleteToken.startIndex) +
       suggestion.insertText +
-      draft.slice(activeLinkToken.endIndex);
-    const nextCaretPosition = activeLinkToken.startIndex + suggestion.insertText.length;
+      draft.slice(autocompleteToken.endIndex);
+    const nextCaretPosition = autocompleteToken.startIndex + suggestion.insertText.length;
 
     setDraft(nextValue);
     history.updateDraftValue(editorId, editorTarget, nextValue);
@@ -7531,17 +7781,17 @@ function InlineComposer({
       return;
     }
 
-    if (activeLinkToken && linkSuggestions.length > 0) {
+    if (autocompleteToken && autocompleteSuggestions.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        setLinkHighlightIndex((current) => (current + 1) % linkSuggestions.length);
+        setLinkHighlightIndex((current) => (current + 1) % autocompleteSuggestions.length);
         return;
       }
 
       if (event.key === "ArrowUp") {
         event.preventDefault();
         setLinkHighlightIndex((current) =>
-          (current - 1 + linkSuggestions.length) % linkSuggestions.length,
+          (current - 1 + autocompleteSuggestions.length) % autocompleteSuggestions.length,
         );
         return;
       }
@@ -7549,7 +7799,7 @@ function InlineComposer({
       if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
         const suggestion =
-          linkSuggestions[activeLinkHighlightIndex] ?? linkSuggestions[0];
+          autocompleteSuggestions[activeLinkHighlightIndex] ?? autocompleteSuggestions[0];
         if (suggestion) {
           applyLinkSuggestion(suggestion);
         }
@@ -7646,13 +7896,18 @@ function InlineComposer({
           <span className="block h-3.5 w-3.5 animate-spin rounded-full border border-current border-t-transparent" />
         </div>
       ) : null}
-      {isFocused && activeLinkToken ? (
+      {isFocused && autocompleteToken ? (
         <LinkAutocompleteMenu
           anchorRef={textareaRef}
-          suggestions={linkSuggestions}
+          suggestions={autocompleteSuggestions}
           highlightIndex={activeLinkHighlightIndex}
           onHover={setLinkHighlightIndex}
           onSelect={applyLinkSuggestion}
+          emptyMessage={
+            activeLinkToken
+              ? "No matching pages or nodes."
+              : "No matching tags."
+          }
         />
       ) : null}
     </div>
