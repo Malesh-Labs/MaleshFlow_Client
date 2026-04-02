@@ -26,7 +26,7 @@ import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { parseHeadingSyntax } from "@/lib/domain/displaySyntax";
 import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
-import { extractLinkMatches } from "@/lib/domain/links";
+import { applySelectedLinkShortcut, extractLinkMatches } from "@/lib/domain/links";
 import { extractTagMatches } from "@/lib/domain/tags";
 import {
   buildNodeSelectionIds,
@@ -3850,6 +3850,10 @@ function ConfiguredWorkspace({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) {
+        return;
+      }
+
       const isModifier = event.metaKey || event.ctrlKey;
       const normalizedKey = event.key.toLowerCase();
 
@@ -7854,6 +7858,29 @@ function OutlineNodeEditor({
     const isModifier = event.metaKey || event.ctrlKey;
     const normalizedKey = event.key.toLowerCase();
 
+    if (isModifier && !event.shiftKey && !event.altKey && normalizedKey === "k") {
+      const replacement = applySelectedLinkShortcut(
+        event.currentTarget.value,
+        event.currentTarget.selectionStart ?? 0,
+        event.currentTarget.selectionEnd ?? 0,
+      );
+
+      if (replacement) {
+        event.preventDefault();
+        setDraft(replacement.value);
+        history.updateDraftValue(editorId, editorTarget, replacement.value);
+        setCaretPosition(replacement.selectionEnd);
+        window.requestAnimationFrame(() => {
+          textareaRef.current?.focus();
+          textareaRef.current?.setSelectionRange(
+            replacement.selectionStart,
+            replacement.selectionEnd,
+          );
+        });
+        return;
+      }
+    }
+
     if (autocompleteToken && autocompleteSuggestions.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -8864,6 +8891,31 @@ function InlineComposer({
   const handleKeyDown = async (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
     if (readOnly || isSubmittingRef.current) {
       return;
+    }
+
+    const isModifier = event.metaKey || event.ctrlKey;
+    const normalizedKey = event.key.toLowerCase();
+
+    if (isModifier && !event.shiftKey && !event.altKey && normalizedKey === "k") {
+      const replacement = applySelectedLinkShortcut(
+        event.currentTarget.value,
+        event.currentTarget.selectionStart ?? 0,
+        event.currentTarget.selectionEnd ?? 0,
+      );
+
+      if (replacement) {
+        event.preventDefault();
+        setDraft(replacement.value);
+        setCaretPosition(replacement.selectionEnd);
+        window.requestAnimationFrame(() => {
+          textareaRef.current?.focus();
+          textareaRef.current?.setSelectionRange(
+            replacement.selectionStart,
+            replacement.selectionEnd,
+          );
+        });
+        return;
+      }
     }
 
     if (event.key === "Escape") {

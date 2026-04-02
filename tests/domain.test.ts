@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  applySelectedLinkShortcut,
   extractLinkMatches,
   extractLinks,
   rewriteMatchingPageWikiLinks,
@@ -91,6 +92,31 @@ test("rewriteMatchingPageWikiLinks updates only matched resolved page links", ()
   assert.equal(
     rewritten,
     "See [[New Title]], [[New Title]], [[Other Page]], [[Label|node:node_123]], and [OpenAI](openai.com).",
+  );
+});
+
+test("applySelectedLinkShortcut wraps plain text and converts markdown links to wiki links", () => {
+  assert.deepEqual(
+    applySelectedLinkShortcut("hello world", 0, 5),
+    {
+      value: "[hello]() world",
+      selectionStart: 0,
+      selectionEnd: 9,
+    },
+  );
+
+  assert.deepEqual(
+    applySelectedLinkShortcut("[hello](https://x.com)", 0, 22),
+    {
+      value: "[[hello]]",
+      selectionStart: 0,
+      selectionEnd: 9,
+    },
+  );
+
+  assert.equal(
+    applySelectedLinkShortcut("[[hello]]", 0, 9),
+    null,
   );
 });
 

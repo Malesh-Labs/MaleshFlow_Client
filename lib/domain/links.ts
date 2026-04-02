@@ -26,6 +26,8 @@ const WIKI_LINK_PATTERN = /\[\[([^[\]]+)\]\]/g;
 const NODE_LINK_PATTERN = /\(\(([a-zA-Z0-9_-]+)\)\)/g;
 const MARKDOWN_LINK_PATTERN = /\[([^\]]+)\]\(([^)\s]+)\)/g;
 const NODE_WIKI_TARGET_PATTERN = /^(.*?)\|node:([a-zA-Z0-9_-]+)$/;
+const COMPLETE_MARKDOWN_LINK_PATTERN = /^\[([^\]]+)\]\(([^)]*)\)$/;
+const COMPLETE_WIKI_LINK_PATTERN = /^\[\[([^[\]]+)\]\]$/;
 
 export function extractLinkMatches(text: string) {
   const matches: ExtractedLinkMatch[] = [];
@@ -196,4 +198,36 @@ export function rewriteMatchingPageWikiLinks(
   }
 
   return nextText;
+}
+
+export function applySelectedLinkShortcut(
+  text: string,
+  selectionStart: number,
+  selectionEnd: number,
+) {
+  const start = Math.max(0, Math.min(selectionStart, selectionEnd));
+  const end = Math.max(start, Math.max(selectionStart, selectionEnd));
+  if (start === end) {
+    return null;
+  }
+
+  const selectedText = text.slice(start, end);
+  let replacement: string | null = null;
+
+  const markdownMatch = selectedText.match(COMPLETE_MARKDOWN_LINK_PATTERN);
+  if (markdownMatch) {
+    replacement = `[[${markdownMatch[1]}]]`;
+  } else if (!COMPLETE_WIKI_LINK_PATTERN.test(selectedText)) {
+    replacement = `[${selectedText}]()`;
+  }
+
+  if (replacement === null) {
+    return null;
+  }
+
+  return {
+    value: `${text.slice(0, start)}${replacement}${text.slice(end)}`,
+    selectionStart: start,
+    selectionEnd: start + replacement.length,
+  };
 }
