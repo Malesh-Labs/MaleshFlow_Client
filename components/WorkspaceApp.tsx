@@ -4394,7 +4394,7 @@ function ConfiguredWorkspace({
                       }}
                       onBlur={() => void handleRenamePage()}
                       disabled={isPageArchived}
-                      className="mt-4 w-full border-0 bg-transparent p-0 text-4xl font-semibold tracking-tight outline-none disabled:text-[var(--workspace-text-muted)]"
+                      className="mt-4 w-full border-0 bg-transparent p-0 text-4xl font-semibold tracking-tight text-[var(--workspace-text-subtle)] outline-none disabled:text-[var(--workspace-text-muted)]"
                     />
                   </div>
                 </div>
@@ -5288,7 +5288,7 @@ function PageSection({
               className={clsx(
                 compact
                   ? "text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]"
-                  : "text-2xl font-semibold tracking-tight",
+                  : "text-2xl font-semibold tracking-tight text-[var(--workspace-text-subtle)]",
               )}
             >
               {title}
