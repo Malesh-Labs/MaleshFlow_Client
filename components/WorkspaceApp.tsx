@@ -4035,8 +4035,8 @@ function ConfiguredWorkspace({
                             )}
                           >
                             <span>{page.title}</span>
-                            <span className="ml-2 text-[10px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]">
-                              {getPageTypeDisplayLabel(page)}
+                            <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none text-[var(--workspace-text-faint)]">
+                              {getPageTypeEmoji(page)}
                             </span>
                           </button>
                         ))}
