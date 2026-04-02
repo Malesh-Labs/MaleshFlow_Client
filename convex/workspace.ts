@@ -539,7 +539,9 @@ export const getPageTree = query({
       .query("links")
       .withIndex("by_target_page", (query) => query.eq("targetPageId", args.pageId))
       .collect();
-    const visibleBacklinks = await filterVisibleLinks(ctx, backlinks);
+    const visibleBacklinks = (await filterVisibleLinks(ctx, backlinks)).filter(
+      (link) => link.kind === "page",
+    );
     const nodeBacklinkCounts = await buildVisibleNodeBacklinkCounts(
       ctx,
       nodes.map((node) => node._id),
@@ -669,7 +671,7 @@ export const getBacklinks = query({
           query.eq("targetPageId", pageId),
         )
         .collect();
-      return await filterVisibleLinks(ctx, links);
+      return (await filterVisibleLinks(ctx, links)).filter((link) => link.kind === "page");
     }
 
     return [];

@@ -3,14 +3,6 @@ import { internalMutation, internalQuery } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { priorityValidator, taskStatusValidator } from "./lib/validators";
 
-function isSidebarSpecialPage(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
-  if (!page || typeof page.sourceMeta !== "object" || !page.sourceMeta) {
-    return false;
-  }
-
-  return (page.sourceMeta as Record<string, unknown>).specialPage === "sidebar";
-}
-
 export const fallbackTextSearch = internalQuery({
   args: {
     query: v.string(),
@@ -32,7 +24,7 @@ export const fallbackTextSearch = internalQuery({
       pages
         .filter(
           (page): page is Doc<"pages"> =>
-            Boolean(page) && !page!.archived && !isSidebarSpecialPage(page),
+            Boolean(page) && !page!.archived,
         )
         .map((page) => [page._id, page]),
     );
@@ -89,7 +81,7 @@ export const hydrateEmbeddingMatches = internalQuery({
       pages
         .filter(
           (page): page is Doc<"pages"> =>
-            Boolean(page) && !page!.archived && !isSidebarSpecialPage(page),
+            Boolean(page) && !page!.archived,
         )
         .map((page) => [page._id, page]),
     );

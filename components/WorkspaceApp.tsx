@@ -535,6 +535,15 @@ function getPageMeta(page: Doc<"pages"> | null | undefined) {
   return { sidebarSection, pageType };
 }
 
+function isSidebarSpecialPage(page: Doc<"pages"> | null | undefined) {
+  const sourceMeta =
+    page && typeof page.sourceMeta === "object" && page.sourceMeta
+      ? (page.sourceMeta as Record<string, unknown>)
+      : {};
+
+  return sourceMeta.specialPage === "sidebar";
+}
+
 function getPageTypeLabel(page: Doc<"pages"> | null | undefined) {
   return getPageTypeLabelForSection(getPageMeta(page).sidebarSection);
 }
@@ -2211,6 +2220,21 @@ function ConfiguredWorkspace({
         : flattenTreeNodes(genericRoots, collapsedNodeIds);
   const sidebarVisibleRows = flattenTreeNodes(sidebarNodes, collapsedNodeIds);
   const visibleNodeOrder = [...sidebarVisibleRows, ...pageVisibleRows].map((node) => node._id);
+  const revealNodes = useMemo(() => {
+    if (!pendingRevealNodeId) {
+      return null;
+    }
+
+    if ((sidebarTree?.nodes ?? []).some((node) => (node._id as string) === pendingRevealNodeId)) {
+      return sidebarTree?.nodes ?? null;
+    }
+
+    if ((activePageTree?.nodes ?? []).some((node) => (node._id as string) === pendingRevealNodeId)) {
+      return activePageTree?.nodes ?? null;
+    }
+
+    return null;
+  }, [activePageTree?.nodes, pendingRevealNodeId, sidebarTree?.nodes]);
   const uncategorizedPages =
     (pages ?? []).filter((page) => !page.archived && !sidebarLinkedPageIds.has(page._id as string));
   const archivedPages = (pages ?? []).filter((page) => page.archived);
@@ -3719,12 +3743,12 @@ function ConfiguredWorkspace({
   }, [ownerKey, paletteMode, paletteOpen, paletteQuery, searchNodes]);
 
   useEffect(() => {
-    if (!pendingRevealNodeId || !activePageTree) {
+    if (!pendingRevealNodeId || !revealNodes) {
       return;
     }
 
     const pageNodeMap = new Map(
-      activePageTree.nodes.map((node) => [node._id as string, node]),
+      revealNodes.map((node) => [node._id as string, node]),
     );
     const ancestorNodeIds = getAncestorNodeIds(pendingRevealNodeId, pageNodeMap);
     if (!ancestorNodeIds.some((ancestorNodeId) => collapsedNodeIds.has(ancestorNodeId))) {
@@ -3738,14 +3762,12 @@ function ConfiguredWorkspace({
       }
       return next;
     });
-  }, [activePageTree, collapsedNodeIds, pendingRevealNodeId]);
+  }, [collapsedNodeIds, pendingRevealNodeId, revealNodes]);
 
   useEffect(() => {
     if (
       !pendingRevealNodeId ||
-      !selectedPageId ||
-      !activePageTree ||
-      activePageTree.page._id !== selectedPageId
+      !revealNodes
     ) {
       return;
     }
@@ -3761,7 +3783,7 @@ function ConfiguredWorkspace({
 
       const target = findRevealTargetElement(
         pendingRevealNodeId,
-        activePageTree.nodes,
+        revealNodes,
       );
 
       if (target) {
@@ -3790,7 +3812,7 @@ function ConfiguredWorkspace({
         window.clearTimeout(timeoutId);
       }
     };
-  }, [activePageTree, collapsedNodeIds, pendingRevealNodeId, selectedPageId]);
+  }, [collapsedNodeIds, pendingRevealNodeId, revealNodes, selectedPageId]);
 
   useEffect(() => {
     const handleCopy = (event: ClipboardEvent) => {
@@ -4208,6 +4230,18 @@ function ConfiguredWorkspace({
 
   const handleSelectNodeSearchResult = useCallback((result: NodeSearchResult) => {
     if (!result.page) {
+      return;
+    }
+
+    if (isSidebarSpecialPage(result.page)) {
+      setIsSidebarCollapsed(false);
+      setPendingRevealNodeId(result.node._id as string);
+      setPaletteOpen(false);
+      setPaletteQuery("");
+      setPaletteHighlightIndex(0);
+      setPaletteMode("find");
+      setTextSearchResults([]);
+      clearNodeSelection();
       return;
     }
 
