@@ -65,3 +65,30 @@ test("filterPagesForCommandPalette matches page type search terms", () => {
     ["1"],
   );
 });
+
+test("filterPagesForCommandPalette matches note page type search terms", () => {
+  const results = filterPagesForCommandPalette(
+    [
+      {
+        _id: "1",
+        title: "Loose Ideas",
+        archived: false,
+        position: 1024,
+        searchTerms: ["Note", "Notes"],
+      },
+      {
+        _id: "2",
+        title: "Daily Journal",
+        archived: false,
+        position: 2048,
+        searchTerms: ["Journal"],
+      },
+    ],
+    "note",
+  );
+
+  assert.deepEqual(
+    results.map((page) => page._id),
+    ["1"],
+  );
+});

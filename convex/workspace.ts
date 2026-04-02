@@ -825,6 +825,7 @@ export const createPage = mutation({
       v.union(
         v.literal("Models"),
         v.literal("Tasks"),
+        v.literal("Notes"),
         v.literal("Templates"),
         v.literal("Journal"),
         v.literal("Scratchpads"),
@@ -833,6 +834,7 @@ export const createPage = mutation({
     pageType: v.optional(
       v.union(
         v.literal("default"),
+        v.literal("note"),
         v.literal("task"),
         v.literal("model"),
         v.literal("journal"),

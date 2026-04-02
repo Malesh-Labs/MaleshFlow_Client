@@ -51,6 +51,7 @@ const SKIP = "skip" as const;
 const SIDEBAR_SECTIONS = [
   "Models",
   "Tasks",
+  "Notes",
   "Templates",
   "Journal",
   "Scratchpads",
@@ -72,7 +73,7 @@ const MODEL_REGENERATE_PROMPT =
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
-type PageType = "default" | "task" | "model" | "journal" | "scratchpad";
+type PageType = "default" | "note" | "task" | "model" | "journal" | "scratchpad";
 type PageDoc = Doc<"pages">;
 type PageTreeResult = {
   page: PageDoc;
@@ -507,9 +508,6 @@ function getPageMeta(page: Doc<"pages"> | null | undefined) {
       ? (page.sourceMeta as Record<string, unknown>)
       : {};
 
-  const sidebarSection = SIDEBAR_SECTIONS.includes(sourceMeta.sidebarSection as SidebarSection)
-    ? (sourceMeta.sidebarSection as SidebarSection)
-    : "Tasks";
   const pageType: PageType =
     sourceMeta.pageType === "model"
       ? "model"
@@ -517,9 +515,22 @@ function getPageMeta(page: Doc<"pages"> | null | undefined) {
         ? "journal"
         : sourceMeta.pageType === "scratchpad"
           ? "scratchpad"
+          : sourceMeta.pageType === "note" || sourceMeta.sidebarSection === "Notes"
+            ? "note"
           : sourceMeta.pageType === "task" || sourceMeta.sidebarSection === "Tasks"
             ? "task"
           : "default";
+  const sidebarSection = SIDEBAR_SECTIONS.includes(sourceMeta.sidebarSection as SidebarSection)
+    ? (sourceMeta.sidebarSection as SidebarSection)
+    : pageType === "model"
+      ? "Models"
+      : pageType === "journal"
+        ? "Journal"
+        : pageType === "scratchpad"
+          ? "Scratchpads"
+          : pageType === "note"
+            ? "Notes"
+            : "Tasks";
 
   return { sidebarSection, pageType };
 }
@@ -534,6 +545,8 @@ function getPageTypeLabelForSection(sidebarSection: SidebarSection) {
       return "Model";
     case "Tasks":
       return "Task";
+    case "Notes":
+      return "Note";
     case "Templates":
       return "Template";
     case "Journal":
@@ -564,6 +577,8 @@ function getPageTypeEmoji(page: Doc<"pages"> | null | undefined) {
       return "🧠";
     case "task":
       return "☑️";
+    case "note":
+      return "📝";
     case "journal":
       return "📓";
     case "scratchpad":
@@ -4107,6 +4122,8 @@ function ConfiguredWorkspace({
           ? "model"
           : section === "Tasks"
             ? "task"
+          : section === "Notes"
+            ? "note"
           : section === "Journal"
             ? "journal"
             : section === "Scratchpads"
