@@ -4046,20 +4046,7 @@ function ConfiguredWorkspace({
                 </div>
 
                 <div className="mt-6 border-t border-[var(--workspace-border-soft)] pt-4">
-                  <div className="flex flex-wrap gap-2">
-                    {SIDEBAR_SECTIONS.map((section) => (
-                      <button
-                        key={section}
-                        type="button"
-                        onClick={() => void handleCreatePage(section)}
-                        disabled={isCreatingPage === section}
-                        className="border border-[var(--workspace-border-control)] px-2.5 py-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
-                      >
-                        {isCreatingPage === section ? "Creating…" : `+ ${getPageTypeLabelForSection(section)}`}
-                      </button>
-                    ))}
-                  </div>
-                  <div className="mt-4 space-y-3">
+                  <div className="space-y-3">
                     <button
                       type="button"
                       onClick={() => void handleRebuildEmbeddings()}
@@ -4819,10 +4806,14 @@ function ConfiguredWorkspace({
                     <button
                       key={result.section}
                       type="button"
+                      disabled={isCreatingPage === result.section}
                       onMouseEnter={() => setPaletteHighlightIndex(index)}
                       onClick={() => void handleCreatePage(result.section)}
                       className={clsx(
                         "flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition",
+                        isCreatingPage === result.section
+                          ? "cursor-wait opacity-70"
+                          : "",
                         index === paletteHighlightIndex
                           ? "bg-[var(--workspace-sidebar-bg)]"
                           : "hover:bg-[var(--workspace-surface-hover)]",
@@ -4837,7 +4828,7 @@ function ConfiguredWorkspace({
                         </span>
                       </span>
                       <span className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
-                        Create
+                        {isCreatingPage === result.section ? "Creating…" : "Create"}
                       </span>
                     </button>
                   ))
