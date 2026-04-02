@@ -3949,8 +3949,8 @@ function ConfiguredWorkspace({
                           )}
                         >
                           <span>{page.title}</span>
-                          <span className="ml-2 text-[10px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]">
-                            {getPageTypeDisplayLabel(page)}
+                          <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none text-[var(--workspace-text-faint)]">
+                            {getPageTypeEmoji(page)}
                           </span>
                         </button>
                       ))}
@@ -3959,18 +3959,19 @@ function ConfiguredWorkspace({
                 </div>
 
                 <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
-                  <button
-                    type="button"
-                    onClick={() => setIsTagsSectionCollapsed((current) => !current)}
-                    className="flex w-full items-center justify-between gap-3 text-left"
-                  >
+                  <div className="flex items-center justify-between gap-3">
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                       Tags
                     </p>
-                    <span className="inline-flex h-5 w-5 items-center justify-center text-sm font-semibold leading-none text-[var(--workspace-text-faint)]">
+                    <button
+                      type="button"
+                      onClick={() => setIsTagsSectionCollapsed((current) => !current)}
+                      className="flex h-8 w-8 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold leading-none text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                      aria-label={isTagsSectionCollapsed ? "Expand tags" : "Collapse tags"}
+                    >
                       {isTagsSectionCollapsed ? "+" : "−"}
-                    </span>
-                  </button>
+                    </button>
+                  </div>
                   {!isTagsSectionCollapsed ? (
                     typeof tags === "undefined" ? (
                       <p className="mt-3 text-sm text-[var(--workspace-text-faint)]">
@@ -4001,18 +4002,19 @@ function ConfiguredWorkspace({
                 </div>
 
                 <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5 opacity-75">
-                  <button
-                    type="button"
-                    onClick={() => setIsArchiveSectionCollapsed((current) => !current)}
-                    className="flex w-full items-center justify-between gap-3 text-left"
-                  >
+                  <div className="flex items-center justify-between gap-3">
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                       Archive
                     </p>
-                    <span className="inline-flex h-5 w-5 items-center justify-center text-sm font-semibold leading-none text-[var(--workspace-text-faint)]">
+                    <button
+                      type="button"
+                      onClick={() => setIsArchiveSectionCollapsed((current) => !current)}
+                      className="flex h-8 w-8 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold leading-none text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                      aria-label={showArchiveSectionContent ? "Collapse archive" : "Expand archive"}
+                    >
                       {showArchiveSectionContent ? "−" : "+"}
-                    </span>
-                  </button>
+                    </button>
+                  </div>
                   {showArchiveSectionContent ? (
                     archivedPages.length === 0 ? (
                       <p className="mt-3 text-sm text-[var(--workspace-text-faint)]">

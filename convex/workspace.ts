@@ -265,10 +265,18 @@ export const getSidebarTree = query({
     }
 
     const nodes = await listPageNodes(ctx.db, sidebarPage._id);
+    const activeSidebarNodeIds = new Set(nodes.map((node) => node._id as Id<"nodes">));
     const links = await ctx.db
       .query("links")
       .withIndex("by_source_page", (query) => query.eq("sourcePageId", sidebarPage._id))
       .collect();
+    const visibleSidebarLinks = links.filter(
+      (link) =>
+        link.sourceNodeId !== null &&
+        activeSidebarNodeIds.has(link.sourceNodeId) &&
+        link.resolved &&
+        link.targetPageId !== null,
+    );
     const nodeBacklinkCounts = await buildVisibleNodeBacklinkCounts(
       ctx,
       nodes.map((node) => node._id),
@@ -279,7 +287,7 @@ export const getSidebarTree = query({
       nodeBacklinkCounts,
       linkedPageIds: [
         ...new Set(
-          links
+          visibleSidebarLinks
             .map((link) => link.targetPageId)
             .filter((pageId): pageId is Id<"pages"> => pageId !== null),
         ),
