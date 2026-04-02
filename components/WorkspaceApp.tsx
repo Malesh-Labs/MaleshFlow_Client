@@ -65,6 +65,7 @@ const UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY =
 const TAGS_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-tags-section-collapsed";
 const ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-archive-section-collapsed";
 const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
+const OUTLINE_CLIPBOARD_MIME_TYPE = "application/x-maleshflow-outline";
 const WORKSPACE_AI_CHAT_TEXTAREA_ID = "workspace-ai-chat-textarea";
 const MODEL_REGENERATE_PROMPT =
   "Regenerate the Model section using the current Model lines and the Recent section as context. Refine it into a concise, useful model while preserving important intent and signal.";
@@ -200,6 +201,18 @@ type DraggedNodePayload = {
   parentNodeId: string | null;
   previousSiblingId: string | null;
 };
+type OutlineClipboardNode = {
+  text: string;
+  kind: "note" | "task";
+  taskStatus: NodeValueSnapshot["taskStatus"];
+  noteCompleted: boolean;
+  lockKind: boolean;
+  children: OutlineClipboardNode[];
+};
+type OutlineClipboardPayload = {
+  version: 1;
+  nodes: OutlineClipboardNode[];
+};
 type PendingInsertedComposer = {
   pageId: string;
   parentNodeId: string | null;
@@ -223,6 +236,29 @@ type ReplaceNodeAndInsertSiblingsMutation = ReturnType<
 type SetNodeTreeArchivedMutation = ReturnType<
   typeof useMutation<typeof api.workspace.setNodeTreeArchived>
 >;
+type InsertOutlineClipboardNodesFn = (args: {
+  nodes: OutlineClipboardNode[];
+  pageId: Id<"pages">;
+  parentNodeId: Id<"nodes"> | null;
+  afterNodeId: Id<"nodes"> | null;
+  focusAfterUndoId?: string | null;
+  focusAfterRedoId?: string | null;
+}) => Promise<{
+  createdNodes: Doc<"nodes">[];
+  createdRootNodeIds: Id<"nodes">[];
+}>;
+type OutlineClipboardBatchEntry = {
+  clientId: string;
+  parentNodeId?: Id<"nodes"> | null;
+  parentClientId?: string;
+  afterNodeId?: Id<"nodes"> | null;
+  afterClientId?: string;
+  text?: string;
+  kind?: "note" | "task";
+  taskStatus?: NodeValueSnapshot["taskStatus"];
+  noteCompleted?: boolean;
+  lockKind?: boolean;
+};
 
 type WorkspaceErrorBoundaryProps = {
   ownerKey: string;
@@ -1204,6 +1240,182 @@ function isNodeWithinSelectedSubtree(
   return false;
 }
 
+function isValidClipboardTaskStatus(value: unknown): value is NodeValueSnapshot["taskStatus"] {
+  return (
+    value === null ||
+    value === "todo" ||
+    value === "in_progress" ||
+    value === "done" ||
+    value === "cancelled"
+  );
+}
+
+function isOutlineClipboardNode(value: unknown): value is OutlineClipboardNode {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.text === "string" &&
+    (record.kind === "note" || record.kind === "task") &&
+    isValidClipboardTaskStatus(record.taskStatus) &&
+    typeof record.noteCompleted === "boolean" &&
+    typeof record.lockKind === "boolean" &&
+    Array.isArray(record.children) &&
+    record.children.every((child) => isOutlineClipboardNode(child))
+  );
+}
+
+function parseOutlineClipboardPayload(raw: string) {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      version?: unknown;
+      nodes?: unknown;
+    };
+    if (parsed.version !== 1 || !Array.isArray(parsed.nodes)) {
+      return null;
+    }
+
+    if (!parsed.nodes.every((node) => isOutlineClipboardNode(node))) {
+      return null;
+    }
+
+    return parsed as OutlineClipboardPayload;
+  } catch {
+    return null;
+  }
+}
+
+function findTreeNodeById(nodes: TreeNode[], targetNodeId: string): TreeNode | null {
+  for (const node of nodes) {
+    if (node._id === targetNodeId) {
+      return node;
+    }
+
+    const childMatch = findTreeNodeById(node.children, targetNodeId);
+    if (childMatch) {
+      return childMatch;
+    }
+  }
+
+  return null;
+}
+
+function getSelectedRootNodeIds(
+  selectedNodeIds: Set<string>,
+  visibleNodeOrder: string[],
+  nodeMap: Map<string, Doc<"nodes">>,
+) {
+  const orderedSelectedNodeIds = visibleNodeOrder.filter((nodeId) => selectedNodeIds.has(nodeId));
+  return orderedSelectedNodeIds.filter((nodeId) => {
+    let currentNode = nodeMap.get(nodeId) ?? null;
+    while (currentNode?.parentNodeId) {
+      const parentNodeId = currentNode.parentNodeId as string;
+      if (selectedNodeIds.has(parentNodeId)) {
+        return false;
+      }
+      currentNode = nodeMap.get(parentNodeId) ?? null;
+    }
+
+    return true;
+  });
+}
+
+function serializeTreeNodeForClipboard(node: TreeNode): OutlineClipboardNode {
+  const nodeMeta = getNodeMeta(node);
+  return {
+    text: node.text,
+    kind: node.kind as "note" | "task",
+    taskStatus: (node.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
+    noteCompleted: nodeMeta.noteCompleted === true,
+    lockKind: nodeMeta.taskKindLocked === true,
+    children: node.children.map((child) => serializeTreeNodeForClipboard(child)),
+  };
+}
+
+function buildOutlineClipboardText(nodes: OutlineClipboardNode[], depth = 0): string {
+  const lines: string[] = [];
+
+  for (const node of nodes) {
+    const prefix = "  ".repeat(depth);
+    const lineText =
+      node.kind === "task"
+        ? `${node.taskStatus === "done" ? "[x]" : "[ ]"} ${node.text}`
+        : node.text;
+    lines.push(`${prefix}${lineText}`);
+    if (node.children.length > 0) {
+      lines.push(buildOutlineClipboardText(node.children, depth + 1));
+    }
+  }
+
+  return lines.join("\n");
+}
+
+function flattenOutlineClipboardNodesForBatch(
+  nodes: OutlineClipboardNode[],
+  destination: {
+    parentNodeId: Id<"nodes"> | null;
+    afterNodeId: Id<"nodes"> | null;
+  },
+) {
+  const entries: OutlineClipboardBatchEntry[] = [];
+  const rootClientIds: string[] = [];
+  let counter = 0;
+
+  const appendNode = (
+    node: OutlineClipboardNode,
+    placement: {
+      parentNodeId?: Id<"nodes"> | null;
+      parentClientId?: string;
+      afterNodeId?: Id<"nodes"> | null;
+      afterClientId?: string;
+    },
+  ) => {
+    const clientId = `outline-clip-${counter++}`;
+    entries.push({
+      clientId,
+      parentNodeId: placement.parentNodeId,
+      parentClientId: placement.parentClientId,
+      afterNodeId: placement.afterNodeId,
+      afterClientId: placement.afterClientId,
+      text: node.text,
+      kind: node.kind,
+      taskStatus: node.taskStatus,
+      noteCompleted: node.noteCompleted,
+      lockKind: node.lockKind,
+    });
+
+    let previousChildClientId: string | null = null;
+    for (const child of node.children) {
+      previousChildClientId = appendNode(child, {
+        parentClientId: clientId,
+        afterClientId: previousChildClientId ?? undefined,
+        afterNodeId: previousChildClientId ? undefined : null,
+      });
+    }
+
+    return clientId;
+  };
+
+  let previousRootClientId: string | null = null;
+  for (const node of nodes) {
+    const clientId = appendNode(node, {
+      parentNodeId: destination.parentNodeId,
+      afterClientId: previousRootClientId ?? undefined,
+      afterNodeId: previousRootClientId ? undefined : destination.afterNodeId,
+    });
+    rootClientIds.push(clientId);
+    previousRootClientId = clientId;
+  }
+
+  return { entries, rootClientIds };
+}
+
 function findRevealTargetElement(
   targetNodeId: string,
   nodes: Doc<"nodes">[],
@@ -2003,6 +2215,78 @@ function ConfiguredWorkspace({
     }
     return next;
   }, [activePageTree?.nodes, sidebarTree?.nodes]);
+  const insertOutlineClipboardNodes = useCallback(
+    async ({
+      nodes,
+      pageId,
+      parentNodeId,
+      afterNodeId,
+      focusAfterUndoId = null,
+      focusAfterRedoId = null,
+    }: {
+      nodes: OutlineClipboardNode[];
+      pageId: Id<"pages">;
+      parentNodeId: Id<"nodes"> | null;
+      afterNodeId: Id<"nodes"> | null;
+      focusAfterUndoId?: string | null;
+      focusAfterRedoId?: string | null;
+    }) => {
+      if (nodes.length === 0) {
+        return {
+          createdNodes: [] as Doc<"nodes">[],
+          createdRootNodeIds: [] as Id<"nodes">[],
+        };
+      }
+
+      const { entries, rootClientIds } = flattenOutlineClipboardNodesForBatch(nodes, {
+        parentNodeId,
+        afterNodeId,
+      });
+      const createdNodes = (await createNodesBatch({
+        ownerKey,
+        pageId,
+        nodes: entries,
+      })) as Doc<"nodes">[];
+      const clientIdToNodeId = new Map<string, Id<"nodes">>();
+      const createdSnapshots: CreatedNodeSnapshot[] = [];
+
+      for (const [index, entry] of entries.entries()) {
+        const createdNode = createdNodes[index] ?? null;
+        if (!createdNode) {
+          continue;
+        }
+
+        clientIdToNodeId.set(entry.clientId, createdNode._id);
+        const resolvedAfterNodeId =
+          entry.afterClientId
+            ? (clientIdToNodeId.get(entry.afterClientId) ?? null)
+            : (entry.afterNodeId ?? null);
+        createdSnapshots.push(
+          toCreatedNodeSnapshot(createdNode, resolvedAfterNodeId),
+        );
+      }
+
+      if (createdSnapshots.length > 0) {
+        history.pushUndoEntry({
+          type: "create_nodes",
+          pageId,
+          nodes: createdSnapshots,
+          focusAfterUndoId,
+          focusAfterRedoId:
+            focusAfterRedoId ??
+            getNodeEditorId(createdSnapshots[createdSnapshots.length - 1]!.nodeId),
+        });
+      }
+
+      return {
+        createdNodes,
+        createdRootNodeIds: rootClientIds
+          .map((clientId) => clientIdToNodeId.get(clientId) ?? null)
+          .filter((nodeId): nodeId is Id<"nodes"> => nodeId !== null),
+      };
+    },
+    [createNodesBatch, history, ownerKey],
+  );
   const copyNodeLinkToClipboard = useCallback(async (target: EventTarget | null) => {
     const targetNodeId =
       getNodeIdFromTarget(target) ??
@@ -2031,6 +2315,73 @@ function ConfiguredWorkspace({
       document.body.removeChild(textarea);
     }
   }, [selectedNodeIds, workspaceNodeMap]);
+  const copySelectedNodesToClipboard = useCallback((event: ClipboardEvent) => {
+    if (selectedNodeIds.size === 0 || isTextEntryElement(event.target) || !event.clipboardData) {
+      return;
+    }
+
+    const selectedRootNodeIds = getSelectedRootNodeIds(
+      selectedNodeIds,
+      visibleNodeOrder,
+      workspaceNodeMap,
+    );
+    if (selectedRootNodeIds.length === 0) {
+      return;
+    }
+
+    const selectedRoots = selectedRootNodeIds
+      .map((nodeId) => findTreeNodeById([...sidebarNodes, ...tree], nodeId))
+      .filter((node): node is TreeNode => node !== null);
+    if (selectedRoots.length === 0) {
+      return;
+    }
+
+    const payload: OutlineClipboardPayload = {
+      version: 1,
+      nodes: selectedRoots.map((node) => serializeTreeNodeForClipboard(node)),
+    };
+    event.clipboardData.setData(
+      OUTLINE_CLIPBOARD_MIME_TYPE,
+      JSON.stringify(payload),
+    );
+    event.clipboardData.setData(
+      "text/plain",
+      buildOutlineClipboardText(payload.nodes),
+    );
+    event.preventDefault();
+  }, [selectedNodeIds, sidebarNodes, tree, visibleNodeOrder, workspaceNodeMap]);
+  const pasteOutlineClipboardAfterSelection = useCallback(async (payload: OutlineClipboardPayload) => {
+    if (selectedNodeIds.size === 0) {
+      return;
+    }
+
+    const selectedRootNodeIds = getSelectedRootNodeIds(
+      selectedNodeIds,
+      visibleNodeOrder,
+      workspaceNodeMap,
+    );
+    const anchorNodeId = selectedRootNodeIds[selectedRootNodeIds.length - 1] ?? null;
+    if (!anchorNodeId) {
+      return;
+    }
+
+    const anchorNode = workspaceNodeMap.get(anchorNodeId) ?? null;
+    if (!anchorNode) {
+      return;
+    }
+
+    const result = await insertOutlineClipboardNodes({
+      nodes: payload.nodes,
+      pageId: anchorNode.pageId,
+      parentNodeId: (anchorNode.parentNodeId as Id<"nodes"> | null) ?? null,
+      afterNodeId: anchorNode._id,
+    });
+
+    const firstCreatedRootNodeId = result.createdRootNodeIds[0] ?? null;
+    if (firstCreatedRootNodeId) {
+      selectSingleNode(firstCreatedRootNodeId);
+    }
+  }, [insertOutlineClipboardNodes, selectSingleNode, selectedNodeIds, visibleNodeOrder, workspaceNodeMap]);
   const paletteResults = filterPagesForCommandPalette(
     (pages ?? []).map((page) => ({
       ...page,
@@ -3331,6 +3682,35 @@ function ConfiguredWorkspace({
   }, [activePageTree, collapsedNodeIds, pendingRevealNodeId, selectedPageId]);
 
   useEffect(() => {
+    const handleCopy = (event: ClipboardEvent) => {
+      copySelectedNodesToClipboard(event);
+    };
+
+    const handlePaste = (event: ClipboardEvent) => {
+      if (isTextEntryElement(event.target) || !event.clipboardData) {
+        return;
+      }
+
+      const payload = parseOutlineClipboardPayload(
+        event.clipboardData.getData(OUTLINE_CLIPBOARD_MIME_TYPE),
+      );
+      if (!payload) {
+        return;
+      }
+
+      event.preventDefault();
+      void pasteOutlineClipboardAfterSelection(payload);
+    };
+
+    window.addEventListener("copy", handleCopy);
+    window.addEventListener("paste", handlePaste);
+    return () => {
+      window.removeEventListener("copy", handleCopy);
+      window.removeEventListener("paste", handlePaste);
+    };
+  }, [copySelectedNodesToClipboard, pasteOutlineClipboardAfterSelection]);
+
+  useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const isModifier = event.metaKey || event.ctrlKey;
       const normalizedKey = event.key.toLowerCase();
@@ -4038,6 +4418,7 @@ function ConfiguredWorkspace({
                       nodeBacklinkCounts={sidebarNodeBacklinkCounts}
                       nodeMap={sidebarNodeMap}
                       createNodesBatch={createNodesBatch}
+                      insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                       updateNode={updateNode}
                       moveNode={moveNode}
                       splitNode={splitNode}
@@ -4428,6 +4809,7 @@ function ConfiguredWorkspace({
                         nodeBacklinkCounts={pageNodeBacklinkCounts}
                         nodeMap={nodeMap}
                         createNodesBatch={createNodesBatch}
+                        insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                         updateNode={updateNode}
                         moveNode={moveNode}
                         splitNode={splitNode}
@@ -4466,6 +4848,7 @@ function ConfiguredWorkspace({
                           nodeBacklinkCounts={pageNodeBacklinkCounts}
                           nodeMap={nodeMap}
                           createNodesBatch={createNodesBatch}
+                          insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                           updateNode={updateNode}
                           moveNode={moveNode}
                           splitNode={splitNode}
@@ -4513,6 +4896,7 @@ function ConfiguredWorkspace({
                         nodeBacklinkCounts={pageNodeBacklinkCounts}
                         nodeMap={nodeMap}
                         createNodesBatch={createNodesBatch}
+                        insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                         updateNode={updateNode}
                         moveNode={moveNode}
                         splitNode={splitNode}
@@ -4562,6 +4946,7 @@ function ConfiguredWorkspace({
                         nodeBacklinkCounts={pageNodeBacklinkCounts}
                         nodeMap={nodeMap}
                         createNodesBatch={createNodesBatch}
+                        insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                         updateNode={updateNode}
                         moveNode={moveNode}
                         splitNode={splitNode}
@@ -4603,6 +4988,7 @@ function ConfiguredWorkspace({
                         nodeBacklinkCounts={pageNodeBacklinkCounts}
                         nodeMap={nodeMap}
                         createNodesBatch={createNodesBatch}
+                        insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                         updateNode={updateNode}
                         moveNode={moveNode}
                         splitNode={splitNode}
@@ -4641,6 +5027,7 @@ function ConfiguredWorkspace({
                         nodeBacklinkCounts={pageNodeBacklinkCounts}
                         nodeMap={nodeMap}
                         createNodesBatch={createNodesBatch}
+                        insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                         updateNode={updateNode}
                         moveNode={moveNode}
                         splitNode={splitNode}
@@ -4693,6 +5080,7 @@ function ConfiguredWorkspace({
                         nodeBacklinkCounts={pageNodeBacklinkCounts}
                         nodeMap={nodeMap}
                         createNodesBatch={createNodesBatch}
+                        insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                         updateNode={updateNode}
                         moveNode={moveNode}
                         splitNode={splitNode}
@@ -4731,6 +5119,7 @@ function ConfiguredWorkspace({
                         nodeBacklinkCounts={pageNodeBacklinkCounts}
                         nodeMap={nodeMap}
                         createNodesBatch={createNodesBatch}
+                        insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                         updateNode={updateNode}
                         moveNode={moveNode}
                         splitNode={splitNode}
@@ -4770,6 +5159,7 @@ function ConfiguredWorkspace({
                       nodeBacklinkCounts={pageNodeBacklinkCounts}
                       nodeMap={nodeMap}
                       createNodesBatch={createNodesBatch}
+                      insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                       updateNode={updateNode}
                       moveNode={moveNode}
                       splitNode={splitNode}
@@ -5199,6 +5589,7 @@ function PageSection({
   nodeBacklinkCounts,
   nodeMap,
   createNodesBatch,
+  insertOutlineClipboardNodes,
   updateNode,
   moveNode,
   splitNode,
@@ -5239,6 +5630,7 @@ function PageSection({
   nodeBacklinkCounts: Map<string, number>;
   nodeMap: Map<string, Doc<"nodes">>;
   createNodesBatch: CreateNodesBatchMutation;
+  insertOutlineClipboardNodes: InsertOutlineClipboardNodesFn;
   updateNode: UpdateNodeMutation;
   moveNode: MoveNodeMutation;
   splitNode: SplitNodeMutation;
@@ -5317,6 +5709,7 @@ function PageSection({
           nodeBacklinkCounts={nodeBacklinkCounts}
           nodeMap={nodeMap}
           createNodesBatch={createNodesBatch}
+          insertOutlineClipboardNodes={insertOutlineClipboardNodes}
           updateNode={updateNode}
           moveNode={moveNode}
           splitNode={splitNode}
@@ -5358,6 +5751,7 @@ function OutlineNodeList({
   nodeBacklinkCounts,
   nodeMap,
   createNodesBatch,
+  insertOutlineClipboardNodes,
   updateNode,
   moveNode,
   splitNode,
@@ -5394,6 +5788,7 @@ function OutlineNodeList({
   nodeBacklinkCounts: Map<string, number>;
   nodeMap: Map<string, Doc<"nodes">>;
   createNodesBatch: CreateNodesBatchMutation;
+  insertOutlineClipboardNodes: InsertOutlineClipboardNodesFn;
   updateNode: UpdateNodeMutation;
   moveNode: MoveNodeMutation;
   splitNode: SplitNodeMutation;
@@ -5438,6 +5833,7 @@ function OutlineNodeList({
           parentNodeId={parentNodeId}
           availableTags={availableTags}
           createNodesBatch={createNodesBatch}
+          insertOutlineClipboardNodes={insertOutlineClipboardNodes}
           historyInstanceKey={`empty:${pageId}:${parentNodeId ?? "root"}`}
           readOnly={isPageReadOnly}
           depth={depth}
@@ -5470,6 +5866,7 @@ function OutlineNodeList({
           nodeBacklinkCount={nodeBacklinkCounts.get(node._id as string) ?? 0}
           nodeMap={nodeMap}
           createNodesBatch={createNodesBatch}
+          insertOutlineClipboardNodes={insertOutlineClipboardNodes}
           updateNode={updateNode}
           moveNode={moveNode}
           splitNode={splitNode}
@@ -6206,6 +6603,7 @@ function OutlineNodeEditor({
   nodeBacklinkCount,
   nodeMap,
   createNodesBatch,
+  insertOutlineClipboardNodes,
   updateNode,
   moveNode,
   splitNode,
@@ -6247,6 +6645,7 @@ function OutlineNodeEditor({
   nodeBacklinkCount: number;
   nodeMap: Map<string, Doc<"nodes">>;
   createNodesBatch: CreateNodesBatchMutation;
+  insertOutlineClipboardNodes: InsertOutlineClipboardNodesFn;
   updateNode: UpdateNodeMutation;
   moveNode: MoveNodeMutation;
   splitNode: SplitNodeMutation;
@@ -7957,6 +8356,7 @@ function OutlineNodeEditor({
               nodeBacklinkCounts={nodeBacklinkCounts}
               nodeMap={nodeMap}
               createNodesBatch={createNodesBatch}
+              insertOutlineClipboardNodes={insertOutlineClipboardNodes}
               updateNode={updateNode}
               moveNode={moveNode}
               splitNode={splitNode}
@@ -7998,6 +8398,7 @@ function OutlineNodeEditor({
           afterNodeId={node._id as Id<"nodes">}
           availableTags={availableTags}
           createNodesBatch={createNodesBatch}
+          insertOutlineClipboardNodes={insertOutlineClipboardNodes}
           historyInstanceKey={`inserted:${node._id}`}
           readOnly={isPageReadOnly}
           depth={depth}
@@ -8037,6 +8438,7 @@ function InlineComposer({
   afterNodeId,
   availableTags,
   createNodesBatch,
+  insertOutlineClipboardNodes,
   historyInstanceKey,
   readOnly = false,
   depth = 0,
@@ -8054,6 +8456,7 @@ function InlineComposer({
   afterNodeId?: Id<"nodes">;
   availableTags: SidebarTagResult[];
   createNodesBatch: CreateNodesBatchMutation;
+  insertOutlineClipboardNodes: InsertOutlineClipboardNodesFn;
   historyInstanceKey?: string;
   readOnly?: boolean;
   depth?: number;
@@ -8305,6 +8708,31 @@ function InlineComposer({
 
   const handlePaste = async (event: TextareaClipboardEvent<HTMLTextAreaElement>) => {
     if (readOnly || isSubmittingRef.current) {
+      return;
+    }
+
+    const outlineClipboard = parseOutlineClipboardPayload(
+      event.clipboardData.getData(OUTLINE_CLIPBOARD_MIME_TYPE),
+    );
+    if (outlineClipboard) {
+      event.preventDefault();
+      isSubmittingRef.current = true;
+      setIsSubmitting(true);
+      try {
+        const result = await insertOutlineClipboardNodes({
+          nodes: outlineClipboard.nodes,
+          pageId,
+          parentNodeId: parentNodeId ?? null,
+          afterNodeId: afterNodeId ?? null,
+          focusAfterUndoId: editorId,
+        });
+        history.resetTrackedValue(editorId, editorTarget, "");
+        setDraft("");
+        onSubmitted?.(result.createdNodes, "paste");
+      } finally {
+        isSubmittingRef.current = false;
+        setIsSubmitting(false);
+      }
       return;
     }
 

@@ -151,10 +151,15 @@ function buildNodeAncestorPath(
 }
 
 const nodeCreateInputValidator = v.object({
+  clientId: v.optional(v.string()),
   parentNodeId: v.optional(nullableNodeIdValidator),
+  parentClientId: v.optional(v.string()),
   afterNodeId: v.optional(nullableNodeIdValidator),
+  afterClientId: v.optional(v.string()),
   text: v.optional(v.string()),
   kind: v.optional(nodeKindValidator),
+  lockKind: v.optional(v.boolean()),
+  noteCompleted: v.optional(v.boolean()),
   taskStatus: v.optional(taskStatusValidator),
 });
 
@@ -1229,11 +1234,17 @@ export const createNodesBatch = mutation({
     const createdNodes: Doc<"nodes">[] = [];
     let lastCreatedId: Id<"nodes"> | null = null;
     let lastParentNodeId: Id<"nodes"> | null = null;
+    const createdNodeIdsByClientId = new Map<string, Id<"nodes">>();
 
     for (const entry of args.nodes) {
-      const parentNodeId = entry.parentNodeId ?? null;
+      const parentNodeId =
+        entry.parentClientId !== undefined
+          ? (createdNodeIdsByClientId.get(entry.parentClientId) ?? null)
+          : (entry.parentNodeId ?? null);
       const afterNodeId =
-        entry.afterNodeId !== undefined
+        entry.afterClientId !== undefined
+          ? (createdNodeIdsByClientId.get(entry.afterClientId) ?? null)
+          : entry.afterNodeId !== undefined
           ? (entry.afterNodeId ?? null)
           : lastParentNodeId === parentNodeId
             ? lastCreatedId
@@ -1257,6 +1268,11 @@ export const createNodesBatch = mutation({
         archived: false,
         sourceMeta: {
           sourceType: "manual",
+          taskKindLocked: entry.lockKind ?? false,
+          noteCompleted:
+            entry.kind === "note"
+              ? (entry.noteCompleted ?? false)
+              : false,
         },
         createdAt: now,
         updatedAt: now,
@@ -1268,6 +1284,9 @@ export const createNodesBatch = mutation({
       }
 
       createdNodes.push(node);
+      if (entry.clientId) {
+        createdNodeIdsByClientId.set(entry.clientId, nodeId);
+      }
       lastCreatedId = nodeId;
       lastParentNodeId = parentNodeId;
       await syncLinksForNode(ctx.db, node);
