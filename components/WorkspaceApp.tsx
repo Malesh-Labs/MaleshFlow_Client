@@ -1835,6 +1835,14 @@ function ConfiguredWorkspace({
     setPaletteOpen(true);
   }, [switchPaletteMode]);
 
+  const cyclePaletteMode = useCallback((direction: -1 | 1) => {
+    const currentIndex = PALETTE_MODE_ORDER.indexOf(paletteMode);
+    const nextIndex =
+      (currentIndex + direction + PALETTE_MODE_ORDER.length) % PALETTE_MODE_ORDER.length;
+    const nextMode = PALETTE_MODE_ORDER[nextIndex] ?? "pages";
+    switchPaletteMode(nextMode);
+  }, [paletteMode, switchPaletteMode]);
+
   const openFindPaletteForQuery = useCallback((query: string) => {
     lastPaletteModeRef.current = "find";
     setPaletteMode("find");
@@ -3851,13 +3859,7 @@ function ConfiguredWorkspace({
   const handlePaletteKeyDown = (event: TextareaKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
-      const currentIndex = PALETTE_MODE_ORDER.indexOf(paletteMode);
-      const direction = event.key === "ArrowRight" ? 1 : -1;
-      const nextIndex =
-        (currentIndex + direction + PALETTE_MODE_ORDER.length) % PALETTE_MODE_ORDER.length;
-      const nextMode = PALETTE_MODE_ORDER[nextIndex] ?? "pages";
-
-      switchPaletteMode(nextMode);
+      cyclePaletteMode(event.key === "ArrowRight" ? 1 : -1);
       return;
     }
 
@@ -5177,6 +5179,7 @@ function ConfiguredWorkspace({
                   error={workspaceChatError}
                   onClearError={() => setWorkspaceChatError("")}
                   onOpenSource={handleOpenWorkspaceKnowledgeSource}
+                  onCycleMode={cyclePaletteMode}
                 />
               ) : null}
             </div>
@@ -5887,6 +5890,7 @@ function WorkspaceAiChatPanel({
   error,
   onClearError,
   onOpenSource,
+  onCycleMode,
 }: {
   ownerKey: string;
   availableTags: SidebarTagResult[];
@@ -5898,6 +5902,7 @@ function WorkspaceAiChatPanel({
   error: string;
   onClearError: () => void;
   onOpenSource: (source: WorkspaceKnowledgeSourceSnapshot) => void;
+  onCycleMode: (direction: -1 | 1) => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
@@ -5965,6 +5970,12 @@ function WorkspaceAiChatPanel({
   };
 
   const handleKeyDown = (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      onCycleMode(event.key === "ArrowRight" ? 1 : -1);
+      return;
+    }
+
     if (autocompleteToken && autocompleteSuggestions.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
