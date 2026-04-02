@@ -3715,6 +3715,18 @@ function ConfiguredWorkspace({
       const isModifier = event.metaKey || event.ctrlKey;
       const normalizedKey = event.key.toLowerCase();
 
+      if (
+        paletteOpen &&
+        !isModifier &&
+        !event.altKey &&
+        !event.shiftKey &&
+        (event.key === "ArrowLeft" || event.key === "ArrowRight")
+      ) {
+        event.preventDefault();
+        cyclePaletteMode(event.key === "ArrowRight" ? 1 : -1);
+        return;
+      }
+
       if (isModifier && event.shiftKey && normalizedKey === "f") {
         event.preventDefault();
         openPalette("find");
@@ -3932,6 +3944,7 @@ function ConfiguredWorkspace({
     indentHighlightedNodeByKeyboard,
     moveHighlightedNodeByKeyboard,
     openPalette,
+    cyclePaletteMode,
     paletteOpen,
     clearNodeSelection,
     selectNodeRange,
