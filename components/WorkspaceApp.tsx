@@ -88,19 +88,13 @@ type SidebarTreeResult = {
   linkedPageIds: Id<"pages">[];
   nodeBacklinkCounts: Record<string, number>;
 };
-type PaletteMode = "pages" | "find" | "nodes" | "new" | "chat" | "actions";
-const PALETTE_MODE_ORDER: PaletteMode[] = ["pages", "find", "nodes", "new", "chat", "actions"];
+type PaletteMode = "pages" | "find" | "nodes" | "chat" | "actions";
+const PALETTE_MODE_ORDER: PaletteMode[] = ["pages", "find", "nodes", "chat", "actions"];
 type NodeSearchResult = {
   node: Doc<"nodes">;
   page: PageDoc | null;
   score?: number;
   content?: string;
-};
-type NewPagePaletteResult = {
-  section: SidebarSection;
-  title: string;
-  subtitle: string;
-  keywords: string[];
 };
 type ActionPaletteResult = {
   key: string;
@@ -1977,6 +1971,7 @@ function ConfiguredWorkspace({
   const [isArchiveSectionCollapsed, setIsArchiveSectionCollapsed] = useState(false);
   const [showSidebarDiagnostics, setShowSidebarDiagnostics] = useState(false);
   const [sidebarBootstrapError, setSidebarBootstrapError] = useState<string>("");
+  const [copySnackbarMessage, setCopySnackbarMessage] = useState("");
   const [dragSelection, setDragSelection] = useState<{
     anchorNodeId: string;
     currentNodeId: string;
@@ -2372,6 +2367,7 @@ function ConfiguredWorkspace({
       document.execCommand("copy");
       document.body.removeChild(textarea);
     }
+    setCopySnackbarMessage("Copied node link");
   }, [selectedNodeIds, workspaceNodeMap]);
   const copySelectedNodesToClipboard = useCallback((event: ClipboardEvent) => {
     if (selectedNodeIds.size === 0 || isTextEntryElement(event.target) || !event.clipboardData) {
@@ -2451,32 +2447,6 @@ function ConfiguredWorkspace({
     paletteQuery,
     14,
   );
-  const newPageResults = useMemo(() => {
-    const normalizedQuery = paletteQuery.trim().toLowerCase();
-    const results: NewPagePaletteResult[] = SIDEBAR_SECTIONS.map((section) => {
-      const title = getPageTypeLabelForSection(section);
-      const subtitle = `Create a new ${title.toLowerCase()} page`;
-      const singular =
-        section === "Scratchpads" ? "scratchpad" : section.toLowerCase().replace(/s$/, "");
-
-      return {
-        section,
-        title,
-        subtitle,
-        keywords: [title.toLowerCase(), section.toLowerCase(), singular],
-      };
-    });
-
-    if (normalizedQuery.length === 0) {
-      return results;
-    }
-
-    return results.filter((result) =>
-      [result.title, result.subtitle, ...result.keywords].some((value) =>
-        value.toLowerCase().includes(normalizedQuery),
-      ),
-    );
-  }, [paletteQuery]);
   const workspaceChatMessages = workspaceKnowledgeThread?.messages ?? [];
   const embeddingProgressLabel = useMemo(() => {
     if (!embeddingRebuildProgress) {
@@ -2879,8 +2849,67 @@ function ConfiguredWorkspace({
     window.location.reload();
   }, [setOwnerKey]);
 
+  const handleCreatePage = useCallback(async (section: SidebarSection) => {
+    setIsCreatingPage(section);
+    try {
+      const pageType: PageType =
+        section === "Models"
+          ? "model"
+          : section === "Tasks"
+            ? "task"
+          : section === "Notes"
+            ? "note"
+          : section === "Journal"
+            ? "journal"
+            : section === "Scratchpads"
+              ? "scratchpad"
+              : "default";
+      const title =
+        section === "Models"
+          ? "Untitled Model"
+          : section === "Journal"
+            ? formatLocalDateTitle()
+            : section === "Scratchpads"
+              ? "Untitled Scratchpad"
+              : `Untitled ${section.slice(0, -1)}`;
+      const pageId = await createPage({
+        ownerKey,
+        title,
+        sidebarSection: section,
+        pageType,
+      });
+      setSelectedPageId(pageId);
+      setLocationPageId(pageId);
+      writePageIdToHistory(pageId, "push", title);
+      setPendingRevealNodeId(null);
+      setPaletteOpen(false);
+      setPaletteQuery("");
+      setPaletteHighlightIndex(0);
+      setPaletteMode("pages");
+      setTextSearchResults([]);
+      setNodeSearchResults([]);
+      clearNodeSelection();
+    } finally {
+      setIsCreatingPage(null);
+    }
+  }, [clearNodeSelection, createPage, ownerKey]);
+
   const actionResults = useMemo(() => {
     const results: ActionPaletteResult[] = [
+      ...SIDEBAR_SECTIONS.map((section) => {
+        const title = getPageTypeLabelForSection(section);
+        const singular =
+          section === "Scratchpads" ? "scratchpad" : section.toLowerCase().replace(/s$/, "");
+        return {
+          key: `new-${section.toLowerCase()}`,
+          title: `New ${title}`,
+          subtitle: `Create a new ${title.toLowerCase()} page.`,
+          keywords: ["new", "create", title.toLowerCase(), section.toLowerCase(), singular, "page"],
+          actionLabel: isCreatingPage === section ? "Creating…" : "Create",
+          disabled: isCreatingPage === section,
+          onSelect: () => void handleCreatePage(section),
+        } satisfies ActionPaletteResult;
+      }),
       {
         key: "rebuild-embeddings",
         title: isRebuildingEmbeddings ? "Rebuilding Embeddings…" : "Rebuild Embeddings",
@@ -2926,8 +2955,10 @@ function ConfiguredWorkspace({
   }, [
     embeddingProgressLabel,
     embeddingRebuildStatus,
+    handleCreatePage,
     handleRebuildEmbeddings,
     handleResetLocalState,
+    isCreatingPage,
     isRebuildingEmbeddings,
     paletteQuery,
     setOwnerKey,
@@ -2940,11 +2971,21 @@ function ConfiguredWorkspace({
         ? textSearchResults.length
       : paletteMode === "nodes"
         ? nodeSearchResults.length
-        : paletteMode === "new"
-          ? newPageResults.length
-          : paletteMode === "actions"
+        : paletteMode === "actions"
             ? actionResults.length
             : 0;
+
+  useEffect(() => {
+    if (!copySnackbarMessage) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setCopySnackbarMessage("");
+    }, 1800);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [copySnackbarMessage]);
 
   useEffect(() => {
     if (!dragSelection) {
@@ -3887,12 +3928,6 @@ function ConfiguredWorkspace({
         return;
       }
 
-      if (isModifier && event.altKey && normalizedKey === "n") {
-        event.preventDefault();
-        openPalette("new");
-        return;
-      }
-
       if (isModifier && event.shiftKey && normalizedKey === "k") {
         event.preventDefault();
         void copyNodeLinkToClipboard(event.target);
@@ -3924,7 +3959,7 @@ function ConfiguredWorkspace({
 
       if (isModifier && normalizedKey === "k") {
         event.preventDefault();
-        openPalette("pages");
+        openPalette("actions");
         return;
       }
 
@@ -4144,51 +4179,6 @@ function ConfiguredWorkspace({
 
     history.syncCommittedValue(pageTitleEditorId, selectedPage.title, pageTitleTarget);
   }, [history, pageTitleEditorId, pageTitleTarget, selectedPage]);
-
-  const handleCreatePage = async (section: SidebarSection) => {
-    setIsCreatingPage(section);
-    try {
-      const pageType: PageType =
-        section === "Models"
-          ? "model"
-          : section === "Tasks"
-            ? "task"
-          : section === "Notes"
-            ? "note"
-          : section === "Journal"
-            ? "journal"
-            : section === "Scratchpads"
-              ? "scratchpad"
-            : "default";
-      const title =
-        section === "Models"
-          ? "Untitled Model"
-          : section === "Journal"
-            ? formatLocalDateTitle()
-            : section === "Scratchpads"
-              ? "Untitled Scratchpad"
-            : `Untitled ${section.slice(0, -1)}`;
-      const pageId = await createPage({
-        ownerKey,
-        title,
-        sidebarSection: section,
-        pageType,
-      });
-      setSelectedPageId(pageId);
-      setLocationPageId(pageId);
-      writePageIdToHistory(pageId, "push", title);
-      setPendingRevealNodeId(null);
-      setPaletteOpen(false);
-      setPaletteQuery("");
-      setPaletteHighlightIndex(0);
-      setPaletteMode("pages");
-      setTextSearchResults([]);
-      setNodeSearchResults([]);
-      clearNodeSelection();
-    } finally {
-      setIsCreatingPage(null);
-    }
-  };
 
   const handleRenamePage = async () => {
     if (!selectedPage || !pageTitleEditorId || !pageTitleTarget) {
@@ -4434,14 +4424,6 @@ function ConfiguredWorkspace({
         const highlighted = paletteResults[paletteHighlightIndex];
         if (highlighted) {
           handleSelectPage(highlighted._id);
-        }
-        return;
-      }
-
-      if (paletteMode === "new") {
-        const highlighted = newPageResults[paletteHighlightIndex];
-        if (highlighted) {
-          void handleCreatePage(highlighted.section);
         }
         return;
       }
@@ -5499,20 +5481,6 @@ function ConfiguredWorkspace({
                 <button
                   type="button"
                   onClick={() => {
-                    switchPaletteMode("new");
-                  }}
-                  className={clsx(
-                    "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
-                    paletteMode === "new"
-                      ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
-                      : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
-                  )}
-                >
-                  New
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
                     switchPaletteMode("chat");
                   }}
                   className={clsx(
@@ -5560,8 +5528,6 @@ function ConfiguredWorkspace({
                           ? "Find exact text in notes and tasks..."
                           : paletteMode === "nodes"
                             ? "Search notes and tasks semantically across the workspace..."
-                            : paletteMode === "new"
-                              ? "Create a new page by type..."
                               : "Run a workspace action..."
                     }
                     className="w-full border-0 bg-transparent p-0 text-lg outline-none"
@@ -5689,43 +5655,6 @@ function ConfiguredWorkspace({
                     </button>
                   );
                 })
-              ) : paletteMode === "new" ? (
-                newPageResults.length === 0 ? (
-                  <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">
-                    No matching page types.
-                  </p>
-                ) : (
-                  newPageResults.map((result, index) => (
-                    <button
-                      key={result.section}
-                      type="button"
-                      disabled={isCreatingPage === result.section}
-                      onMouseEnter={() => setPaletteHighlightIndex(index)}
-                      onClick={() => void handleCreatePage(result.section)}
-                      className={clsx(
-                        "flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition",
-                        isCreatingPage === result.section
-                          ? "cursor-wait opacity-70"
-                          : "",
-                        index === paletteHighlightIndex
-                          ? "bg-[var(--workspace-sidebar-bg)]"
-                          : "hover:bg-[var(--workspace-surface-hover)]",
-                      )}
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
-                          {result.title}
-                        </span>
-                        <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                          {result.subtitle}
-                        </span>
-                      </span>
-                      <span className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
-                        {isCreatingPage === result.section ? "Creating…" : "Create"}
-                      </span>
-                    </button>
-                  ))
-                )
               ) : paletteMode === "actions" ? (
                 actionResults.length === 0 ? (
                   <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">
@@ -5779,6 +5708,13 @@ function ConfiguredWorkspace({
                 />
               ) : null}
             </div>
+          </div>
+        </div>
+      ) : null}
+      {copySnackbarMessage ? (
+        <div className="pointer-events-none fixed bottom-24 left-1/2 z-40 -translate-x-1/2 md:bottom-6">
+          <div className="border border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface)_92%,transparent)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text)] shadow-[0_18px_40px_-28px_rgba(0,0,0,0.5)] backdrop-blur-sm">
+            {copySnackbarMessage}
           </div>
         </div>
       ) : null}
