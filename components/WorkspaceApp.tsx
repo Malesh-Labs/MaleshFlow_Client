@@ -5327,6 +5327,18 @@ function OutlineNodeList({
           mobileIndentStep={mobileIndentStep}
           persistWhenEmpty
           onBeginTextEditing={onBeginTextEditing}
+          onSubmitted={(createdNodes, reason) => {
+            if (reason === "enter") {
+              const lastCreatedNode = createdNodes[createdNodes.length - 1];
+              if (lastCreatedNode) {
+                onOpenInsertedComposer(
+                  pageId,
+                  parentNodeId,
+                  lastCreatedNode._id as Id<"nodes">,
+                );
+              }
+            }
+          }}
         />
       ) : null}
       {nodes.map((node, index) => (
@@ -6304,7 +6316,7 @@ function OutlineNodeEditor({
   const hasNestedGrandchildren = node.children.some((child) => child.children.length > 0);
   const isCollapsed = hasChildren && collapsedNodeIds.has(node._id);
   const isTaskRow = node.kind === "task";
-  const isHeadingNoteRow = !isTaskRow && isHeadingLine;
+  const isHeadingRow = isHeadingLine;
   const headingRowMinHeightClass = getHeadingRowMinHeightClass(headingSyntax.level);
   const headingMarkerOffsetClass = getHeadingMarkerOffsetClass(headingSyntax.level);
   const headingControlOffsetClass = getHeadingControlOffsetClass(headingSyntax.level);
@@ -6314,7 +6326,7 @@ function OutlineNodeEditor({
   });
   const previewTypographyClass = clsx(
     baseTypographyClass,
-    hasPageLinkPreview && !isTaskRow && !isHeadingNoteRow ? "py-1" : "",
+    hasPageLinkPreview && !isTaskRow && !isHeadingRow ? "py-1" : "",
     hasPageLinkPreview && isTaskRow ? "py-0.5" : "",
     hasNestedGrandchildren ? "italic" : "",
   );
@@ -7568,13 +7580,13 @@ function OutlineNodeEditor({
             <span className="absolute -left-1.5 -top-[5px] h-2.5 w-2.5 rounded-full bg-[var(--workspace-brand)]" />
           </div>
         ) : null}
-        <div className={clsx("flex gap-1.5 items-start", isHeadingNoteRow ? headingRowMinHeightClass : "min-h-0")}>
+        <div className={clsx("flex gap-1.5 items-start", isHeadingRow ? headingRowMinHeightClass : "min-h-0")}>
           <div
             className={clsx(
               "flex w-4 flex-none justify-center text-[var(--workspace-text-faint)]",
               isTaskRow
                 ? "items-start pt-[2px]"
-                : isHeadingNoteRow
+                : isHeadingRow
                   ? clsx("items-start", headingMarkerOffsetClass)
                   : "items-start pt-[5px]",
             )}
@@ -7643,7 +7655,7 @@ function OutlineNodeEditor({
           <div
             className={clsx(
               "relative flex min-h-0 min-w-0 flex-1 items-start",
-              isHeadingNoteRow ? "self-stretch" : "",
+              isHeadingRow ? "self-stretch" : "",
             )}
           >
             {isVisualSeparatorLine && !shouldRevealVisualPlaceholder ? (
@@ -7771,7 +7783,7 @@ function OutlineNodeEditor({
               "ml-1 flex flex-none gap-1",
               isTaskRow
                 ? "items-start pt-[1px]"
-                : isHeadingNoteRow
+                : isHeadingRow
                   ? clsx("items-start", headingControlOffsetClass)
                   : "items-start pt-[2px]",
             )}
