@@ -750,6 +750,14 @@ function buildNodeClipboardLink(node: Pick<Doc<"nodes">, "_id" | "text">) {
   return `[[${sanitizeLinkLabel(node.text)}|node:${node._id}]]`;
 }
 
+function buildPageBacklinkSearchQuery(page: Pick<Doc<"pages">, "title">) {
+  return `[[${page.title}]]`;
+}
+
+function buildNodeBacklinkSearchQuery(node: { _id: string }) {
+  return `node:${node._id}`;
+}
+
 function getNodeIdFromTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) {
     return null;
@@ -4568,6 +4576,7 @@ function ConfiguredWorkspace({
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
+                      onOpenFindQuery={openFindPaletteForQuery}
                       mobileIndentStep={SIDEBAR_MOBILE_INDENT_STEP}
                     />
                   </div>
@@ -4875,9 +4884,14 @@ function ConfiguredWorkspace({
                     <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.3em] text-[var(--workspace-accent)]">
                       <span>{getPageTypeDisplayLabel(selectedPage)}</span>
                       {pageBacklinkCount > 0 ? (
-                        <span className="rounded-full border border-[var(--workspace-border)] px-2 py-1 text-[10px] tracking-[0.2em] text-[var(--workspace-text-faint)]">
+                        <button
+                          type="button"
+                          onClick={() => openFindPaletteForQuery(buildPageBacklinkSearchQuery(selectedPage))}
+                          className="rounded-full border border-[var(--workspace-border)] px-2 py-1 text-[10px] tracking-[0.2em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                          title={`Show ${pageBacklinkCount} incoming link${pageBacklinkCount === 1 ? "" : "s"}`}
+                        >
                           {pageBacklinkCount} link{pageBacklinkCount === 1 ? "" : "s"}
-                        </span>
+                        </button>
                       ) : null}
                       {isPageArchived ? (
                         <span className="rounded-full border border-[var(--workspace-border)] px-2 py-1 text-[10px] tracking-[0.2em] text-[var(--workspace-text-faint)]">
@@ -4959,6 +4973,7 @@ function ConfiguredWorkspace({
                         onOpenPage={handleSelectPage}
                         onOpenNode={handleOpenLinkedNode}
                         onOpenTag={openFindPaletteForQuery}
+                        onOpenFindQuery={openFindPaletteForQuery}
                       />
                     </div>
                     <aside className="min-w-0 border-t border-[var(--workspace-border-subtle)] pt-6 lg:sticky lg:top-6 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
@@ -4998,6 +5013,7 @@ function ConfiguredWorkspace({
                           onOpenPage={handleSelectPage}
                           onOpenNode={handleOpenLinkedNode}
                           onOpenTag={openFindPaletteForQuery}
+                          onOpenFindQuery={openFindPaletteForQuery}
                           compact
                           showHeader={false}
                         />
@@ -5046,6 +5062,7 @@ function ConfiguredWorkspace({
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
+                      onOpenFindQuery={openFindPaletteForQuery}
                       depthOffset={sectionDepthOffset}
                       statusMessage={chatStatus}
                       action={
@@ -5096,6 +5113,7 @@ function ConfiguredWorkspace({
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
+                      onOpenFindQuery={openFindPaletteForQuery}
                       depthOffset={sectionDepthOffset}
                     />
                   </div>
@@ -5138,6 +5156,7 @@ function ConfiguredWorkspace({
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
+                      onOpenFindQuery={openFindPaletteForQuery}
                       depthOffset={sectionDepthOffset}
                     />
                   </div>
@@ -5177,6 +5196,7 @@ function ConfiguredWorkspace({
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
+                      onOpenFindQuery={openFindPaletteForQuery}
                       depthOffset={sectionDepthOffset}
                       statusMessage={journalFeedbackStatus}
                       action={
@@ -5230,6 +5250,7 @@ function ConfiguredWorkspace({
                         onOpenPage={handleSelectPage}
                         onOpenNode={handleOpenLinkedNode}
                         onOpenTag={openFindPaletteForQuery}
+                        onOpenFindQuery={openFindPaletteForQuery}
                         depthOffset={sectionDepthOffset}
                       />
                     </div>
@@ -5269,6 +5290,7 @@ function ConfiguredWorkspace({
                         onOpenPage={handleSelectPage}
                         onOpenNode={handleOpenLinkedNode}
                         onOpenTag={openFindPaletteForQuery}
+                        onOpenFindQuery={openFindPaletteForQuery}
                         depthOffset={sectionDepthOffset}
                       />
                     </div>
@@ -5309,6 +5331,7 @@ function ConfiguredWorkspace({
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
+                      onOpenFindQuery={openFindPaletteForQuery}
                     />
                   </div>
                 )}
@@ -5739,6 +5762,7 @@ function PageSection({
   onOpenPage,
   onOpenNode,
   onOpenTag,
+  onOpenFindQuery,
   depthOffset = 0,
   mobileIndentStep = 0,
   action = null,
@@ -5784,6 +5808,7 @@ function PageSection({
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   onOpenTag: (tag: string) => void;
+  onOpenFindQuery: (query: string) => void;
   depthOffset?: number;
   mobileIndentStep?: number;
   action?: ReactNode;
@@ -5860,6 +5885,7 @@ function PageSection({
           onOpenPage={onOpenPage}
           onOpenNode={onOpenNode}
           onOpenTag={onOpenTag}
+          onOpenFindQuery={onOpenFindQuery}
           mobileIndentStep={mobileIndentStep}
         />
       </div>
@@ -5903,6 +5929,7 @@ function OutlineNodeList({
   onOpenPage,
   onOpenNode,
   onOpenTag,
+  onOpenFindQuery,
   mobileIndentStep = 0,
 }: {
   nodes: TreeNode[];
@@ -5944,6 +5971,7 @@ function OutlineNodeList({
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   onOpenTag: (tag: string) => void;
+  onOpenFindQuery: (query: string) => void;
   mobileIndentStep?: number;
 }) {
   return (
@@ -6020,6 +6048,7 @@ function OutlineNodeList({
           onOpenPage={onOpenPage}
           onOpenNode={onOpenNode}
           onOpenTag={onOpenTag}
+          onOpenFindQuery={onOpenFindQuery}
           mobileIndentStep={mobileIndentStep}
         />
       ))}
@@ -6755,6 +6784,7 @@ function OutlineNodeEditor({
   onOpenPage,
   onOpenNode,
   onOpenTag,
+  onOpenFindQuery,
   mobileIndentStep = 0,
 }: {
   node: TreeNode;
@@ -6801,6 +6831,7 @@ function OutlineNodeEditor({
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   onOpenTag: (tag: string) => void;
+  onOpenFindQuery: (query: string) => void;
   mobileIndentStep?: number;
 }) {
   const history = useWorkspaceHistory();
@@ -8407,12 +8438,15 @@ function OutlineNodeEditor({
             )}
           >
             {nodeBacklinkCount > 0 ? (
-              <span
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => onOpenFindQuery(buildNodeBacklinkSearchQuery(node))}
                 title={`${nodeBacklinkCount} incoming link${nodeBacklinkCount === 1 ? "" : "s"}`}
-                className="inline-flex min-w-[1.5rem] items-center justify-center px-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--workspace-text-faint)]"
+                className="inline-flex min-w-[1.5rem] items-center justify-center px-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--workspace-text-faint)] transition hover:text-[var(--workspace-text)]"
               >
                 {nodeBacklinkCount}
-              </span>
+              </button>
             ) : null}
             <button
               type="button"
@@ -8504,11 +8538,12 @@ function OutlineNodeEditor({
               onSelectionExtend={onSelectionExtend}
               availableTags={availableTags}
               pagesByTitle={pagesByTitle}
-              onOpenPage={onOpenPage}
-              onOpenNode={onOpenNode}
-              onOpenTag={onOpenTag}
-              mobileIndentStep={mobileIndentStep}
-            />
+          onOpenPage={onOpenPage}
+          onOpenNode={onOpenNode}
+          onOpenTag={onOpenTag}
+          onOpenFindQuery={onOpenFindQuery}
+          mobileIndentStep={mobileIndentStep}
+        />
           </div>
         </div>
       ) : null}
