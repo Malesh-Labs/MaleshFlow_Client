@@ -25,7 +25,7 @@ export type ExtractedLinkMatch = {
 const WIKI_LINK_PATTERN = /\[\[([^[\]]+)\]\]/g;
 const NODE_LINK_PATTERN = /\(\(([a-zA-Z0-9_-]+)\)\)/g;
 const MARKDOWN_LINK_PATTERN = /\[([^\]]+)\]\(([^)\s]+)\)/g;
-const NODE_WIKI_TARGET_PATTERN = /^(.*?)\|node:([a-zA-Z0-9_-]+)$/;
+const NODE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?node:([a-zA-Z0-9_-]+)$/;
 const COMPLETE_MARKDOWN_LINK_PATTERN = /^\[([^\]]+)\]\(([^)]*)\)$/;
 const COMPLETE_WIKI_LINK_PATTERN = /^\[\[([^[\]]+)\]\]$/;
 
@@ -123,6 +123,7 @@ function getReadableLinkLabel(match: ExtractedLinkMatch) {
   if (match.link.label.startsWith("[[")) {
     return match.link.label
       .slice(2, -2)
+      .replace(/^(?:node:[a-zA-Z0-9_-]+)$/, "")
       .replace(/\|node:[a-zA-Z0-9_-]+$/, "")
       .trim();
   }

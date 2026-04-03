@@ -1142,13 +1142,14 @@ function buildLinkPreviewSegments(
       const nodeLabel = match.link.label.startsWith("[[")
         ? match.link.label
             .slice(2, -2)
+            .replace(/^(?:node:[a-zA-Z0-9_-]+)$/, "")
             .replace(/\|node:[a-zA-Z0-9_-]+$/, "")
             .trim()
-        : targetNode?.text.trim() || "Linked node";
+        : "";
       segments.push({
         key: `node:${match.start}`,
         kind: "link",
-        text: nodeLabel || "Linked node",
+        text: nodeLabel || targetNode?.text.trim() || "Linked node",
         pageId: targetNode?.pageId ?? null,
         nodeId: targetNode?.nodeId ?? null,
         archived: targetNode?.pageArchived ?? false,
@@ -1748,11 +1749,6 @@ function applyStrikethroughToPreviewSegments(segments: LinkPreviewSegment[]) {
   }
 
   return rendered;
-}
-
-function isEntireLineStruck(value: string) {
-  const match = value.match(/^(\s*)~~([\s\S]*?)~~(\s*)$/);
-  return Boolean(match && match[2].trim().length > 0);
 }
 
 function readStoredBoolean(key: string, defaultValue: boolean) {
@@ -6935,7 +6931,6 @@ function OutlineNodeEditor({
   const displayDraft = headingSyntax.text;
   const isHeadingLine = headingSyntax.level !== null;
   const hasStrikethroughSyntax = displayDraft.includes("~~");
-  const isFullyStruckLine = isEntireLineStruck(displayDraft);
   const shouldHideNoteMarker = false;
   const shouldRevealVisualPlaceholder = isFocused || isSelected;
   const nodeLinkTargetIds = useMemo(
@@ -8434,7 +8429,7 @@ function OutlineNodeEditor({
                 segments={linkPreviewSegments}
                 className={clsx(
                   previewTypographyClass,
-                  isCompleted || isFullyStruckLine
+                  isCompleted
                     ? "text-[var(--workspace-text-faint)] line-through"
                     : isDimmedLine
                       ? "text-[var(--workspace-text-subtle)]"
@@ -8447,7 +8442,7 @@ function OutlineNodeEditor({
                 text={displayDraft}
                 className={clsx(
                   previewTypographyClass,
-                  isCompleted || isFullyStruckLine
+                  isCompleted
                     ? "text-[var(--workspace-text-faint)] line-through"
                     : isDimmedLine
                       ? "text-[var(--workspace-text-subtle)]"
@@ -8465,7 +8460,7 @@ function OutlineNodeEditor({
                 isDisabled={isDisabled || activeDraggedNodeId !== null}
                 className={clsx(
                   previewTypographyClass,
-                  isCompleted || isFullyStruckLine
+                  isCompleted
                     ? "text-[var(--workspace-text-faint)] line-through"
                     : isDimmedLine
                       ? "text-[var(--workspace-text-subtle)]"
@@ -8479,7 +8474,7 @@ function OutlineNodeEditor({
                 isDisabled={isDisabled || activeDraggedNodeId !== null}
                 className={clsx(
                   previewTypographyClass,
-                  isCompleted || isFullyStruckLine
+                  isCompleted
                     ? "text-[var(--workspace-text-faint)] line-through"
                     : isDimmedLine
                       ? "text-[var(--workspace-text-subtle)]"
