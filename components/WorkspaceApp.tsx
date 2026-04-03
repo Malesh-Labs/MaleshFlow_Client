@@ -75,6 +75,7 @@ import {
   useWorkspaceHistoryController,
 } from "@/components/workspaceHistory";
 import { ArchiveSearchPanel } from "@/components/ArchiveSearchPanel";
+import { FindReplacePanel } from "@/components/FindReplacePanel";
 import { MigrationPanel } from "@/components/MigrationPanel";
 import { ScreenshotImportPanel } from "@/components/ScreenshotImportPanel";
 import { TaskSchedulePanel } from "@/components/TaskSchedulePanel";
@@ -128,6 +129,7 @@ type PaletteMode =
   | "nodes"
   | "chat"
   | "actions"
+  | "replace"
   | "archive"
   | "migration"
   | "screenshotImport"
@@ -3402,6 +3404,18 @@ function ConfiguredWorkspace({
         } satisfies ActionPaletteResult;
       }),
       {
+        key: "find-replace",
+        title: "Find & Replace",
+        subtitle: selectedPage
+          ? "Preview and replace exact text in the current page or across the active workspace."
+          : "Preview and replace exact text across the active workspace.",
+        keywords: ["find", "replace", "local", "global", "page", "workspace", "text"],
+        actionLabel: "Open",
+        onSelect: () => {
+          switchPaletteMode("replace");
+        },
+      },
+      {
         key: "task-schedule",
         title: "Set Task Schedule",
         subtitle: taskScheduleTargetNode
@@ -3505,6 +3519,7 @@ function ConfiguredWorkspace({
     switchPaletteMode,
     taskScheduleSummary,
     taskScheduleTargetNode,
+    selectedPage,
   ]);
 
   const activePaletteResultsCount =
@@ -6132,6 +6147,7 @@ function ConfiguredWorkspace({
               paletteMode === "migration"
                 ? "max-w-6xl"
                 : paletteMode === "chat" ||
+                    paletteMode === "replace" ||
                     paletteMode === "archive" ||
                     paletteMode === "screenshotImport" ||
                     paletteMode === "taskSchedule"
@@ -6223,6 +6239,17 @@ function ConfiguredWorkspace({
                     Search Archive
                   </button>
                 ) : null}
+                {paletteMode === "replace" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      switchPaletteMode("replace");
+                    }}
+                    className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition"
+                  >
+                    Find &amp; Replace
+                  </button>
+                ) : null}
                 {paletteMode === "migration" ? (
                   <button
                     type="button"
@@ -6258,6 +6285,7 @@ function ConfiguredWorkspace({
                 ) : null}
               </div>
               {paletteMode === "chat" ||
+              paletteMode === "replace" ||
               paletteMode === "archive" ||
               paletteMode === "migration" ||
               paletteMode === "screenshotImport" ||
@@ -6265,6 +6293,8 @@ function ConfiguredWorkspace({
                 <p className="text-sm text-[var(--workspace-text-subtle)]">
                   {paletteMode === "chat"
                     ? "Persistent workspace chat"
+                    : paletteMode === "replace"
+                      ? "Preview and replace exact text in the current page or across the active workspace."
                     : paletteMode === "archive"
                       ? "Search archived pages and nodes without mixing them into active workspace results."
                       : paletteMode === "migration"
@@ -6301,10 +6331,11 @@ function ConfiguredWorkspace({
               ref={paletteResultsRef}
               className={clsx(
                 "min-h-0",
-                paletteMode === "chat" ||
-                  paletteMode === "archive" ||
-                  paletteMode === "migration" ||
-                  paletteMode === "screenshotImport" ||
+              paletteMode === "chat" ||
+              paletteMode === "replace" ||
+              paletteMode === "archive" ||
+              paletteMode === "migration" ||
+              paletteMode === "screenshotImport" ||
                   paletteMode === "taskSchedule"
                   ? "overflow-hidden"
                   : "max-h-[420px] overflow-y-auto py-2",
@@ -6477,6 +6508,16 @@ function ConfiguredWorkspace({
                   onClearError={() => setWorkspaceChatError("")}
                   onOpenSource={handleOpenWorkspaceKnowledgeSource}
                   onCycleMode={cyclePaletteMode}
+                />
+              ) : paletteMode === "replace" ? (
+                <FindReplacePanel
+                  ownerKey={ownerKey}
+                  currentPageId={selectedPage?._id ?? null}
+                  currentPageTitle={selectedPage?.title ?? null}
+                  onSelectResult={handleSelectNodeSearchResult}
+                  onApplied={(message) => {
+                    setCopySnackbarMessage(message);
+                  }}
                 />
               ) : paletteMode === "archive" ? (
                 <ArchiveSearchPanel

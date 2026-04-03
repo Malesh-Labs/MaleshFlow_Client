@@ -24,6 +24,10 @@ import {
   splitTextForInlineFormatting,
 } from "../lib/domain/inlineFormatting";
 import {
+  countLiteralOccurrences,
+  replaceLiteralOccurrences,
+} from "../lib/domain/findReplace";
+import {
   advanceRecurringDueDate,
   areRecurrenceFrequenciesEqual,
   dateInputValueToTimestamp,
@@ -268,6 +272,24 @@ test("splitTextForInlineFormatting applies strike, italic, and bold markers", ()
     italic: false,
     bold: false,
   });
+});
+
+test("replaceLiteralOccurrences replaces exact literal matches and counts them", () => {
+  assert.equal(countLiteralOccurrences("alpha beta alpha", "alpha"), 2);
+  assert.equal(countLiteralOccurrences("alpha beta", "gamma"), 0);
+
+  assert.deepEqual(
+    replaceLiteralOccurrences("alpha beta alpha", "alpha", "omega"),
+    {
+      value: "omega beta omega",
+      occurrenceCount: 2,
+    },
+  );
+
+  assert.equal(
+    replaceLiteralOccurrences("alpha beta", "gamma", "omega"),
+    null,
+  );
 });
 
 test("hasRenderableInlineFormatting detects plain inline emphasis without requiring links", () => {

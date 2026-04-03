@@ -1,7 +1,15 @@
 import slugify from "slugify";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import { internalMutation, internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
+import {
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+  type DatabaseReader,
+  type DatabaseWriter,
+  type QueryCtx,
+} from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { assertOwnerKey, isOwnerKeyValid } from "./lib/auth";
 import {
@@ -16,6 +24,7 @@ import {
   syncLinksForNode,
 } from "./lib/workspace";
 import { nodeKindValidator, nullableNodeIdValidator, priorityValidator, recurrenceFrequencyValidator, taskStatusValidator } from "./lib/validators";
+import { replaceLiteralOccurrences } from "../lib/domain/findReplace";
 import { rewriteMatchingPageWikiLinks } from "../lib/domain/links";
 import { extractTagMatches } from "../lib/domain/tags";
 
@@ -31,6 +40,8 @@ const MAX_NODE_AI_SUBTREE_NODES = 2000;
 const PAGE_DELETE_NODE_BATCH_SIZE = 100;
 const PAGE_DELETE_LINK_BATCH_SIZE = 200;
 const PAGE_DELETE_MESSAGE_BATCH_SIZE = 200;
+const FIND_REPLACE_PREVIEW_LIMIT = 40;
+const FIND_REPLACE_BATCH_SIZE = 50;
 
 function collectCappedSubtreeNodes(
   rootNodeId: Id<"nodes">,
@@ -317,6 +328,62 @@ async function filterVisibleLinks(ctx: QueryCtx, links: Doc<"links">[]) {
 
     return true;
   });
+}
+
+async function listScopedFindReplaceNodes(
+  db: DatabaseReader | DatabaseWriter,
+  pageId?: Id<"pages">,
+  updatedBefore?: number,
+) {
+  if (pageId) {
+    const page = await db.get(pageId);
+    if (!page || isPagePendingDeletion(page)) {
+      return {
+        pagesById: new Map<Id<"pages">, Doc<"pages">>(),
+        nodes: [] as Doc<"nodes">[],
+      };
+    }
+
+    const nodes = (await db
+      .query("nodes")
+      .withIndex("by_page_archived", (query) =>
+        query.eq("pageId", pageId).eq("archived", false),
+      )
+      .collect())
+      .filter((node) => updatedBefore === undefined || node.updatedAt <= updatedBefore)
+      .sort((left, right) => left.position - right.position);
+
+    return {
+      pagesById: new Map([[page._id, page]]),
+      nodes,
+    };
+  }
+
+  const pages = (await db
+    .query("pages")
+    .withIndex("by_archived_position", (query) => query.eq("archived", false))
+    .collect())
+    .filter((page) => !isPagePendingDeletion(page))
+    .sort((left, right) => left.position - right.position);
+  const pagesById = new Map(pages.map((page) => [page._id, page]));
+  const nodes: Doc<"nodes">[] = [];
+
+  for (const page of pages) {
+    const pageNodes = (await db
+      .query("nodes")
+      .withIndex("by_page_archived", (query) =>
+        query.eq("pageId", page._id).eq("archived", false),
+      )
+      .collect())
+      .filter((node) => updatedBefore === undefined || node.updatedAt <= updatedBefore)
+      .sort((left, right) => left.position - right.position);
+    nodes.push(...pageNodes);
+  }
+
+  return {
+    pagesById,
+    nodes,
+  };
 }
 
 async function buildVisibleNodeBacklinkCounts(
@@ -745,6 +812,152 @@ export const getPageTree = query({
       pageBacklinkCountTruncated: backlinksTruncated,
       nodeBacklinkCounts,
       loadWarning: warnings.length > 0 ? warnings.join(" ") : null,
+    };
+  },
+});
+
+export const previewFindAndReplace = query({
+  args: {
+    ownerKey: v.string(),
+    find: v.string(),
+    replace: v.string(),
+    pageId: v.optional(v.id("pages")),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    if (args.find.length === 0) {
+      return {
+        matches: [],
+        totalNodes: 0,
+        totalOccurrences: 0,
+        previewTruncated: false,
+      };
+    }
+
+    const previewLimit = Math.max(
+      1,
+      Math.min(args.limit ?? FIND_REPLACE_PREVIEW_LIMIT, FIND_REPLACE_PREVIEW_LIMIT),
+    );
+    const { pagesById, nodes } = await listScopedFindReplaceNodes(ctx.db, args.pageId);
+    const matches: Array<{
+      node: Doc<"nodes">;
+      page: Doc<"pages"> | null;
+      occurrenceCount: number;
+      replacedText: string;
+    }> = [];
+    let totalNodes = 0;
+    let totalOccurrences = 0;
+
+    for (const node of nodes) {
+      const replacement = replaceLiteralOccurrences(node.text, args.find, args.replace);
+      if (!replacement) {
+        continue;
+      }
+
+      totalNodes += 1;
+      totalOccurrences += replacement.occurrenceCount;
+      if (matches.length < previewLimit) {
+        matches.push({
+          node,
+          page: pagesById.get(node.pageId) ?? null,
+          occurrenceCount: replacement.occurrenceCount,
+          replacedText: replacement.value,
+        });
+      }
+    }
+
+    return {
+      matches,
+      totalNodes,
+      totalOccurrences,
+      previewTruncated: totalNodes > matches.length,
+    };
+  },
+});
+
+export const applyFindAndReplaceBatch = mutation({
+  args: {
+    ownerKey: v.string(),
+    find: v.string(),
+    replace: v.string(),
+    pageId: v.optional(v.id("pages")),
+    batchSize: v.optional(v.number()),
+    updatedBefore: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    if (args.find.length === 0) {
+      return {
+        replacedNodeCount: 0,
+        replacedOccurrenceCount: 0,
+        hasMore: false,
+        updatedBefore: args.updatedBefore ?? getTimestamp(),
+      };
+    }
+
+    const batchSize = Math.max(
+      1,
+      Math.min(args.batchSize ?? FIND_REPLACE_BATCH_SIZE, FIND_REPLACE_BATCH_SIZE),
+    );
+    const updatedBefore = args.updatedBefore ?? getTimestamp();
+    const { nodes } = await listScopedFindReplaceNodes(ctx.db, args.pageId, updatedBefore);
+    const replacements: Array<{
+      nodeId: Id<"nodes">;
+      pageId: Id<"pages">;
+      text: string;
+      occurrenceCount: number;
+    }> = [];
+
+    for (const node of nodes) {
+      const replacement = replaceLiteralOccurrences(node.text, args.find, args.replace);
+      if (!replacement) {
+        continue;
+      }
+
+      replacements.push({
+        nodeId: node._id,
+        pageId: node.pageId,
+        text: replacement.value,
+        occurrenceCount: replacement.occurrenceCount,
+      });
+      if (replacements.length >= batchSize) {
+        break;
+      }
+    }
+
+    let replacedOccurrenceCount = 0;
+    const pageIdsToRefresh = new Set<Id<"pages">>();
+
+    for (const replacement of replacements) {
+      await ctx.db.patch(replacement.nodeId, {
+        text: replacement.text,
+        updatedAt: getTimestamp(),
+      });
+      const refreshedNode = await ctx.db.get(replacement.nodeId);
+      if (!refreshedNode) {
+        continue;
+      }
+
+      replacedOccurrenceCount += replacement.occurrenceCount;
+      pageIdsToRefresh.add(replacement.pageId);
+      await syncLinksForNode(ctx.db, refreshedNode);
+      await enqueueNodeAiWork(ctx, refreshedNode._id);
+    }
+
+    for (const pageId of pageIdsToRefresh) {
+      await enqueuePageRootEmbeddingRefresh(ctx, pageId);
+    }
+
+    const hasMore = replacements.length >= batchSize;
+
+    return {
+      replacedNodeCount: replacements.length,
+      replacedOccurrenceCount,
+      hasMore,
+      updatedBefore,
     };
   },
 });
