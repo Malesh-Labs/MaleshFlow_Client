@@ -29,6 +29,39 @@ const PAGE_TREE_BACKLINK_BATCH_SIZE = 200;
 const MAX_PAGE_TREE_NODES = 1200;
 const MAX_PAGE_TREE_NODE_TEXT_CHARS = 250_000;
 const MAX_PAGE_TREE_BACKLINKS = 1200;
+const MAX_NODE_AI_SUBTREE_NODES = 2000;
+
+function collectCappedSubtreeNodes(
+  rootNodeId: Id<"nodes">,
+  nodes: Doc<"nodes">[],
+) {
+  const childrenByParent = new Map<string | null, Doc<"nodes">[]>();
+  for (const node of [...nodes].sort((left, right) => left.position - right.position)) {
+    const key = node.parentNodeId ?? null;
+    const existing = childrenByParent.get(key) ?? [];
+    existing.push(node);
+    childrenByParent.set(key, existing);
+  }
+
+  const collected: Doc<"nodes">[] = [];
+  const visit = (parentNodeId: Id<"nodes">) => {
+    if (collected.length >= MAX_NODE_AI_SUBTREE_NODES) {
+      return;
+    }
+
+    const children = childrenByParent.get(parentNodeId) ?? [];
+    for (const child of children) {
+      if (collected.length >= MAX_NODE_AI_SUBTREE_NODES) {
+        return;
+      }
+      collected.push(child);
+      visit(child._id);
+    }
+  };
+
+  visit(rootNodeId);
+  return collected;
+}
 
 async function listPageNodesForTree(
   ctx: QueryCtx,
@@ -632,54 +665,75 @@ export const getPageTree = query({
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
 
-    const page = await ctx.db.get(args.pageId);
-    if (!page) {
-      return null;
-    }
-
-    const warnings: string[] = [];
-    const { nodes, truncated: nodesTruncated } = await listPageNodesForTree(ctx, args.pageId);
-    if (nodesTruncated) {
-      warnings.push(
-        "This page is too large to load fully right now, so only the first portion is shown.",
-      );
-    }
-
-    const { backlinks, truncated: backlinksTruncated } = await listPageBacklinksForTree(
-      ctx,
-      args.pageId,
-    );
-    if (backlinksTruncated) {
-      warnings.push("Backlink counts are partial for this page.");
-    }
-
-    const visibleBacklinks = (await filterVisibleLinks(ctx, backlinks)).filter((link) => {
-      return link.kind === "page";
-    });
-
-    let nodeBacklinkCounts: Record<string, number> = {};
     try {
-      nodeBacklinkCounts = await buildVisibleNodeBacklinkCounts(
+      const page = await ctx.db.get(args.pageId);
+      if (!page) {
+        return null;
+      }
+
+      const warnings: string[] = [];
+      const { nodes, truncated: nodesTruncated } = await listPageNodesForTree(ctx, args.pageId);
+      if (nodesTruncated) {
+        warnings.push(
+          "This page is too large to load fully right now, so only the first portion is shown.",
+        );
+      }
+
+      const { backlinks, truncated: backlinksTruncated } = await listPageBacklinksForTree(
         ctx,
-        nodes.map((node) => node._id),
+        args.pageId,
       );
+      if (backlinksTruncated) {
+        warnings.push("Backlink counts are partial for this page.");
+      }
+
+      const visibleBacklinks = (await filterVisibleLinks(ctx, backlinks)).filter((link) => {
+        return link.kind === "page";
+      });
+
+      let nodeBacklinkCounts: Record<string, number> = {};
+      try {
+        nodeBacklinkCounts = await buildVisibleNodeBacklinkCounts(
+          ctx,
+          nodes.map((node) => node._id),
+        );
+      } catch (error) {
+        console.error("Failed to build page-tree node backlink counts", {
+          pageId: args.pageId,
+          error,
+        });
+        warnings.push("Some backlink badges were skipped while loading this page.");
+      }
+
+      return {
+        page,
+        nodes,
+        backlinks: visibleBacklinks,
+        pageBacklinkCount: visibleBacklinks.length,
+        pageBacklinkCountTruncated: backlinksTruncated,
+        nodeBacklinkCounts,
+        loadWarning: warnings.length > 0 ? warnings.join(" ") : null,
+      };
     } catch (error) {
-      console.error("Failed to build page-tree node backlink counts", {
+      console.error("Failed to load page tree", {
         pageId: args.pageId,
         error,
       });
-      warnings.push("Some backlink badges were skipped while loading this page.");
+      const page = await ctx.db.get(args.pageId);
+      if (!page) {
+        return null;
+      }
+      return {
+        page,
+        nodes: [],
+        backlinks: [],
+        pageBacklinkCount: 0,
+        pageBacklinkCountTruncated: false,
+        nodeBacklinkCounts: {},
+        loadWarning:
+          "This page could not be loaded fully right now, so the outline was temporarily skipped.",
+      };
     }
-
-    return {
-      page,
-      nodes,
-      backlinks: visibleBacklinks,
-      pageBacklinkCount: visibleBacklinks.length,
-      pageBacklinkCountTruncated: backlinksTruncated,
-      nodeBacklinkCounts,
-      loadWarning: warnings.length > 0 ? warnings.join(" ") : null,
-    };
   },
 });
 
@@ -1799,13 +1853,11 @@ export const getNodeAiContext = internalQuery({
       return null;
     }
 
-    const allNodes = await listPageNodes(ctx.db, page._id);
     const ancestors: string[] = [];
-    const byId = new Map(allNodes.map((entry) => [entry._id, entry]));
     let currentParentId = node.parentNodeId;
 
     while (currentParentId) {
-      const parent = byId.get(currentParentId);
+      const parent = await ctx.db.get(currentParentId);
       if (!parent) {
         break;
       }
@@ -1814,11 +1866,16 @@ export const getNodeAiContext = internalQuery({
       currentParentId = parent.parentNodeId;
     }
 
+    const subtreeNodes =
+      node.parentNodeId === null
+        ? collectCappedSubtreeNodes(node._id, await listPageNodes(ctx.db, page._id))
+        : [];
+
     return {
       page,
       node,
-      allNodes,
       ancestors,
+      subtreeNodes,
     };
   },
 });

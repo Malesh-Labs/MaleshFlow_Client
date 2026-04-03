@@ -587,7 +587,10 @@ export const generateEmbeddingForNode = internalAction({
           ? buildRootEmbeddingInput({
               pageTitle: context.page.title,
               rootText: context.node.text.trim(),
-              subtreeLines: collectRootSubtreeLines(context.node._id, context.allNodes),
+              subtreeLines: collectRootSubtreeLines(context.node._id, [
+                context.node,
+                ...(context.subtreeNodes ?? []),
+              ]),
             })
           : buildEmbeddingInput({
               pageTitle: context.page.title,
