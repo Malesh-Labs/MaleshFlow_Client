@@ -15,6 +15,7 @@ import {
   extractTrailingDraftEdits,
   limitHistoryEntries,
 } from "@/lib/domain/workspaceHistory";
+import type { RecurrenceFrequency } from "@/lib/domain/recurrence";
 
 type NodeKind = "note" | "task";
 type TaskStatus = "todo" | "in_progress" | "done" | "cancelled" | null;
@@ -24,6 +25,8 @@ export type NodeValueSnapshot = {
   kind: NodeKind;
   taskStatus: TaskStatus;
   noteCompleted: boolean;
+  dueAt?: number | null;
+  recurrenceFrequency?: RecurrenceFrequency;
 };
 
 export type NodePlacement = {
@@ -121,6 +124,8 @@ type UpdateNodeFn = (args: {
   kind?: NodeKind;
   taskStatus?: TaskStatus;
   noteCompleted?: boolean;
+  dueAt?: number | null;
+  recurrenceFrequency?: RecurrenceFrequency;
 }) => Promise<unknown>;
 
 type MoveNodeFn = (args: {
@@ -581,6 +586,8 @@ export function useWorkspaceHistoryController({
             kind: nextSnapshot.kind,
             taskStatus: nextSnapshot.taskStatus,
             noteCompleted: nextSnapshot.noteCompleted,
+            dueAt: nextSnapshot.dueAt,
+            recurrenceFrequency: nextSnapshot.recurrenceFrequency,
           });
           syncCommittedValue(entry.focusEditorId, nextSnapshot.text, {
             kind: "node",

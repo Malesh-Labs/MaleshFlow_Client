@@ -28,6 +28,15 @@ import { parseHeadingSyntax } from "@/lib/domain/displaySyntax";
 import { splitTextForInlineFormatting } from "@/lib/domain/inlineFormatting";
 import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
 import {
+  advanceRecurringDueDate,
+  formatDueDate,
+  getRecurrenceLabel,
+  isOverdueDueDate,
+  RECURRENCE_FREQUENCIES,
+  type RecurrenceFrequency,
+  type RecurringCompletionMode,
+} from "@/lib/domain/recurrence";
+import {
   applySelectedLinkShortcut,
   extractLinkMatches,
   getExplicitWikiLinkPreviewText,
@@ -56,6 +65,7 @@ import {
 import { ArchiveSearchPanel } from "@/components/ArchiveSearchPanel";
 import { MigrationPanel } from "@/components/MigrationPanel";
 import { ScreenshotImportPanel } from "@/components/ScreenshotImportPanel";
+import { TaskSchedulePanel } from "@/components/TaskSchedulePanel";
 
 const SKIP = "skip" as const;
 const SIDEBAR_SECTIONS = [
@@ -75,6 +85,8 @@ const UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY =
   "maleshflow-uncategorized-section-collapsed";
 const TAGS_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-tags-section-collapsed";
 const ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-archive-section-collapsed";
+const RECURRING_TASK_COMPLETION_MODE_STORAGE_KEY =
+  "maleshflow-recurring-task-completion-mode";
 const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
 const OUTLINE_CLIPBOARD_MIME_TYPE = "application/x-maleshflow-outline";
 const WORKSPACE_AI_CHAT_TEXTAREA_ID = "workspace-ai-chat-textarea";
@@ -108,7 +120,8 @@ type PaletteMode =
   | "actions"
   | "archive"
   | "migration"
-  | "screenshotImport";
+  | "screenshotImport"
+  | "taskSchedule";
 const PALETTE_MODE_ORDER: PaletteMode[] = [
   "pages",
   "find",
@@ -232,6 +245,8 @@ type OutlineClipboardNode = {
   kind: "note" | "task";
   taskStatus: NodeValueSnapshot["taskStatus"];
   noteCompleted: boolean;
+  dueAt?: number | null;
+  recurrenceFrequency?: RecurrenceFrequency;
   lockKind: boolean;
   children: OutlineClipboardNode[];
 };
@@ -283,6 +298,8 @@ type OutlineClipboardBatchEntry = {
   kind?: "note" | "task";
   taskStatus?: NodeValueSnapshot["taskStatus"];
   noteCompleted?: boolean;
+  dueAt?: number | null;
+  recurrenceFrequency?: RecurrenceFrequency;
   lockKind?: boolean;
 };
 
@@ -686,6 +703,131 @@ function isNodeNoteCompleted(
       ? (node.sourceMeta as Record<string, unknown>)
       : {};
   return sourceMeta.noteCompleted === true;
+}
+
+function getNodeRecurrenceFrequency(
+  node:
+    | {
+        kind: string;
+        sourceMeta?: Record<string, unknown> | null;
+      }
+    | {
+        kind: string;
+        recurrenceFrequency?: RecurrenceFrequency;
+      }
+    | null
+    | undefined,
+): RecurrenceFrequency {
+  if (!node || node.kind !== "task") {
+    return null;
+  }
+
+  if ("recurrenceFrequency" in node) {
+    return (node.recurrenceFrequency ?? null) as RecurrenceFrequency;
+  }
+
+  const sourceMeta =
+    "sourceMeta" in node && node.sourceMeta && typeof node.sourceMeta === "object"
+      ? (node.sourceMeta as Record<string, unknown>)
+      : {};
+  const frequency = sourceMeta.recurrenceFrequency;
+  return RECURRENCE_FREQUENCIES.includes(frequency as Exclude<RecurrenceFrequency, null>)
+    ? (frequency as Exclude<RecurrenceFrequency, null>)
+    : null;
+}
+
+function getRecurringCompletionTransition(
+  node: {
+    text: string;
+    kind: string;
+    taskStatus: string | null;
+    dueAt: number | null;
+    sourceMeta?: Record<string, unknown> | null;
+  },
+  completionMode: RecurringCompletionMode,
+): NodeValueSnapshot | null {
+  const recurrenceFrequency = getNodeRecurrenceFrequency(node);
+  if (node.kind !== "task" || recurrenceFrequency === null || !node.dueAt) {
+    return null;
+  }
+
+  if (node.taskStatus === "done") {
+    return {
+      text: node.text,
+      kind: "task",
+      taskStatus: "todo",
+      noteCompleted: false,
+      dueAt: node.dueAt,
+      recurrenceFrequency,
+    };
+  }
+
+  return {
+    text: node.text,
+    kind: "task",
+    taskStatus: "todo",
+    noteCompleted: false,
+    dueAt: advanceRecurringDueDate({
+      dueAt: node.dueAt,
+      frequency: recurrenceFrequency,
+      mode: completionMode,
+    }),
+    recurrenceFrequency,
+  };
+}
+
+function withNodeScheduleSnapshot(
+  snapshot: NodeValueSnapshot,
+  source:
+    | {
+        kind: string;
+        dueAt?: number | null;
+        sourceMeta?: Record<string, unknown> | null;
+      }
+    | {
+        kind: string;
+        dueAt?: number | null;
+        recurrenceFrequency?: RecurrenceFrequency;
+      },
+): NodeValueSnapshot {
+  if (snapshot.kind !== "task") {
+    return {
+      ...snapshot,
+      taskStatus: null,
+      dueAt: null,
+      recurrenceFrequency: null,
+    };
+  }
+
+  return {
+    ...snapshot,
+    taskStatus: snapshot.taskStatus ?? "todo",
+    dueAt: snapshot.dueAt ?? ("dueAt" in source ? (source.dueAt ?? null) : null),
+    recurrenceFrequency:
+      snapshot.recurrenceFrequency ?? getNodeRecurrenceFrequency(source),
+  };
+}
+
+function getTaskScheduleSummary(task: {
+  kind: string;
+  dueAt: number | null;
+  sourceMeta?: Record<string, unknown> | null;
+}) {
+  if (task.kind !== "task") {
+    return "";
+  }
+
+  const parts: string[] = [];
+  if (task.dueAt) {
+    parts.push(formatDueDate(task.dueAt));
+  }
+
+  const recurrenceFrequency = getNodeRecurrenceFrequency(task);
+  if (recurrenceFrequency) {
+    parts.push(getRecurrenceLabel(recurrenceFrequency));
+  }
+
+  return parts.join(" • ");
 }
 
 function findSectionNode(nodes: TreeNode[], slot: SectionSlot) {
@@ -1343,6 +1485,12 @@ function isOutlineClipboardNode(value: unknown): value is OutlineClipboardNode {
     (record.kind === "note" || record.kind === "task") &&
     isValidClipboardTaskStatus(record.taskStatus) &&
     typeof record.noteCompleted === "boolean" &&
+    (record.dueAt === undefined || typeof record.dueAt === "number" || record.dueAt === null) &&
+    (record.recurrenceFrequency === undefined ||
+      record.recurrenceFrequency === null ||
+      RECURRENCE_FREQUENCIES.includes(
+        record.recurrenceFrequency as Exclude<RecurrenceFrequency, null>,
+      )) &&
     typeof record.lockKind === "boolean" &&
     Array.isArray(record.children) &&
     record.children.every((child) => isOutlineClipboardNode(child))
@@ -1415,6 +1563,8 @@ function serializeTreeNodeForClipboard(node: TreeNode): OutlineClipboardNode {
     kind: node.kind as "note" | "task",
     taskStatus: (node.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
     noteCompleted: nodeMeta.noteCompleted === true,
+    dueAt: node.dueAt ?? null,
+    recurrenceFrequency: getNodeRecurrenceFrequency(node),
     lockKind: nodeMeta.taskKindLocked === true,
     children: node.children.map((child) => serializeTreeNodeForClipboard(child)),
   };
@@ -1476,6 +1626,8 @@ function flattenOutlineClipboardNodesForBatch(
       kind: node.kind,
       taskStatus: node.taskStatus,
       noteCompleted: node.noteCompleted,
+      dueAt: node.dueAt,
+      recurrenceFrequency: node.recurrenceFrequency,
       lockKind: node.lockKind,
     });
 
@@ -1714,13 +1866,15 @@ function splitPastedLines(text: string) {
 
 function toNodeValueSnapshot(
   value:
-    | Pick<Doc<"nodes">, "text" | "kind" | "taskStatus">
-    | Pick<Doc<"nodes">, "text" | "kind" | "taskStatus" | "sourceMeta">
+    | Pick<Doc<"nodes">, "text" | "kind" | "taskStatus" | "dueAt">
+    | Pick<Doc<"nodes">, "text" | "kind" | "taskStatus" | "dueAt" | "sourceMeta">
     | {
         text: string;
         kind: "note" | "task";
         taskStatus: "todo" | "in_progress" | "done" | "cancelled" | null;
         noteCompleted?: boolean;
+        dueAt?: number | null;
+        recurrenceFrequency?: RecurrenceFrequency;
       },
 ): NodeValueSnapshot {
   return {
@@ -1731,6 +1885,12 @@ function toNodeValueSnapshot(
       value as
         | Pick<Doc<"nodes">, "kind" | "sourceMeta">
         | Pick<NodeValueSnapshot, "kind" | "noteCompleted">,
+    ),
+    dueAt: "dueAt" in value ? (value.dueAt ?? null) : null,
+    recurrenceFrequency: getNodeRecurrenceFrequency(
+      value as
+        | Pick<Doc<"nodes">, "kind" | "sourceMeta">
+        | Pick<NodeValueSnapshot, "kind" | "recurrenceFrequency">,
     ),
   };
 }
@@ -1788,6 +1948,17 @@ function readStoredBoolean(key: string, defaultValue: boolean) {
   }
 
   return storedValue === "true";
+}
+
+function readStoredRecurringCompletionMode(defaultValue: RecurringCompletionMode) {
+  if (typeof window === "undefined") {
+    return defaultValue;
+  }
+
+  const storedValue = window.localStorage.getItem(RECURRING_TASK_COMPLETION_MODE_STORAGE_KEY);
+  return storedValue === "today" || storedValue === "dueDate"
+    ? storedValue
+    : defaultValue;
 }
 
 function getHeadingPreviewClass(level: 1 | 2 | 3 | null) {
@@ -1879,6 +2050,8 @@ function toCreatedNodeSnapshot(
     kind: node.kind as "note" | "task",
     taskStatus: (node.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
     noteCompleted: isNodeNoteCompleted(node),
+    dueAt: node.dueAt ?? null,
+    recurrenceFrequency: getNodeRecurrenceFrequency(node),
   };
 }
 
@@ -1987,6 +2160,9 @@ function ConfiguredWorkspace({
   const [pendingRevealNodeId, setPendingRevealNodeId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
+  const [actionContextNodeId, setActionContextNodeId] = useState<string | null>(null);
+  const [recurringCompletionMode, setRecurringCompletionMode] =
+    useState<RecurringCompletionMode>("dueDate");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isUncategorizedSectionCollapsed, setIsUncategorizedSectionCollapsed] = useState(false);
   const [isTagsSectionCollapsed, setIsTagsSectionCollapsed] = useState(false);
@@ -2108,10 +2284,25 @@ function ConfiguredWorkspace({
     setPaletteOpen(true);
   }, [switchPaletteMode]);
 
+  const openTaskSchedulePalette = useCallback((nodeId: string | null) => {
+    setActionContextNodeId(nodeId);
+    setPaletteMode("taskSchedule");
+    setPaletteQuery("");
+    setPaletteHighlightIndex(0);
+    setTextSearchResults([]);
+    setNodeSearchResults([]);
+    setPaletteOpen(true);
+  }, []);
+
   const cyclePaletteMode = useCallback((direction: -1 | 1) => {
     const currentIndex = PALETTE_MODE_ORDER.indexOf(paletteMode);
+    const safeCurrentIndex =
+      currentIndex === -1
+        ? Math.max(PALETTE_MODE_ORDER.indexOf("actions"), 0)
+        : currentIndex;
     const nextIndex =
-      (currentIndex + direction + PALETTE_MODE_ORDER.length) % PALETTE_MODE_ORDER.length;
+      (safeCurrentIndex + direction + PALETTE_MODE_ORDER.length) %
+      PALETTE_MODE_ORDER.length;
     const nextMode = PALETTE_MODE_ORDER[nextIndex] ?? "pages";
     switchPaletteMode(nextMode);
   }, [paletteMode, switchPaletteMode]);
@@ -2303,6 +2494,28 @@ function ConfiguredWorkspace({
     }
     return next;
   }, [activePageTree?.nodes, sidebarTree?.nodes]);
+  const paletteContextNodeId =
+    selectedNodeIds.size === 1 ? ([...selectedNodeIds][0] ?? null) : actionContextNodeId;
+  const taskScheduleTargetNode = useMemo(() => {
+    if (!paletteContextNodeId) {
+      return null;
+    }
+
+    const node = workspaceNodeMap.get(paletteContextNodeId) ?? null;
+    if (!node || node.kind !== "task" || getNodeMeta(node).locked === true) {
+      return null;
+    }
+
+    const page = pagesById.get(node.pageId as string);
+    if (page?.archived) {
+      return null;
+    }
+
+    return node;
+  }, [paletteContextNodeId, pagesById, workspaceNodeMap]);
+  const taskScheduleSummary = taskScheduleTargetNode
+    ? getTaskScheduleSummary(taskScheduleTargetNode)
+    : "";
   const insertOutlineClipboardNodes = useCallback(
     async ({
       nodes,
@@ -2612,6 +2825,9 @@ function ConfiguredWorkspace({
     setIsArchiveSectionCollapsed(
       readStoredBoolean(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY, true),
     );
+    setRecurringCompletionMode(
+      readStoredRecurringCompletionMode("dueDate"),
+    );
     try {
       const storedCollapsedNodeIds = JSON.parse(
         window.localStorage.getItem(COLLAPSED_NODES_STORAGE_KEY) ?? "[]",
@@ -2680,10 +2896,29 @@ function ConfiguredWorkspace({
     }
 
     window.localStorage.setItem(
+      RECURRING_TASK_COMPLETION_MODE_STORAGE_KEY,
+      recurringCompletionMode,
+    );
+  }, [recurringCompletionMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
       COLLAPSED_NODES_STORAGE_KEY,
       JSON.stringify([...collapsedNodeIds]),
     );
   }, [collapsedNodeIds]);
+
+  useEffect(() => {
+    if (paletteOpen) {
+      return;
+    }
+
+    setActionContextNodeId(null);
+  }, [paletteOpen]);
 
   useEffect(() => {
     setLocationPageId(readPageIdFromLocation());
@@ -2963,6 +3198,7 @@ function ConfiguredWorkspace({
     window.localStorage.removeItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
+    window.localStorage.removeItem(RECURRING_TASK_COMPLETION_MODE_STORAGE_KEY);
     setSelectedPageId(null);
     setLocationPageId(null);
     writePageIdToHistory(null, "replace", null);
@@ -3015,6 +3251,63 @@ function ConfiguredWorkspace({
     }
   }, [clearNodeSelection, createPage, ownerKey]);
 
+  const handleSaveTaskSchedule = useCallback(async ({
+    dueAt,
+    recurrenceFrequency,
+  }: {
+    dueAt: number | null;
+    recurrenceFrequency: RecurrenceFrequency;
+  }) => {
+    const node = taskScheduleTargetNode;
+    if (!node) {
+      throw new Error("Pick a task first.");
+    }
+
+    const beforeSnapshot = toNodeValueSnapshot(node);
+    const afterSnapshot = withNodeScheduleSnapshot(
+      {
+        text: node.text,
+        kind: "task",
+        taskStatus: (node.taskStatus ?? "todo") as NodeValueSnapshot["taskStatus"],
+        noteCompleted: false,
+        dueAt,
+        recurrenceFrequency,
+      },
+      node,
+    );
+
+    if (
+      beforeSnapshot.text === afterSnapshot.text &&
+      beforeSnapshot.kind === afterSnapshot.kind &&
+      beforeSnapshot.taskStatus === afterSnapshot.taskStatus &&
+      beforeSnapshot.noteCompleted === afterSnapshot.noteCompleted &&
+      beforeSnapshot.dueAt === afterSnapshot.dueAt &&
+      beforeSnapshot.recurrenceFrequency === afterSnapshot.recurrenceFrequency
+    ) {
+      return;
+    }
+
+    await updateNode({
+      ownerKey,
+      nodeId: node._id,
+      text: afterSnapshot.text,
+      kind: "task",
+      taskStatus: afterSnapshot.taskStatus,
+      noteCompleted: false,
+      dueAt: afterSnapshot.dueAt,
+      recurrenceFrequency: afterSnapshot.recurrenceFrequency,
+    });
+
+    history.pushUndoEntry({
+      type: "update_node",
+      pageId: node.pageId as Id<"pages">,
+      nodeId: node._id as Id<"nodes">,
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      focusEditorId: getNodeEditorId(node._id as Id<"nodes">),
+    });
+  }, [history, ownerKey, taskScheduleTargetNode, updateNode]);
+
   const actionResults = useMemo(() => {
     const results: ActionPaletteResult[] = [
       ...SIDEBAR_SECTIONS.map((section) => {
@@ -3031,6 +3324,21 @@ function ConfiguredWorkspace({
           onSelect: () => void handleCreatePage(section),
         } satisfies ActionPaletteResult;
       }),
+      {
+        key: "task-schedule",
+        title: "Set Task Schedule",
+        subtitle: taskScheduleTargetNode
+          ? taskScheduleSummary
+            ? `${taskScheduleTargetNode.text || "(empty task)"} • ${taskScheduleSummary}`
+            : `Add a due date or recurrence to ${taskScheduleTargetNode.text || "this task"}.`
+          : "Highlight a task, or open Actions while your caret is inside a task.",
+        keywords: ["task", "schedule", "due", "date", "repeat", "recurring", "overdue"],
+        actionLabel: "Open",
+        disabled: taskScheduleTargetNode === null,
+        onSelect: () => {
+          openTaskSchedulePalette(taskScheduleTargetNode?._id as string | null);
+        },
+      },
       {
         key: "migration",
         title: "Migration",
@@ -3114,9 +3422,12 @@ function ConfiguredWorkspace({
     isCreatingPage,
     isRebuildingEmbeddings,
     canImportScreenshot,
+    openTaskSchedulePalette,
     paletteQuery,
     setOwnerKey,
     switchPaletteMode,
+    taskScheduleSummary,
+    taskScheduleTargetNode,
   ]);
 
   const activePaletteResultsCount =
@@ -3506,18 +3817,22 @@ function ConfiguredWorkspace({
       const beforeSnapshot = toNodeValueSnapshot(node);
       const afterSnapshot: NodeValueSnapshot =
         node.kind === "task"
-          ? {
+          ? withNodeScheduleSnapshot({
               text: node.text,
               kind: "note",
               taskStatus: null,
               noteCompleted: false,
-            }
-          : {
+              dueAt: null,
+              recurrenceFrequency: null,
+            }, node)
+          : withNodeScheduleSnapshot({
               text: node.text,
               kind: "task",
               taskStatus: "todo",
               noteCompleted: false,
-            };
+              dueAt: null,
+              recurrenceFrequency: null,
+            }, node);
 
       await updateNode({
         ownerKey,
@@ -3527,6 +3842,8 @@ function ConfiguredWorkspace({
         lockKind: true,
         taskStatus: afterSnapshot.taskStatus,
         noteCompleted: false,
+        dueAt: afterSnapshot.dueAt,
+        recurrenceFrequency: afterSnapshot.recurrenceFrequency,
       });
 
       historyEntries.push({
@@ -3585,18 +3902,23 @@ function ConfiguredWorkspace({
       const beforeSnapshot = toNodeValueSnapshot(node);
       const afterSnapshot: NodeValueSnapshot =
         node.kind === "task"
-          ? {
+          ? (getRecurringCompletionTransition(node, recurringCompletionMode) ??
+            withNodeScheduleSnapshot({
               text: node.text,
               kind: "task",
               taskStatus: node.taskStatus === "done" ? "todo" : "done",
               noteCompleted: false,
-            }
-          : {
+              dueAt: node.dueAt ?? null,
+              recurrenceFrequency: getNodeRecurrenceFrequency(node),
+            }, node))
+          : withNodeScheduleSnapshot({
               text: node.text,
               kind: "note",
               taskStatus: null,
               noteCompleted: !isNodeNoteCompleted(node),
-            };
+              dueAt: null,
+              recurrenceFrequency: null,
+            }, node);
 
       await updateNode({
         ownerKey,
@@ -3606,6 +3928,8 @@ function ConfiguredWorkspace({
         lockKind: true,
         taskStatus: afterSnapshot.taskStatus,
         noteCompleted: afterSnapshot.noteCompleted,
+        dueAt: afterSnapshot.dueAt,
+        recurrenceFrequency: afterSnapshot.recurrenceFrequency,
       });
 
       historyEntries.push({
@@ -3635,7 +3959,7 @@ function ConfiguredWorkspace({
       focusAfterUndoId: historyEntries[0]!.focusEditorId,
       focusAfterRedoId: historyEntries[historyEntries.length - 1]!.focusEditorId,
     });
-  }, [history, ownerKey, pagesById, selectSingleNode, selectedNodeIds, updateNode, visibleNodeOrder, workspaceNodeMap]);
+  }, [history, ownerKey, pagesById, recurringCompletionMode, selectSingleNode, selectedNodeIds, updateNode, visibleNodeOrder, workspaceNodeMap]);
 
   const deleteHighlightedNodes = useCallback(async () => {
     if (selectedNodeIds.size === 0) {
@@ -4169,6 +4493,10 @@ function ConfiguredWorkspace({
 
       if (isModifier && normalizedKey === "k") {
         event.preventDefault();
+        setActionContextNodeId(
+          getNodeIdFromTarget(event.target) ??
+            (selectedNodeIds.size === 1 ? ([...selectedNodeIds][0] ?? null) : null),
+        );
         openPalette("actions");
         return;
       }
@@ -4834,6 +5162,7 @@ function ConfiguredWorkspace({
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
                       onOpenFindQuery={openFindPaletteForQuery}
+                      recurringCompletionMode={recurringCompletionMode}
                       mobileIndentStep={SIDEBAR_MOBILE_INDENT_STEP}
                     />
                   </div>
@@ -5239,6 +5568,7 @@ function ConfiguredWorkspace({
                         onOpenNode={handleOpenLinkedNode}
                         onOpenTag={openFindPaletteForQuery}
                         onOpenFindQuery={openFindPaletteForQuery}
+                        recurringCompletionMode={recurringCompletionMode}
                       />
                     </div>
                     <aside className="min-w-0 border-t border-[var(--workspace-border-subtle)] pt-6 lg:sticky lg:top-6 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
@@ -5280,6 +5610,7 @@ function ConfiguredWorkspace({
                           onOpenNode={handleOpenLinkedNode}
                           onOpenTag={openFindPaletteForQuery}
                           onOpenFindQuery={openFindPaletteForQuery}
+                          recurringCompletionMode={recurringCompletionMode}
                           compact
                           showHeader={false}
                         />
@@ -5330,6 +5661,7 @@ function ConfiguredWorkspace({
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
                       onOpenFindQuery={openFindPaletteForQuery}
+                      recurringCompletionMode={recurringCompletionMode}
                       depthOffset={sectionDepthOffset}
                       statusMessage={chatStatus}
                       action={
@@ -5382,6 +5714,7 @@ function ConfiguredWorkspace({
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
                       onOpenFindQuery={openFindPaletteForQuery}
+                      recurringCompletionMode={recurringCompletionMode}
                       depthOffset={sectionDepthOffset}
                     />
                   </div>
@@ -5426,6 +5759,7 @@ function ConfiguredWorkspace({
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
                       onOpenFindQuery={openFindPaletteForQuery}
+                      recurringCompletionMode={recurringCompletionMode}
                       depthOffset={sectionDepthOffset}
                     />
                   </div>
@@ -5467,6 +5801,7 @@ function ConfiguredWorkspace({
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
                       onOpenFindQuery={openFindPaletteForQuery}
+                      recurringCompletionMode={recurringCompletionMode}
                       depthOffset={sectionDepthOffset}
                       statusMessage={journalFeedbackStatus}
                       action={
@@ -5522,6 +5857,7 @@ function ConfiguredWorkspace({
                         onOpenNode={handleOpenLinkedNode}
                         onOpenTag={openFindPaletteForQuery}
                         onOpenFindQuery={openFindPaletteForQuery}
+                        recurringCompletionMode={recurringCompletionMode}
                         depthOffset={sectionDepthOffset}
                       />
                     </div>
@@ -5563,6 +5899,7 @@ function ConfiguredWorkspace({
                         onOpenNode={handleOpenLinkedNode}
                         onOpenTag={openFindPaletteForQuery}
                         onOpenFindQuery={openFindPaletteForQuery}
+                        recurringCompletionMode={recurringCompletionMode}
                         depthOffset={sectionDepthOffset}
                       />
                     </div>
@@ -5605,6 +5942,7 @@ function ConfiguredWorkspace({
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
                       onOpenFindQuery={openFindPaletteForQuery}
+                      recurringCompletionMode={recurringCompletionMode}
                     />
                   </div>
                 )}
@@ -5663,7 +6001,10 @@ function ConfiguredWorkspace({
               "mx-auto mt-16 w-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]",
               paletteMode === "migration"
                 ? "max-w-6xl"
-                : paletteMode === "chat" || paletteMode === "archive" || paletteMode === "screenshotImport"
+                : paletteMode === "chat" ||
+                    paletteMode === "archive" ||
+                    paletteMode === "screenshotImport" ||
+                    paletteMode === "taskSchedule"
                   ? "max-w-4xl"
                   : "max-w-2xl",
             )}
@@ -5774,8 +6115,23 @@ function ConfiguredWorkspace({
                     Import Screenshot
                   </button>
                 ) : null}
+                {paletteMode === "taskSchedule" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaletteMode("taskSchedule");
+                    }}
+                    className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition"
+                  >
+                    Task Schedule
+                  </button>
+                ) : null}
               </div>
-              {paletteMode === "chat" || paletteMode === "archive" || paletteMode === "migration" || paletteMode === "screenshotImport" ? (
+              {paletteMode === "chat" ||
+              paletteMode === "archive" ||
+              paletteMode === "migration" ||
+              paletteMode === "screenshotImport" ||
+              paletteMode === "taskSchedule" ? (
                 <p className="text-sm text-[var(--workspace-text-subtle)]">
                   {paletteMode === "chat"
                     ? "Persistent workspace chat"
@@ -5783,7 +6139,9 @@ function ConfiguredWorkspace({
                       ? "Search archived pages and nodes without mixing them into active workspace results."
                       : paletteMode === "migration"
                         ? "Snapshot imports, review suggested changes, and explicitly approve each chunk before it touches the workspace."
-                        : "Paste an outliner screenshot, preview the translated structure, then import it as real nodes."}
+                        : paletteMode === "screenshotImport"
+                          ? "Paste an outliner screenshot, preview the translated structure, then import it as real nodes."
+                          : "Set a due date, recurrence, and recurring completion rule for the current task."}
                 </p>
               ) : (
                 <div className="flex items-center gap-3">
@@ -5815,7 +6173,8 @@ function ConfiguredWorkspace({
                 paletteMode === "chat" ||
                   paletteMode === "archive" ||
                   paletteMode === "migration" ||
-                  paletteMode === "screenshotImport"
+                  paletteMode === "screenshotImport" ||
+                  paletteMode === "taskSchedule"
                   ? "overflow-hidden"
                   : "max-h-[420px] overflow-y-auto py-2",
               )}
@@ -6009,6 +6368,29 @@ function ConfiguredWorkspace({
                     setNodeSearchResults([]);
                   }}
                 />
+              ) : paletteMode === "taskSchedule" ? (
+                taskScheduleTargetNode ? (
+                  <TaskSchedulePanel
+                    taskTitle={taskScheduleTargetNode.text}
+                    dueAt={taskScheduleTargetNode.dueAt ?? null}
+                    recurrenceFrequency={getNodeRecurrenceFrequency(taskScheduleTargetNode)}
+                    recurringCompletionMode={recurringCompletionMode}
+                    onRecurringCompletionModeChange={setRecurringCompletionMode}
+                    onSave={(args) => handleSaveTaskSchedule(args)}
+                    onSaved={() => {
+                      setCopySnackbarMessage("Task schedule saved");
+                      setPaletteOpen(false);
+                      setPaletteQuery("");
+                      setPaletteMode("pages");
+                      setTextSearchResults([]);
+                      setNodeSearchResults([]);
+                    }}
+                  />
+                ) : (
+                  <div className="px-5 py-8 text-sm text-[var(--workspace-text-subtle)]">
+                    Highlight a task, or open the command palette while your caret is inside a task, then choose <span className="text-[var(--workspace-text)]">Set Task Schedule</span>.
+                  </div>
+                )
               ) : null}
             </div>
           </div>
@@ -6063,6 +6445,7 @@ function PageSection({
   onOpenNode,
   onOpenTag,
   onOpenFindQuery,
+  recurringCompletionMode,
   depthOffset = 0,
   mobileIndentStep = 0,
   action = null,
@@ -6110,6 +6493,7 @@ function PageSection({
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   onOpenTag: (tag: string) => void;
   onOpenFindQuery: (query: string) => void;
+  recurringCompletionMode: RecurringCompletionMode;
   depthOffset?: number;
   mobileIndentStep?: number;
   action?: ReactNode;
@@ -6188,6 +6572,7 @@ function PageSection({
           onOpenNode={onOpenNode}
           onOpenTag={onOpenTag}
           onOpenFindQuery={onOpenFindQuery}
+          recurringCompletionMode={recurringCompletionMode}
           mobileIndentStep={mobileIndentStep}
         />
       </div>
@@ -6233,6 +6618,7 @@ function OutlineNodeList({
   onOpenNode,
   onOpenTag,
   onOpenFindQuery,
+  recurringCompletionMode,
   mobileIndentStep = 0,
 }: {
   nodes: TreeNode[];
@@ -6276,6 +6662,7 @@ function OutlineNodeList({
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   onOpenTag: (tag: string) => void;
   onOpenFindQuery: (query: string) => void;
+  recurringCompletionMode: RecurringCompletionMode;
   mobileIndentStep?: number;
 }) {
   return (
@@ -6356,6 +6743,7 @@ function OutlineNodeList({
           onOpenNode={onOpenNode}
           onOpenTag={onOpenTag}
           onOpenFindQuery={onOpenFindQuery}
+          recurringCompletionMode={recurringCompletionMode}
           mobileIndentStep={mobileIndentStep}
         />
       ))}
@@ -7197,6 +7585,7 @@ function OutlineNodeEditor({
   onOpenNode,
   onOpenTag,
   onOpenFindQuery,
+  recurringCompletionMode,
   mobileIndentStep = 0,
 }: {
   node: TreeNode;
@@ -7245,6 +7634,7 @@ function OutlineNodeEditor({
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   onOpenTag: (tag: string) => void;
   onOpenFindQuery: (query: string) => void;
+  recurringCompletionMode: RecurringCompletionMode;
   mobileIndentStep?: number;
 }) {
   const history = useWorkspaceHistory();
@@ -7378,6 +7768,10 @@ function OutlineNodeEditor({
   const isCollapsed = hasChildren && collapsedNodeIds.has(node._id);
   const isTaskRow = node.kind === "task";
   const isHeadingRow = isHeadingLine;
+  const recurrenceFrequency = getNodeRecurrenceFrequency(node);
+  const dueDateLabel = node.kind === "task" ? formatDueDate(node.dueAt) : "";
+  const isOverdueTask =
+    node.kind === "task" && !isCompleted && isOverdueDueDate(node.dueAt);
   const headingRowMinHeightClass = getHeadingRowMinHeightClass(headingSyntax.level);
   const headingMarkerOffsetClass = getHeadingMarkerOffsetClass(headingSyntax.level);
   const headingControlOffsetClass = getHeadingControlOffsetClass(headingSyntax.level);
@@ -7829,18 +8223,23 @@ function OutlineNodeEditor({
       return null;
     }
 
-    const beforeSnapshot: NodeValueSnapshot = {
-      ...toNodeValueSnapshot(beforeParsed),
-      noteCompleted:
-        beforeParsed.kind === "note"
-          ? isNoteCompleted
-          : false,
-    };
+    const beforeSnapshot = withNodeScheduleSnapshot(
+      {
+        ...toNodeValueSnapshot(beforeParsed),
+        noteCompleted:
+          beforeParsed.kind === "note"
+            ? isNoteCompleted
+            : false,
+      },
+      node,
+    );
     if (
       beforeSnapshot.text === afterValue.text &&
       beforeSnapshot.kind === afterValue.kind &&
       beforeSnapshot.taskStatus === afterValue.taskStatus &&
-      beforeSnapshot.noteCompleted === afterValue.noteCompleted
+      beforeSnapshot.noteCompleted === afterValue.noteCompleted &&
+      beforeSnapshot.dueAt === afterValue.dueAt &&
+      beforeSnapshot.recurrenceFrequency === afterValue.recurrenceFrequency
     ) {
       return null;
     }
@@ -7866,12 +8265,15 @@ function OutlineNodeEditor({
       return {
         deleted: false,
         updateEntry: null,
-        parsed: toNodeValueSnapshot({
-          text: node.text,
-          kind: node.kind as "note" | "task",
-          taskStatus: (node.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
-          noteCompleted: isNoteCompleted,
-        }),
+        parsed: withNodeScheduleSnapshot(
+          toNodeValueSnapshot({
+            text: node.text,
+            kind: node.kind as "note" | "task",
+            taskStatus: (node.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
+            noteCompleted: isNoteCompleted,
+          }),
+          node,
+        ),
       };
     }
 
@@ -7900,13 +8302,16 @@ function OutlineNodeEditor({
       };
     }
 
-    const nextSnapshot: NodeValueSnapshot = {
-      ...toNodeValueSnapshot(parsed),
-      noteCompleted:
-        parsed.kind === "note"
-          ? isNoteCompleted
-          : false,
-    };
+    const nextSnapshot = withNodeScheduleSnapshot(
+      {
+        ...toNodeValueSnapshot(parsed),
+        noteCompleted:
+          parsed.kind === "note"
+            ? isNoteCompleted
+            : false,
+      },
+      node,
+    );
     if (
       parsed.text !== node.text ||
       parsed.kind !== node.kind ||
@@ -7915,10 +8320,12 @@ function OutlineNodeEditor({
       await updateNode({
         ownerKey,
         nodeId: node._id as Id<"nodes">,
-        text: parsed.text,
-        kind: parsed.kind,
-        taskStatus: parsed.taskStatus,
-        noteCompleted: parsed.kind === "note" ? isNoteCompleted : false,
+        text: nextSnapshot.text,
+        kind: nextSnapshot.kind,
+        taskStatus: nextSnapshot.taskStatus,
+        noteCompleted: nextSnapshot.noteCompleted,
+        dueAt: nextSnapshot.dueAt,
+        recurrenceFrequency: nextSnapshot.recurrenceFrequency,
       });
     }
 
@@ -7953,18 +8360,33 @@ function OutlineNodeEditor({
       return;
     }
 
-    const beforeSnapshot: NodeValueSnapshot = {
+    const beforeSnapshot = withNodeScheduleSnapshot({
       text: saveResult.parsed.text,
       kind: "task",
       taskStatus: (node.taskStatus ?? "todo") as NodeValueSnapshot["taskStatus"],
       noteCompleted: false,
-    };
-    const afterSnapshot: NodeValueSnapshot = {
-      text: saveResult.parsed.text,
-      kind: "task",
-      taskStatus: node.taskStatus === "done" ? "todo" : "done",
-      noteCompleted: false,
-    };
+      dueAt: node.dueAt ?? null,
+      recurrenceFrequency,
+    }, node);
+    const afterSnapshot =
+      getRecurringCompletionTransition(
+        {
+          text: saveResult.parsed.text,
+          kind: node.kind,
+          taskStatus: node.taskStatus,
+          dueAt: node.dueAt,
+          sourceMeta: node.sourceMeta,
+        },
+        recurringCompletionMode,
+      ) ??
+      withNodeScheduleSnapshot({
+        text: saveResult.parsed.text,
+        kind: "task",
+        taskStatus: node.taskStatus === "done" ? "todo" : "done",
+        noteCompleted: false,
+        dueAt: node.dueAt ?? null,
+        recurrenceFrequency,
+      }, node);
 
     await updateNode({
       ownerKey,
@@ -7974,6 +8396,8 @@ function OutlineNodeEditor({
       lockKind: true,
       taskStatus: afterSnapshot.taskStatus,
       noteCompleted: false,
+      dueAt: afterSnapshot.dueAt,
+      recurrenceFrequency: afterSnapshot.recurrenceFrequency,
     });
     history.commitTrackedValue(
       editorId,
@@ -8019,18 +8443,22 @@ function OutlineNodeEditor({
       return;
     }
 
-    const beforeSnapshot: NodeValueSnapshot = {
+    const beforeSnapshot = withNodeScheduleSnapshot({
       text: saveResult.parsed.text,
       kind: "note",
       taskStatus: null,
       noteCompleted: isNoteCompleted,
-    };
-    const afterSnapshot: NodeValueSnapshot = {
+      dueAt: null,
+      recurrenceFrequency: null,
+    }, node);
+    const afterSnapshot = withNodeScheduleSnapshot({
       text: saveResult.parsed.text,
       kind: "note",
       taskStatus: null,
       noteCompleted: !isNoteCompleted,
-    };
+      dueAt: null,
+      recurrenceFrequency: null,
+    }, node);
 
     await updateNode({
       ownerKey,
@@ -8040,6 +8468,8 @@ function OutlineNodeEditor({
       lockKind: true,
       taskStatus: null,
       noteCompleted: afterSnapshot.noteCompleted,
+      dueAt: afterSnapshot.dueAt,
+      recurrenceFrequency: afterSnapshot.recurrenceFrequency,
     });
     history.commitTrackedValue(
       editorId,
@@ -8082,20 +8512,24 @@ function OutlineNodeEditor({
     }
 
     const beforeSnapshot = saveResult.parsed;
-    const afterSnapshot: NodeValueSnapshot =
+    const afterSnapshot =
       beforeSnapshot.kind === "task"
-        ? {
+        ? withNodeScheduleSnapshot({
             text: beforeSnapshot.text,
             kind: "note",
             taskStatus: null,
             noteCompleted: false,
-          }
-        : {
+            dueAt: null,
+            recurrenceFrequency: null,
+          }, beforeSnapshot)
+        : withNodeScheduleSnapshot({
             text: beforeSnapshot.text,
             kind: "task",
             taskStatus: "todo",
             noteCompleted: false,
-          };
+            dueAt: null,
+            recurrenceFrequency: null,
+          }, beforeSnapshot);
 
     await updateNode({
       ownerKey,
@@ -8104,6 +8538,8 @@ function OutlineNodeEditor({
       kind: afterSnapshot.kind,
       lockKind: true,
       taskStatus: afterSnapshot.taskStatus,
+      dueAt: afterSnapshot.dueAt,
+      recurrenceFrequency: afterSnapshot.recurrenceFrequency,
     });
     history.commitTrackedValue(
       editorId,
@@ -8184,7 +8620,7 @@ function OutlineNodeEditor({
 
     const updateEntry = buildUpdateEntry(
       beforeValue,
-      toNodeValueSnapshot(firstParsed),
+      withNodeScheduleSnapshot(toNodeValueSnapshot(firstParsed), node),
     );
     const createdNodes = result.createdNodes.map((createdNode, index) =>
       toCreatedNodeSnapshot(
@@ -8899,6 +9335,35 @@ function OutlineNodeEditor({
                   : "items-start pt-[2px]",
             )}
           >
+            {node.kind === "task" && (node.dueAt || recurrenceFrequency) ? (
+              <div className="flex items-center gap-1 pt-px text-[10px] leading-none">
+                {node.dueAt ? (
+                  <span
+                    className={clsx(
+                      "rounded-full border px-1.5 py-1 text-[var(--workspace-text-faint)]",
+                      isOverdueTask
+                        ? "border-[var(--workspace-danger)]/50 text-[var(--workspace-danger)]"
+                        : "border-[var(--workspace-border)]",
+                      isCompleted ? "opacity-70" : "",
+                    )}
+                    title={isOverdueTask ? `Overdue since ${dueDateLabel}` : `Due ${dueDateLabel}`}
+                  >
+                    {isOverdueTask ? `${dueDateLabel} overdue` : dueDateLabel}
+                  </span>
+                ) : null}
+                {recurrenceFrequency ? (
+                  <span
+                    className={clsx(
+                      "rounded-full border border-[var(--workspace-border)] px-1.5 py-1 text-[var(--workspace-text-faint)]",
+                      isCompleted ? "opacity-70" : "",
+                    )}
+                    title={`Repeats ${getRecurrenceLabel(recurrenceFrequency).toLowerCase()}`}
+                  >
+                    {getRecurrenceLabel(recurrenceFrequency)}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
             {nodeBacklinkCount > 0 ? (
               <button
                 type="button"
@@ -9005,6 +9470,7 @@ function OutlineNodeEditor({
           onOpenNode={onOpenNode}
           onOpenTag={onOpenTag}
           onOpenFindQuery={onOpenFindQuery}
+          recurringCompletionMode={recurringCompletionMode}
           mobileIndentStep={mobileIndentStep}
         />
           </div>

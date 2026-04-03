@@ -15,7 +15,7 @@ import {
   setNodeTreeArchivedState,
   syncLinksForNode,
 } from "./lib/workspace";
-import { nodeKindValidator, nullableNodeIdValidator, priorityValidator, taskStatusValidator } from "./lib/validators";
+import { nodeKindValidator, nullableNodeIdValidator, priorityValidator, recurrenceFrequencyValidator, taskStatusValidator } from "./lib/validators";
 import { rewriteMatchingPageWikiLinks } from "../lib/domain/links";
 import { extractTagMatches } from "../lib/domain/tags";
 
@@ -277,6 +277,8 @@ const nodeCreateInputValidator = v.object({
   lockKind: v.optional(v.boolean()),
   noteCompleted: v.optional(v.boolean()),
   taskStatus: v.optional(taskStatusValidator),
+  dueAt: v.optional(v.union(v.number(), v.null())),
+  recurrenceFrequency: v.optional(recurrenceFrequencyValidator),
 });
 
 async function filterVisibleLinks(ctx: QueryCtx, links: Doc<"links">[]) {
@@ -1463,6 +1465,8 @@ export const createNode = mutation({
     text: v.optional(v.string()),
     kind: v.optional(nodeKindValidator),
     taskStatus: v.optional(taskStatusValidator),
+    dueAt: v.optional(v.union(v.number(), v.null())),
+    recurrenceFrequency: v.optional(recurrenceFrequencyValidator),
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
@@ -1483,10 +1487,12 @@ export const createNode = mutation({
       kind: args.kind ?? "note",
       taskStatus: args.kind === "task" ? (args.taskStatus ?? "todo") : null,
       priority: null,
-      dueAt: null,
+      dueAt: args.kind === "task" ? (args.dueAt ?? null) : null,
       archived: false,
       sourceMeta: {
         sourceType: "manual",
+        recurrenceFrequency:
+          args.kind === "task" ? (args.recurrenceFrequency ?? null) : null,
       },
       createdAt: now,
       updatedAt: now,
@@ -1544,7 +1550,7 @@ export const createNodesBatch = mutation({
         kind: entry.kind ?? "note",
         taskStatus: entry.kind === "task" ? (entry.taskStatus ?? "todo") : null,
         priority: null,
-        dueAt: null,
+        dueAt: entry.kind === "task" ? (entry.dueAt ?? null) : null,
         archived: false,
         sourceMeta: {
           sourceType: "manual",
@@ -1553,6 +1559,8 @@ export const createNodesBatch = mutation({
             entry.kind === "note"
               ? (entry.noteCompleted ?? false)
               : false,
+          recurrenceFrequency:
+            entry.kind === "task" ? (entry.recurrenceFrequency ?? null) : null,
         },
         createdAt: now,
         updatedAt: now,
@@ -1590,6 +1598,7 @@ export const updateNode = mutation({
     noteCompleted: v.optional(v.boolean()),
     priority: v.optional(priorityValidator),
     dueAt: v.optional(v.union(v.number(), v.null())),
+    recurrenceFrequency: v.optional(recurrenceFrequencyValidator),
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
@@ -1621,7 +1630,12 @@ export const updateNode = mutation({
       patch.dueAt = args.dueAt;
     }
 
-    if (args.lockKind !== undefined || args.noteCompleted !== undefined || args.kind !== undefined) {
+    if (
+      args.lockKind !== undefined ||
+      args.noteCompleted !== undefined ||
+      args.kind !== undefined ||
+      args.recurrenceFrequency !== undefined
+    ) {
       const sourceMeta =
         node.sourceMeta && typeof node.sourceMeta === "object"
           ? { ...(node.sourceMeta as Record<string, unknown>) }
@@ -1635,6 +1649,12 @@ export const updateNode = mutation({
         sourceMeta.noteCompleted = args.noteCompleted;
       } else if (args.kind === "task") {
         sourceMeta.noteCompleted = false;
+      }
+
+      if (args.recurrenceFrequency !== undefined) {
+        sourceMeta.recurrenceFrequency = args.recurrenceFrequency;
+      } else if (args.kind === "note") {
+        sourceMeta.recurrenceFrequency = null;
       }
 
       patch.sourceMeta = sourceMeta;

@@ -15,6 +15,12 @@ import {
   buildRootEmbeddingInput,
 } from "../lib/domain/embeddings";
 import { splitTextForInlineFormatting } from "../lib/domain/inlineFormatting";
+import {
+  advanceRecurringDueDate,
+  dateInputValueToTimestamp,
+  isOverdueDueDate,
+  timestampToDateInputValue,
+} from "../lib/domain/recurrence";
 
 test("extractLinks finds wiki links and node refs", () => {
   const links = extractLinks(
@@ -251,6 +257,48 @@ test("splitTextForInlineFormatting applies strike, italic, and bold markers", ()
     italic: false,
     bold: false,
   });
+});
+
+test("recurring due dates can advance from the original due date or today", () => {
+  const dueAt = new Date(2026, 3, 1, 12, 0, 0, 0).getTime();
+
+  assert.equal(
+    advanceRecurringDueDate({
+      dueAt,
+      frequency: "weekly",
+      mode: "dueDate",
+    }),
+    new Date(2026, 3, 8, 12, 0, 0, 0).getTime(),
+  );
+
+  assert.equal(
+    advanceRecurringDueDate({
+      dueAt,
+      frequency: "weekly",
+      mode: "today",
+      now: new Date(2026, 3, 10, 8, 30, 0, 0),
+    }),
+    new Date(2026, 3, 17, 12, 0, 0, 0).getTime(),
+  );
+});
+
+test("due dates round-trip through date input helpers and overdue checks", () => {
+  const timestamp = dateInputValueToTimestamp("2026-04-03");
+  assert.equal(timestampToDateInputValue(timestamp), "2026-04-03");
+  assert.equal(
+    isOverdueDueDate(
+      timestamp,
+      new Date(2026, 3, 4, 8, 0, 0, 0),
+    ),
+    true,
+  );
+  assert.equal(
+    isOverdueDueDate(
+      timestamp,
+      new Date(2026, 3, 3, 8, 0, 0, 0),
+    ),
+    false,
+  );
 });
 
 test("parseMarkdownFile converts headings, bullets, and tasks into nodes", () => {

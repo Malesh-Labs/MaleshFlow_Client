@@ -14,6 +14,13 @@ export const priorityValidator = v.union(
   v.literal("high"),
   v.null(),
 );
+export const recurrenceFrequencyValidator = v.union(
+  v.literal("daily"),
+  v.literal("weekly"),
+  v.literal("monthly"),
+  v.literal("yearly"),
+  v.null(),
+);
 export const nullableNodeIdValidator = v.union(v.id("nodes"), v.null());
 export const nullablePageIdValidator = v.union(v.id("pages"), v.null());
 export const nullableLinkKindValidator = v.union(
