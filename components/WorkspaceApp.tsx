@@ -51,6 +51,8 @@ import {
   useWorkspaceHistory,
   useWorkspaceHistoryController,
 } from "@/components/workspaceHistory";
+import { ArchiveSearchPanel } from "@/components/ArchiveSearchPanel";
+import { MigrationPanel } from "@/components/MigrationPanel";
 
 const SKIP = "skip" as const;
 const SIDEBAR_SECTIONS = [
@@ -93,8 +95,23 @@ type SidebarTreeResult = {
   linkedPageIds: Id<"pages">[];
   nodeBacklinkCounts: Record<string, number>;
 };
-type PaletteMode = "pages" | "find" | "nodes" | "chat" | "actions";
-const PALETTE_MODE_ORDER: PaletteMode[] = ["pages", "find", "nodes", "chat", "actions"];
+type PaletteMode =
+  | "pages"
+  | "find"
+  | "nodes"
+  | "chat"
+  | "actions"
+  | "archive"
+  | "migration";
+const PALETTE_MODE_ORDER: PaletteMode[] = [
+  "pages",
+  "find",
+  "nodes",
+  "chat",
+  "actions",
+  "archive",
+  "migration",
+];
 type NodeSearchResult = {
   node: Doc<"nodes">;
   page: PageDoc | null;
@@ -2942,6 +2959,26 @@ function ConfiguredWorkspace({
         } satisfies ActionPaletteResult;
       }),
       {
+        key: "migration",
+        title: "Migration",
+        subtitle: "Snapshot Dynalist, WorkFlowy, or Logseq and review chunk-by-chunk changes before applying them.",
+        keywords: ["migration", "import", "dynalist", "workflowy", "logseq", "archive"],
+        actionLabel: "Open",
+        onSelect: () => {
+          switchPaletteMode("migration");
+        },
+      },
+      {
+        key: "search-archive",
+        title: "Search Archive",
+        subtitle: "Search archived pages and nodes without mixing them into active workspace results.",
+        keywords: ["archive", "search", "find", "semantic", "archived"],
+        actionLabel: "Open",
+        onSelect: () => {
+          switchPaletteMode("archive");
+        },
+      },
+      {
         key: "rebuild-embeddings",
         title: isRebuildingEmbeddings ? "Rebuilding Embeddings…" : "Rebuild Embeddings",
         subtitle: embeddingRebuildStatus || embeddingProgressLabel,
@@ -2993,6 +3030,7 @@ function ConfiguredWorkspace({
     isRebuildingEmbeddings,
     paletteQuery,
     setOwnerKey,
+    switchPaletteMode,
   ]);
 
   const activePaletteResultsCount =
@@ -3748,12 +3786,22 @@ function ConfiguredWorkspace({
         return;
       }
 
+      if (paletteMode === "archive" || paletteMode === "migration") {
+        return;
+      }
+
       paletteInputRef.current?.focus();
     }, 0);
   }, [paletteOpen, paletteMode]);
 
   useEffect(() => {
-    if (!paletteOpen || paletteMode === "chat" || activePaletteResultsCount === 0) {
+    if (
+      !paletteOpen ||
+      paletteMode === "chat" ||
+      paletteMode === "archive" ||
+      paletteMode === "migration" ||
+      activePaletteResultsCount === 0
+    ) {
       return;
     }
 
@@ -5515,7 +5563,11 @@ function ConfiguredWorkspace({
           <div
             className={clsx(
               "mx-auto mt-16 w-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]",
-              paletteMode === "chat" ? "max-w-4xl" : "max-w-2xl",
+              paletteMode === "migration"
+                ? "max-w-6xl"
+                : paletteMode === "chat" || paletteMode === "archive"
+                  ? "max-w-4xl"
+                  : "max-w-2xl",
             )}
             onClick={(event) => event.stopPropagation()}
           >
@@ -5591,10 +5643,36 @@ function ConfiguredWorkspace({
                 >
                   Actions
                 </button>
+                {paletteMode === "archive" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      switchPaletteMode("archive");
+                    }}
+                    className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition"
+                  >
+                    Search Archive
+                  </button>
+                ) : null}
+                {paletteMode === "migration" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      switchPaletteMode("migration");
+                    }}
+                    className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition"
+                  >
+                    Migration
+                  </button>
+                ) : null}
               </div>
-              {paletteMode === "chat" ? (
+              {paletteMode === "chat" || paletteMode === "archive" || paletteMode === "migration" ? (
                 <p className="text-sm text-[var(--workspace-text-subtle)]">
-                  Persistent workspace chat
+                  {paletteMode === "chat"
+                    ? "Persistent workspace chat"
+                    : paletteMode === "archive"
+                      ? "Search archived pages and nodes without mixing them into active workspace results."
+                      : "Snapshot imports, review suggested changes, and explicitly approve each chunk before it touches the workspace."}
                 </p>
               ) : (
                 <div className="flex items-center gap-3">
@@ -5623,8 +5701,8 @@ function ConfiguredWorkspace({
             <div
               ref={paletteResultsRef}
               className={clsx(
-                paletteMode === "chat"
-                  ? "h-[min(72vh,720px)]"
+                paletteMode === "chat" || paletteMode === "archive" || paletteMode === "migration"
+                  ? "overflow-hidden"
                   : "max-h-[420px] overflow-y-auto py-2",
               )}
             >
@@ -5796,6 +5874,13 @@ function ConfiguredWorkspace({
                   onOpenSource={handleOpenWorkspaceKnowledgeSource}
                   onCycleMode={cyclePaletteMode}
                 />
+              ) : paletteMode === "archive" ? (
+                <ArchiveSearchPanel
+                  ownerKey={ownerKey}
+                  onSelectResult={handleSelectNodeSearchResult}
+                />
+              ) : paletteMode === "migration" ? (
+                <MigrationPanel ownerKey={ownerKey} />
               ) : null}
             </div>
           </div>

@@ -8,23 +8,27 @@ export const fallbackTextSearch = internalQuery({
     query: v.string(),
     pageId: v.optional(v.id("pages")),
     limit: v.number(),
+    includeArchived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const rawNodes = args.pageId
       ? await ctx.db
           .query("nodes")
           .withIndex("by_page_archived", (query) =>
-            query.eq("pageId", args.pageId!).eq("archived", false),
+            query.eq("pageId", args.pageId!).eq("archived", args.includeArchived === true),
           )
           .collect()
-      : (await ctx.db.query("nodes").collect()).filter((node) => !node.archived);
+      : (await ctx.db.query("nodes").collect()).filter((node) =>
+          args.includeArchived === true ? node.archived : !node.archived,
+        );
     const pageIds = [...new Set(rawNodes.map((node) => node.pageId))];
     const pages = await Promise.all(pageIds.map((pageId) => ctx.db.get(pageId)));
     const pageMap = new Map(
       pages
         .filter(
           (page): page is Doc<"pages"> =>
-            Boolean(page) && !page!.archived,
+            Boolean(page) &&
+            (args.includeArchived === true ? page!.archived : !page!.archived),
         )
         .map((page) => [page._id, page]),
     );
@@ -60,6 +64,7 @@ export const fallbackTextSearch = internalQuery({
 export const hydrateEmbeddingMatches = internalQuery({
   args: {
     embeddingIds: v.array(v.id("nodeEmbeddings")),
+    includeArchived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const embeddings = await Promise.all(args.embeddingIds.map((embeddingId) => ctx.db.get(embeddingId)));
@@ -81,7 +86,8 @@ export const hydrateEmbeddingMatches = internalQuery({
       pages
         .filter(
           (page): page is Doc<"pages"> =>
-            Boolean(page) && !page!.archived,
+            Boolean(page) &&
+            (args.includeArchived === true ? page!.archived : !page!.archived),
         )
         .map((page) => [page._id, page]),
     );
@@ -89,7 +95,8 @@ export const hydrateEmbeddingMatches = internalQuery({
     return hydrated
       .filter(
         (entry): entry is { embedding: NonNullable<(typeof hydrated)[number]["embedding"]>; node: Doc<"nodes"> } =>
-          Boolean(entry.node) && !entry.node!.archived,
+          Boolean(entry.node) &&
+          (args.includeArchived === true ? entry.node!.archived : !entry.node!.archived),
       )
       .map((entry) => ({
         node: entry.node,

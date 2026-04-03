@@ -117,6 +117,113 @@ export default defineSchema({
     completedAt: v.optional(v.number()),
   }).index("by_createdAt", ["createdAt"]),
 
+  migrationRuns: defineTable({
+    sourceType: v.union(
+      v.literal("dynalist"),
+      v.literal("workflowy"),
+      v.literal("logseq"),
+    ),
+    status: v.union(
+      v.literal("draft"),
+      v.literal("reviewing"),
+      v.literal("completed"),
+      v.literal("error"),
+    ),
+    title: v.string(),
+    sourceSummary: v.string(),
+    lessonsDoc: v.string(),
+    totalChunks: v.number(),
+    readyChunks: v.number(),
+    reviewChunks: v.number(),
+    appliedChunks: v.number(),
+    skippedChunks: v.number(),
+    errorChunks: v.number(),
+    sourceDocumentCount: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+    lastError: v.optional(v.string()),
+  })
+    .index("by_createdAt", ["createdAt"])
+    .index("by_status_updatedAt", ["status", "updatedAt"]),
+
+  migrationSourceDocuments: defineTable({
+    runId: v.id("migrationRuns"),
+    sourceType: v.union(
+      v.literal("dynalist"),
+      v.literal("workflowy"),
+      v.literal("logseq"),
+    ),
+    sourceDocumentId: v.string(),
+    title: v.string(),
+    sourcePath: v.string(),
+    detectedJournalDate: v.union(v.string(), v.null()),
+    order: v.number(),
+    metadata: v.optional(v.any()),
+    carryForwardPlan: v.optional(v.any()),
+    destinationPageId: v.union(v.id("pages"), v.null()),
+    destinationPageTitle: v.union(v.string(), v.null()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_run_and_order", ["runId", "order"])
+    .index("by_run_and_source_document_id", ["runId", "sourceDocumentId"]),
+
+  migrationChunks: defineTable({
+    runId: v.id("migrationRuns"),
+    sourceDocumentEntryId: v.id("migrationSourceDocuments"),
+    sourceDocumentId: v.string(),
+    order: v.number(),
+    lineCount: v.number(),
+    ancestorChain: v.any(),
+    roots: v.any(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("ready"),
+      v.literal("needs_review"),
+      v.literal("approved"),
+      v.literal("applied"),
+      v.literal("skipped"),
+      v.literal("error"),
+    ),
+    chunkText: v.string(),
+    preview: v.array(v.string()),
+    suggestion: v.optional(v.any()),
+    approvedPlan: v.optional(v.any()),
+    guidance: v.optional(v.string()),
+    matchedExampleId: v.union(v.id("migrationExamples"), v.null()),
+    createdPageId: v.union(v.id("pages"), v.null()),
+    createdNodeCount: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    appliedAt: v.optional(v.number()),
+    lastError: v.optional(v.string()),
+  })
+    .index("by_run_and_order", ["runId", "order"])
+    .index("by_run_and_status_and_order", ["runId", "status", "order"])
+    .index("by_source_document_entry_and_order", ["sourceDocumentEntryId", "order"]),
+
+  migrationExamples: defineTable({
+    sourceType: v.union(
+      v.literal("dynalist"),
+      v.literal("workflowy"),
+      v.literal("logseq"),
+    ),
+    summary: v.string(),
+    chunkText: v.string(),
+    guidance: v.string(),
+    approvedPlan: v.any(),
+    vector: v.array(v.float64()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_source_type_createdAt", ["sourceType", "createdAt"])
+    .vectorIndex("by_embedding", {
+      vectorField: "vector",
+      dimensions: 1536,
+      filterFields: ["sourceType"],
+    }),
+
   embeddingJobs: defineTable({
     nodeId: v.id("nodes"),
     status: v.union(

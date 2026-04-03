@@ -17,6 +17,8 @@ import type * as importExportData from "../importExportData.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as lib_workspace from "../lib/workspace.js";
+import type * as migration from "../migration.js";
+import type * as migrationData from "../migrationData.js";
 import type * as workspace from "../workspace.js";
 
 import type {
@@ -35,6 +37,8 @@ declare const fullApi: ApiFromModules<{
   "lib/auth": typeof lib_auth;
   "lib/validators": typeof lib_validators;
   "lib/workspace": typeof lib_workspace;
+  migration: typeof migration;
+  migrationData: typeof migrationData;
   workspace: typeof workspace;
 }>;
 

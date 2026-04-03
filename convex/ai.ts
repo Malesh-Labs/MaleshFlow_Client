@@ -126,6 +126,7 @@ async function runSemanticSearch(ctx: any, args: {
   query: string;
   pageId?: string;
   limit?: number;
+  includeArchived?: boolean;
 }) {
   const limit = Math.max(1, Math.min(args.limit ?? 8, 20));
   const vector = await createEmbedding(args.query);
@@ -144,11 +145,13 @@ async function runSemanticSearch(ctx: any, args: {
       query: args.query,
       pageId: args.pageId ?? undefined,
       limit,
+      includeArchived: args.includeArchived ?? false,
     });
   }
 
   return await ctx.runQuery(hydrateEmbeddingMatchesRef, {
     embeddingIds: matches.map((match: { _id: string }) => match._id),
+    includeArchived: args.includeArchived ?? false,
   });
 }
 
@@ -165,6 +168,7 @@ export const searchNodes = action({
       query: args.query,
       pageId: args.pageId as string | undefined,
       limit: args.limit,
+      includeArchived: false,
     });
   },
 });
@@ -182,6 +186,39 @@ export const findNodesText = action({
       query: args.query,
       pageId: args.pageId,
       limit: Math.max(1, Math.min(args.limit ?? 12, 20)),
+      includeArchived: false,
+    });
+  },
+});
+
+export const searchArchivedNodes = action({
+  args: {
+    ownerKey: v.string(),
+    query: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<unknown[]> => {
+    assertOwnerKey(args.ownerKey);
+    return await runSemanticSearch(ctx, {
+      query: args.query,
+      limit: args.limit,
+      includeArchived: true,
+    });
+  },
+});
+
+export const findArchivedNodesText = action({
+  args: {
+    ownerKey: v.string(),
+    query: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<unknown[]> => {
+    assertOwnerKey(args.ownerKey);
+    return await ctx.runQuery(fallbackTextSearchRef, {
+      query: args.query,
+      limit: Math.max(1, Math.min(args.limit ?? 12, 20)),
+      includeArchived: true,
     });
   },
 });
