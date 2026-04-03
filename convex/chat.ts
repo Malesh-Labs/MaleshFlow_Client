@@ -6,7 +6,7 @@ import { v } from "convex/values";
 import { z } from "zod";
 import { action } from "./_generated/server";
 import { api, internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { assertOwnerKey } from "./lib/auth";
 import { chatPlanSchema, type ChatPlan } from "../lib/domain/chat";
 
@@ -62,6 +62,10 @@ const getWorkspaceContextRef = internal.workspace.getWorkspaceContext as any;
 const getModelPageContextRef = internal.workspace.getModelPageContext as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const getJournalPageContextRef = internal.workspace.getJournalPageContext as any;
+const getResolvedLinkedTargetsForNodesRef =
+  internal.workspace.getResolvedLinkedTargetsForNodes as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const getLinkedKnowledgeContextRef = internal.workspace.getLinkedKnowledgeContext as any;
 
 function getOpenAIClient() {
   if (!process.env.OPENAI_API_KEY) {
@@ -71,6 +75,61 @@ function getOpenAIClient() {
   return new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
   });
+}
+
+async function buildExplicitLinkedContextForNodes(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ctx: any,
+  nodeIds: Id<"nodes">[],
+) {
+  const uniqueNodeIds = [...new Set(nodeIds)];
+  if (uniqueNodeIds.length === 0) {
+    return "";
+  }
+
+  const linkedTargets = (await ctx.runQuery(getResolvedLinkedTargetsForNodesRef, {
+    nodeIds: uniqueNodeIds,
+  })) as {
+    pageIds: Id<"pages">[];
+    nodeIds: Id<"nodes">[];
+  };
+
+  if (linkedTargets.pageIds.length === 0 && linkedTargets.nodeIds.length === 0) {
+    return "";
+  }
+
+  const linkedContext = (await ctx.runQuery(getLinkedKnowledgeContextRef, {
+    pageIds: linkedTargets.pageIds,
+    nodeIds: linkedTargets.nodeIds,
+  })) as {
+    pages: Array<{
+      page: Doc<"pages">;
+      representativeNode: Doc<"nodes"> | null;
+      content: string;
+    }>;
+    nodes: Array<{
+      node: Doc<"nodes">;
+      page: Doc<"pages">;
+      content: string;
+    }>;
+  };
+
+  return [
+    ...linkedContext.pages
+      .filter((entry) => entry.content.trim().length > 0)
+      .map((entry, index) =>
+        [
+          `Linked page [${index + 1}]: ${entry.page.title}`,
+          entry.content,
+        ].join("\n"),
+      ),
+    ...linkedContext.nodes.map((entry, index) =>
+      [
+        `Linked node [N${index + 1}] on ${entry.page.title}`,
+        entry.content.trim().length > 0 ? entry.content : entry.node.text || "(empty line)",
+      ].join("\n"),
+    ),
+  ].join("\n\n");
 }
 
 function buildHeuristicPlan(input: {
@@ -275,6 +334,13 @@ export const rewriteModelSection = action({
     const recentExampleLines = modelContext.recentExampleLines.map(
       (node: { text: string }) => node.text,
     );
+    const explicitLinkedContext = await buildExplicitLinkedContextForNodes(
+      ctx,
+      [
+        ...modelContext.modelLines.map((node: { _id: Id<"nodes"> }) => node._id),
+        ...modelContext.recentExampleLines.map((node: { _id: Id<"nodes"> }) => node._id),
+      ],
+    );
 
     const fallbackModelLines =
       existingModelLines.length > 0
@@ -300,6 +366,9 @@ export const rewriteModelSection = action({
       recentExampleLines.length > 0
         ? recentExampleLines.map((line: string) => `- ${line}`).join("\n")
         : "(empty)",
+      explicitLinkedContext.trim().length > 0
+        ? ["", "Dereferenced linked context from Current Model and Recent Examples:", explicitLinkedContext].join("\n")
+        : "",
       "",
       "Recent conversation:",
       priorMessages
@@ -407,6 +476,10 @@ export const generateJournalFeedback = action({
     const thoughtLines = journalContext.thoughtLines.map(
       (node: { text: string }) => node.text.trim(),
     ).filter((line: string) => line.length > 0);
+    const explicitLinkedContext = await buildExplicitLinkedContextForNodes(
+      ctx,
+      journalContext.thoughtLines.map((node: { _id: Id<"nodes"> }) => node._id),
+    );
 
     if (thoughtLines.length === 0) {
       return {
@@ -439,6 +512,13 @@ export const generateJournalFeedback = action({
               "",
               "Thoughts/Stuff:",
               thoughtLines.map((line: string) => `- ${line}`).join("\n"),
+              explicitLinkedContext.trim().length > 0
+                ? [
+                    "",
+                    "Dereferenced linked context from Thoughts/Stuff:",
+                    explicitLinkedContext,
+                  ].join("\n")
+                : "",
             ].join("\n"),
           },
         ],

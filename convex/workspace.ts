@@ -1901,6 +1901,43 @@ export const getLinkedKnowledgeContext = internalQuery({
   },
 });
 
+export const getResolvedLinkedTargetsForNodes = internalQuery({
+  args: {
+    nodeIds: v.array(v.id("nodes")),
+  },
+  handler: async (ctx, args) => {
+    const uniqueNodeIds = [...new Set(args.nodeIds)];
+    const pageIds = new Set<Id<"pages">>();
+    const nodeIds = new Set<Id<"nodes">>();
+
+    for (const sourceNodeId of uniqueNodeIds) {
+      const links = await ctx.db
+        .query("links")
+        .withIndex("by_source_node", (query) => query.eq("sourceNodeId", sourceNodeId))
+        .collect();
+
+      for (const link of links) {
+        if (!link.resolved) {
+          continue;
+        }
+
+        if (link.targetPageId) {
+          pageIds.add(link.targetPageId);
+        }
+
+        if (link.targetNodeId) {
+          nodeIds.add(link.targetNodeId);
+        }
+      }
+    }
+
+    return {
+      pageIds: [...pageIds],
+      nodeIds: [...nodeIds],
+    };
+  },
+});
+
 export const getSearchableNodes = internalQuery({
   args: {
     pageId: v.optional(v.id("pages")),
