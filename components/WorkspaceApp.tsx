@@ -6073,6 +6073,8 @@ function OutlineNodeList({
           ownerKey={ownerKey}
           pageId={pageId}
           parentNodeId={parentNodeId}
+          treeScopeNodes={nodes}
+          nodeMap={nodeMap}
           availableTags={availableTags}
           createNodesBatch={createNodesBatch}
           insertOutlineClipboardNodes={insertOutlineClipboardNodes}
@@ -6088,7 +6090,7 @@ function OutlineNodeList({
               if (lastCreatedNode) {
                 onOpenInsertedComposer(
                   pageId,
-                  parentNodeId,
+                  ((lastCreatedNode.parentNodeId as Id<"nodes"> | null) ?? null),
                   lastCreatedNode._id as Id<"nodes">,
                 );
               }
@@ -8736,6 +8738,8 @@ function OutlineNodeEditor({
           pageId={pageId}
           parentNodeId={parentNodeId}
           afterNodeId={node._id as Id<"nodes">}
+          treeScopeNodes={siblings}
+          nodeMap={nodeMap}
           availableTags={availableTags}
           createNodesBatch={createNodesBatch}
           insertOutlineClipboardNodes={insertOutlineClipboardNodes}
@@ -8753,7 +8757,7 @@ function OutlineNodeEditor({
               if (lastCreatedNode) {
                 onOpenInsertedComposer(
                   pageId,
-                  parentNodeId,
+                  ((lastCreatedNode.parentNodeId as Id<"nodes"> | null) ?? null),
                   lastCreatedNode._id as Id<"nodes">,
                 );
                 return;
@@ -8776,6 +8780,8 @@ function InlineComposer({
   pageId,
   parentNodeId,
   afterNodeId,
+  treeScopeNodes,
+  nodeMap,
   availableTags,
   createNodesBatch,
   insertOutlineClipboardNodes,
@@ -8794,6 +8800,8 @@ function InlineComposer({
   pageId: Id<"pages">;
   parentNodeId: Id<"nodes"> | null | undefined;
   afterNodeId?: Id<"nodes">;
+  treeScopeNodes: TreeNode[];
+  nodeMap: Map<string, Doc<"nodes">>;
   availableTags: SidebarTagResult[];
   createNodesBatch: CreateNodesBatchMutation;
   insertOutlineClipboardNodes: InsertOutlineClipboardNodesFn;
@@ -8817,6 +8825,13 @@ function InlineComposer({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [caretPosition, setCaretPosition] = useState<number | null>(null);
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
+  const [composerParentNodeId, setComposerParentNodeId] = useState<Id<"nodes"> | null>(
+    parentNodeId ?? null,
+  );
+  const [composerAfterNodeId, setComposerAfterNodeId] = useState<Id<"nodes"> | null>(
+    afterNodeId ?? null,
+  );
+  const [composerDepth, setComposerDepth] = useState(depth);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const draftRef = useRef(draft);
   const isSubmittingRef = useRef(false);
@@ -8865,6 +8880,12 @@ function InlineComposer({
   useEffect(() => {
     draftRef.current = draft;
   }, [draft]);
+
+  useEffect(() => {
+    setComposerParentNodeId(parentNodeId ?? null);
+    setComposerAfterNodeId(afterNodeId ?? null);
+    setComposerDepth(depth);
+  }, [afterNodeId, depth, historyInstanceKey, parentNodeId]);
 
   useEffect(() => {
     autoResizeTextarea(textareaRef.current);
@@ -8926,13 +8947,13 @@ function InlineComposer({
       return [];
     }
 
-    let nextAfterNodeId: Id<"nodes"> | null | undefined = afterNodeId ?? null;
+    let nextAfterNodeId: Id<"nodes"> | null | undefined = composerAfterNodeId ?? null;
     const batch = lines
       .map((line) => parseNodeDraft(line))
       .filter((entry) => !entry.shouldDelete)
       .map((entry) => {
         const nextEntry = {
-          parentNodeId: parentNodeId ?? null,
+          parentNodeId: composerParentNodeId ?? null,
           afterNodeId: nextAfterNodeId,
           text: entry.text,
           kind: entry.kind,
@@ -8961,7 +8982,7 @@ function InlineComposer({
         toCreatedNodeSnapshot(
           createdNode,
           index === 0
-            ? (afterNodeId ?? null)
+            ? (composerAfterNodeId ?? null)
             : createdNodes[index - 1]!._id,
         ),
       );
@@ -8985,6 +9006,26 @@ function InlineComposer({
     }
 
     return createdNodes;
+  };
+
+  const restoreComposerSelection = (selectionStart: number, selectionEnd: number) => {
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(selectionStart, selectionEnd);
+    });
+  };
+
+  const updateComposerPlacement = (
+    nextParentNodeId: Id<"nodes"> | null,
+    nextAfterNodeId: Id<"nodes"> | null,
+    nextDepth: number,
+    selectionStart: number,
+    selectionEnd: number,
+  ) => {
+    setComposerParentNodeId(nextParentNodeId);
+    setComposerAfterNodeId(nextAfterNodeId);
+    setComposerDepth(Math.max(0, nextDepth));
+    restoreComposerSelection(selectionStart, selectionEnd);
   };
 
   const handleKeyDown = async (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
@@ -9059,6 +9100,57 @@ function InlineComposer({
       }
     }
 
+    if (event.key === "Tab") {
+      event.preventDefault();
+      const selectionStart = event.currentTarget.selectionStart ?? draft.length;
+      const selectionEnd = event.currentTarget.selectionEnd ?? selectionStart;
+
+      if (event.shiftKey) {
+        if (!composerParentNodeId) {
+          restoreComposerSelection(selectionStart, selectionEnd);
+          return;
+        }
+
+        const parentNode = nodeMap.get(composerParentNodeId as string);
+        if (!parentNode) {
+          restoreComposerSelection(selectionStart, selectionEnd);
+          return;
+        }
+
+        updateComposerPlacement(
+          ((parentNode.parentNodeId as Id<"nodes"> | null) ?? null),
+          parentNode._id as Id<"nodes">,
+          composerDepth - 1,
+          selectionStart,
+          selectionEnd,
+        );
+        return;
+      }
+
+      if (!composerAfterNodeId) {
+        restoreComposerSelection(selectionStart, selectionEnd);
+        return;
+      }
+
+      const previousSiblingContext = findNodeContextInTree(
+        treeScopeNodes,
+        composerAfterNodeId as string,
+      );
+      if (!previousSiblingContext) {
+        restoreComposerSelection(selectionStart, selectionEnd);
+        return;
+      }
+
+      updateComposerPlacement(
+        previousSiblingContext.node._id as Id<"nodes">,
+        getLastChildNodeId(previousSiblingContext.node),
+        composerDepth + 1,
+        selectionStart,
+        selectionEnd,
+      );
+      return;
+    }
+
     if (event.key !== "Enter") {
       if (event.key === "Backspace" && draft.trim().length === 0) {
         event.preventDefault();
@@ -9087,8 +9179,8 @@ function InlineComposer({
         const result = await insertOutlineClipboardNodes({
           nodes: outlineClipboard.nodes,
           pageId,
-          parentNodeId: parentNodeId ?? null,
-          afterNodeId: afterNodeId ?? null,
+          parentNodeId: composerParentNodeId ?? null,
+          afterNodeId: composerAfterNodeId ?? null,
           focusAfterUndoId: editorId,
         });
         history.resetTrackedValue(editorId, editorTarget, "");
@@ -9135,7 +9227,7 @@ function InlineComposer({
       className="outline-depth-composer relative"
       style={
         {
-          "--outline-depth": depth,
+          "--outline-depth": composerDepth,
           "--outline-mobile-indent-step": `${mobileIndentStep}px`,
         } as CSSProperties
       }
