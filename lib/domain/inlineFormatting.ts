@@ -12,7 +12,7 @@ export type InlineTextSegment = {
   bold: boolean;
 };
 
-export type InlineFormattingShortcutMarker = "__" | "**";
+export type InlineFormattingShortcutMarker = "~~" | "__" | "**";
 
 const DEFAULT_STATE: InlineFormattingState = {
   strike: false,

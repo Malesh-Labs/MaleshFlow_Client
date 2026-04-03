@@ -8938,6 +8938,33 @@ function OutlineNodeEditor({
       return;
     }
 
+    if (isModifier && event.shiftKey && !event.altKey && (event.key === "_" || event.key === "-")) {
+      const replacement = applySelectedInlineFormattingShortcut(
+        event.currentTarget.value,
+        event.currentTarget.selectionStart ?? 0,
+        event.currentTarget.selectionEnd ?? 0,
+        "~~",
+      );
+
+      if (replacement) {
+        event.preventDefault();
+        setDraft(replacement.value);
+        history.updateDraftValue(editorId, editorTarget, replacement.value);
+        setCaretPosition(replacement.selectionEnd);
+        window.requestAnimationFrame(() => {
+          textareaRef.current?.focus();
+          textareaRef.current?.setSelectionRange(
+            replacement.selectionStart,
+            replacement.selectionEnd,
+          );
+        });
+        return;
+      }
+
+      event.preventDefault();
+      return;
+    }
+
     if (autocompleteToken && autocompleteSuggestions.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -10082,6 +10109,32 @@ function InlineComposer({
         event.currentTarget.selectionStart ?? 0,
         event.currentTarget.selectionEnd ?? 0,
         "**",
+      );
+
+      if (replacement) {
+        event.preventDefault();
+        setDraft(replacement.value);
+        setCaretPosition(replacement.selectionEnd);
+        window.requestAnimationFrame(() => {
+          textareaRef.current?.focus();
+          textareaRef.current?.setSelectionRange(
+            replacement.selectionStart,
+            replacement.selectionEnd,
+          );
+        });
+        return;
+      }
+
+      event.preventDefault();
+      return;
+    }
+
+    if (isModifier && event.shiftKey && !event.altKey && (event.key === "_" || event.key === "-")) {
+      const replacement = applySelectedInlineFormattingShortcut(
+        event.currentTarget.value,
+        event.currentTarget.selectionStart ?? 0,
+        event.currentTarget.selectionEnd ?? 0,
+        "~~",
       );
 
       if (replacement) {

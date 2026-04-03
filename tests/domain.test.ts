@@ -302,6 +302,15 @@ test("applySelectedInlineFormattingShortcut wraps and unwraps selected text", ()
       selectionEnd: 13,
     },
   );
+
+  assert.deepEqual(
+    applySelectedInlineFormattingShortcut("hello world", 0, 5, "~~"),
+    {
+      value: "~~hello~~ world",
+      selectionStart: 2,
+      selectionEnd: 7,
+    },
+  );
 });
 
 test("buildModelRewriteUserPrompt prepends an optional user note", () => {
