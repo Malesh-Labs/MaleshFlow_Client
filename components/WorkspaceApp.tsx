@@ -6340,7 +6340,7 @@ function LinkedTextPreview({
                 onOpenPage(segment.pageId!);
               }}
               className={clsx(
-                "inline-flex align-top cursor-pointer items-center gap-1 transition",
+                "inline-flex max-w-full align-top cursor-pointer items-start gap-1 text-left transition",
                 isCompleted
                   ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text-faint)]"
                   : "text-[var(--workspace-brand)] hover:text-[var(--workspace-brand-hover)]",
@@ -6349,7 +6349,7 @@ function LinkedTextPreview({
             >
               <span
                 className={clsx(
-                  "decoration-[1.5px] underline-offset-[3px]",
+                  "min-w-0 decoration-[1.5px] underline-offset-[3px]",
                 )}
                 style={getLinkedTextDecorationStyle(segment.strike || isCompleted)}
               >
@@ -6477,7 +6477,7 @@ function LinkPreviewMeasure({
           <span
             key={segment.key}
             className={clsx(
-              "inline-flex align-top items-center gap-1",
+              "inline-flex max-w-full align-top items-start gap-1 text-left",
               isCompleted
                 ? "text-[var(--workspace-text-faint)]"
                 : "text-[var(--workspace-brand)]",
@@ -6487,7 +6487,7 @@ function LinkPreviewMeasure({
           >
             <span
               className={clsx(
-                "decoration-[1.5px] underline-offset-[3px]",
+                "min-w-0 decoration-[1.5px] underline-offset-[3px]",
               )}
               style={getLinkedTextDecorationStyle(segment.strike || isCompleted)}
             >
