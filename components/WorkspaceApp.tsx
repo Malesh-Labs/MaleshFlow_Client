@@ -25,6 +25,7 @@ import { createPortal } from "react-dom";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { parseHeadingSyntax } from "@/lib/domain/displaySyntax";
+import { splitTextForInlineFormatting } from "@/lib/domain/inlineFormatting";
 import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
 import {
   applySelectedLinkShortcut,
@@ -32,6 +33,7 @@ import {
   getExplicitWikiLinkPreviewText,
   replaceLinkMarkupWithLabels,
 } from "@/lib/domain/links";
+import type { ScreenshotImportNode } from "@/lib/domain/screenshotImport";
 import { extractTagMatches } from "@/lib/domain/tags";
 import {
   buildNodeSelectionIds,
@@ -53,6 +55,7 @@ import {
 } from "@/components/workspaceHistory";
 import { ArchiveSearchPanel } from "@/components/ArchiveSearchPanel";
 import { MigrationPanel } from "@/components/MigrationPanel";
+import { ScreenshotImportPanel } from "@/components/ScreenshotImportPanel";
 
 const SKIP = "skip" as const;
 const SIDEBAR_SECTIONS = [
@@ -104,7 +107,8 @@ type PaletteMode =
   | "chat"
   | "actions"
   | "archive"
-  | "migration";
+  | "migration"
+  | "screenshotImport";
 const PALETTE_MODE_ORDER: PaletteMode[] = [
   "pages",
   "find",
@@ -113,6 +117,7 @@ const PALETTE_MODE_ORDER: PaletteMode[] = [
   "actions",
   "archive",
   "migration",
+  "screenshotImport",
 ];
 type NodeSearchResult = {
   node: Doc<"nodes">;
@@ -193,6 +198,8 @@ type LinkPreviewSegment =
 type RenderedPreviewSegment =
   | (LinkPreviewSegment & {
       strike: boolean;
+      italic: boolean;
+      bold: boolean;
     });
 type WorkspaceKnowledgeSourceSnapshot = {
   nodeId: string;
@@ -1431,6 +1438,13 @@ function buildOutlineClipboardText(nodes: OutlineClipboardNode[], depth = 0): st
   return lines.join("\n");
 }
 
+function countNodesInClipboardPayload(nodes: OutlineClipboardNode[]): number {
+  return nodes.reduce(
+    (count, node) => count + 1 + countNodesInClipboardPayload(node.children),
+    0,
+  );
+}
+
 function flattenOutlineClipboardNodesForBatch(
   nodes: OutlineClipboardNode[],
   destination: {
@@ -1729,66 +1743,35 @@ function stripDimmedSyntaxPrefix(value: string) {
   return value.replace(/^(\s*)%%\s*/, "$1");
 }
 
-function splitTextForStrikethrough(text: string, initialStrike = false) {
-  const segments: Array<{ key: string; text: string; strike: boolean }> = [];
-  let remaining = text;
-  let strike = initialStrike;
-  let index = 0;
-
-  while (remaining.length > 0) {
-    const markerIndex = remaining.indexOf("~~");
-    if (markerIndex === -1) {
-      segments.push({
-        key: `text:${index}`,
-        text: remaining,
-        strike,
-      });
-      break;
-    }
-
-    const before = remaining.slice(0, markerIndex);
-    if (before.length > 0) {
-      segments.push({
-        key: `text:${index}`,
-        text: before,
-        strike,
-      });
-    }
-
-    remaining = remaining.slice(markerIndex + 2);
-    strike = !strike;
-    index += 1;
-  }
-
-  return {
-    segments,
-    nextStrike: strike,
-  };
-}
-
-function applyStrikethroughToPreviewSegments(segments: LinkPreviewSegment[]) {
+function applyInlineFormattingToPreviewSegments(segments: LinkPreviewSegment[]) {
   const rendered: RenderedPreviewSegment[] = [];
-  let strike = false;
+  let formattingState = {
+    strike: false,
+    italic: false,
+    bold: false,
+  };
 
   for (const segment of segments) {
     if (segment.kind !== "text") {
       rendered.push({
         ...segment,
-        strike,
+        ...formattingState,
       });
       continue;
     }
 
-    const splitResult = splitTextForStrikethrough(segment.text, strike);
+    const splitResult = splitTextForInlineFormatting(segment.text, formattingState);
     for (const textSegment of splitResult.segments) {
       rendered.push({
         key: `${segment.key}:${textSegment.key}`,
         kind: "text",
         text: textSegment.text,
         strike: textSegment.strike,
+        italic: textSegment.italic,
+        bold: textSegment.bold,
       });
     }
-    strike = splitResult.nextStrike;
+    formattingState = splitResult.nextState;
   }
 
   return rendered;
@@ -2488,6 +2471,92 @@ function ConfiguredWorkspace({
       selectSingleNode(firstCreatedRootNodeId);
     }
   }, [insertOutlineClipboardNodes, selectSingleNode, selectedNodeIds, visibleNodeOrder, workspaceNodeMap]);
+  const canImportScreenshotWithoutSelection =
+    (pageMeta.pageType === "default" || pageMeta.pageType === "note" || pageMeta.pageType === "task") &&
+    selectedPageId !== null;
+  const handleImportScreenshotNodes = useCallback(async (nodes: ScreenshotImportNode[]) => {
+    const outlineNodes: OutlineClipboardNode[] = nodes.map((node) => ({
+      text: node.text,
+      kind: node.kind,
+      taskStatus: node.kind === "task" ? node.taskStatus : null,
+      noteCompleted: node.kind === "note" ? node.noteCompleted : false,
+      lockKind: true,
+      children: node.children.map(function mapChild(child): OutlineClipboardNode {
+        return {
+          text: child.text,
+          kind: child.kind,
+          taskStatus: child.kind === "task" ? child.taskStatus : null,
+          noteCompleted: child.kind === "note" ? child.noteCompleted : false,
+          lockKind: true,
+          children: child.children.map(mapChild),
+        };
+      }),
+    }));
+    if (outlineNodes.length === 0) {
+      return;
+    }
+
+    let createdRootNodeIds: Id<"nodes">[] = [];
+    if (selectedNodeIds.size > 0) {
+      const selectedRootNodeIds = getSelectedRootNodeIds(
+        selectedNodeIds,
+        visibleNodeOrder,
+        workspaceNodeMap,
+      );
+      const anchorNodeId = selectedRootNodeIds[selectedRootNodeIds.length - 1] ?? null;
+      const anchorNode = anchorNodeId ? (workspaceNodeMap.get(anchorNodeId) ?? null) : null;
+      if (!anchorNode) {
+        throw new Error("Could not find the selected insertion point.");
+      }
+
+      const result = await insertOutlineClipboardNodes({
+        nodes: outlineNodes,
+        pageId: anchorNode.pageId,
+        parentNodeId: (anchorNode.parentNodeId as Id<"nodes"> | null) ?? null,
+        afterNodeId: anchorNode._id,
+      });
+      createdRootNodeIds = result.createdRootNodeIds;
+    } else if (canImportScreenshotWithoutSelection && selectedPageId) {
+      const anchorNode = pageVisibleRows[pageVisibleRows.length - 1] ?? null;
+      const result = await insertOutlineClipboardNodes({
+        nodes: outlineNodes,
+        pageId: selectedPageId,
+        parentNodeId: anchorNode
+          ? ((anchorNode.parentNodeId as Id<"nodes"> | null) ?? null)
+          : null,
+        afterNodeId: anchorNode ? (anchorNode._id as Id<"nodes">) : null,
+      });
+      createdRootNodeIds = result.createdRootNodeIds;
+    } else {
+      throw new Error("Highlight a target item first so the imported outline knows where to go.");
+    }
+
+    const firstCreatedRootNodeId = createdRootNodeIds[0] ?? null;
+    if (firstCreatedRootNodeId) {
+      selectSingleNode(firstCreatedRootNodeId);
+    }
+
+    setCopySnackbarMessage(
+      `Imported ${countNodesInClipboardPayload(outlineNodes)} node${countNodesInClipboardPayload(outlineNodes) === 1 ? "" : "s"}`,
+    );
+  }, [
+    canImportScreenshotWithoutSelection,
+    insertOutlineClipboardNodes,
+    pageVisibleRows,
+    selectSingleNode,
+    selectedNodeIds,
+    selectedPageId,
+    setCopySnackbarMessage,
+    visibleNodeOrder,
+    workspaceNodeMap,
+  ]);
+  const canImportScreenshot = selectedNodeIds.size > 0 || canImportScreenshotWithoutSelection;
+  const screenshotImportTargetLabel =
+    selectedNodeIds.size > 0
+      ? "the selected location"
+      : selectedPage
+        ? `the end of ${selectedPage.title}`
+        : "your workspace";
   const paletteResults = filterPagesForCommandPalette(
     (pages ?? []).map((page) => ({
       ...page,
@@ -2973,6 +3042,18 @@ function ConfiguredWorkspace({
         },
       },
       {
+        key: "import-screenshot",
+        title: "Import Screenshot",
+        subtitle: canImportScreenshot
+          ? "Paste an outliner screenshot, preview the translated hierarchy, and import it into the current workspace."
+          : "Paste an outliner screenshot and preview it. Open a page or highlight a target item before importing.",
+        keywords: ["import", "screenshot", "image", "ocr", "outline", "paste"],
+        actionLabel: "Open",
+        onSelect: () => {
+          switchPaletteMode("screenshotImport");
+        },
+      },
+      {
         key: "search-archive",
         title: "Search Archive",
         subtitle: "Search archived pages and nodes without mixing them into active workspace results.",
@@ -3032,6 +3113,7 @@ function ConfiguredWorkspace({
     handleResetLocalState,
     isCreatingPage,
     isRebuildingEmbeddings,
+    canImportScreenshot,
     paletteQuery,
     setOwnerKey,
     switchPaletteMode,
@@ -3790,7 +3872,11 @@ function ConfiguredWorkspace({
         return;
       }
 
-      if (paletteMode === "archive" || paletteMode === "migration") {
+      if (
+        paletteMode === "archive" ||
+        paletteMode === "migration" ||
+        paletteMode === "screenshotImport"
+      ) {
         return;
       }
 
@@ -3804,6 +3890,7 @@ function ConfiguredWorkspace({
       paletteMode === "chat" ||
       paletteMode === "archive" ||
       paletteMode === "migration" ||
+      paletteMode === "screenshotImport" ||
       activePaletteResultsCount === 0
     ) {
       return;
@@ -5576,7 +5663,7 @@ function ConfiguredWorkspace({
               "mx-auto mt-16 w-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]",
               paletteMode === "migration"
                 ? "max-w-6xl"
-                : paletteMode === "chat" || paletteMode === "archive"
+                : paletteMode === "chat" || paletteMode === "archive" || paletteMode === "screenshotImport"
                   ? "max-w-4xl"
                   : "max-w-2xl",
             )}
@@ -5676,14 +5763,27 @@ function ConfiguredWorkspace({
                     Migration
                   </button>
                 ) : null}
+                {paletteMode === "screenshotImport" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      switchPaletteMode("screenshotImport");
+                    }}
+                    className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition"
+                  >
+                    Import Screenshot
+                  </button>
+                ) : null}
               </div>
-              {paletteMode === "chat" || paletteMode === "archive" || paletteMode === "migration" ? (
+              {paletteMode === "chat" || paletteMode === "archive" || paletteMode === "migration" || paletteMode === "screenshotImport" ? (
                 <p className="text-sm text-[var(--workspace-text-subtle)]">
                   {paletteMode === "chat"
                     ? "Persistent workspace chat"
                     : paletteMode === "archive"
                       ? "Search archived pages and nodes without mixing them into active workspace results."
-                      : "Snapshot imports, review suggested changes, and explicitly approve each chunk before it touches the workspace."}
+                      : paletteMode === "migration"
+                        ? "Snapshot imports, review suggested changes, and explicitly approve each chunk before it touches the workspace."
+                        : "Paste an outliner screenshot, preview the translated structure, then import it as real nodes."}
                 </p>
               ) : (
                 <div className="flex items-center gap-3">
@@ -5712,7 +5812,10 @@ function ConfiguredWorkspace({
             <div
               ref={paletteResultsRef}
               className={clsx(
-                paletteMode === "chat" || paletteMode === "archive" || paletteMode === "migration"
+                paletteMode === "chat" ||
+                  paletteMode === "archive" ||
+                  paletteMode === "migration" ||
+                  paletteMode === "screenshotImport"
                   ? "overflow-hidden"
                   : "max-h-[420px] overflow-y-auto py-2",
               )}
@@ -5892,6 +5995,20 @@ function ConfiguredWorkspace({
                 />
               ) : paletteMode === "migration" ? (
                 <MigrationPanel ownerKey={ownerKey} />
+              ) : paletteMode === "screenshotImport" ? (
+                <ScreenshotImportPanel
+                  ownerKey={ownerKey}
+                  canImport={canImportScreenshot}
+                  targetLabel={screenshotImportTargetLabel}
+                  onImport={handleImportScreenshotNodes}
+                  onImported={() => {
+                    setPaletteOpen(false);
+                    setPaletteQuery("");
+                    setPaletteMode("pages");
+                    setTextSearchResults([]);
+                    setNodeSearchResults([]);
+                  }}
+                />
               ) : null}
             </div>
           </div>
@@ -6314,9 +6431,25 @@ function LinkAutocompleteMenu({
   );
 }
 
-function getLinkedTextDecorationStyle(shouldStrike: boolean): CSSProperties {
+function getInlinePreviewStyle({
+  strike,
+  italic,
+  bold,
+  underline,
+}: {
+  strike: boolean;
+  italic: boolean;
+  bold: boolean;
+  underline: boolean;
+}): CSSProperties {
   return {
-    textDecorationLine: shouldStrike ? "underline line-through" : "underline",
+    textDecorationLine: underline
+      ? (strike ? "underline line-through" : "underline")
+      : strike
+        ? "line-through"
+        : undefined,
+    fontStyle: italic ? "italic" : undefined,
+    fontWeight: bold ? 700 : undefined,
   };
 }
 
@@ -6339,7 +6472,7 @@ function LinkedTextPreview({
   isCompleted: boolean;
   className?: string;
 }) {
-  const renderedSegments = applyStrikethroughToPreviewSegments(segments);
+  const renderedSegments = applyInlineFormattingToPreviewSegments(segments);
 
   return (
     <div
@@ -6364,7 +6497,12 @@ function LinkedTextPreview({
         segment.kind === "text" ? (
           <span
             key={segment.key}
-            className={segment.strike || isCompleted ? "line-through" : undefined}
+            style={getInlinePreviewStyle({
+              strike: segment.strike || isCompleted,
+              italic: segment.italic,
+              bold: segment.bold,
+              underline: false,
+            })}
           >
             {segment.text}
           </span>
@@ -6382,13 +6520,18 @@ function LinkedTextPreview({
               event.stopPropagation();
               onOpenTag(segment.text);
             }}
-            className={clsx(
-              "inline cursor-pointer decoration-[1.5px] underline-offset-[3px] transition",
-              isCompleted
-                ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text-faint)]"
-                : "text-[var(--workspace-brand)] hover:text-[var(--workspace-brand-hover)]",
-            )}
-            style={getLinkedTextDecorationStyle(segment.strike || isCompleted)}
+              className={clsx(
+                "inline cursor-pointer decoration-[1.5px] underline-offset-[3px] transition",
+                isCompleted
+                  ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text-faint)]"
+                  : "text-[var(--workspace-brand)] hover:text-[var(--workspace-brand-hover)]",
+              )}
+            style={getInlinePreviewStyle({
+              strike: segment.strike || isCompleted,
+              italic: segment.italic,
+              bold: segment.bold,
+              underline: true,
+            })}
           >
             {segment.text}
           </button>
@@ -6413,7 +6556,12 @@ function LinkedTextPreview({
                   ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text-faint)]"
                   : "text-[var(--workspace-brand)] hover:text-[var(--workspace-brand-hover)]",
               )}
-              style={getLinkedTextDecorationStyle(segment.strike || isCompleted)}
+              style={getInlinePreviewStyle({
+                strike: segment.strike || isCompleted,
+                italic: segment.italic,
+                bold: segment.bold,
+                underline: true,
+              })}
             >
               {segment.text}
             </a>
@@ -6447,7 +6595,12 @@ function LinkedTextPreview({
                 className={clsx(
                   "min-w-0 decoration-[1.5px] underline-offset-[3px]",
                 )}
-                style={getLinkedTextDecorationStyle(segment.strike || isCompleted)}
+                style={getInlinePreviewStyle({
+                  strike: segment.strike || isCompleted,
+                  italic: segment.italic,
+                  bold: segment.bold,
+                  underline: true,
+                })}
               >
                 {segment.text}
               </span>
@@ -6475,7 +6628,12 @@ function LinkedTextPreview({
                   : "decoration-[var(--workspace-brand)]/70",
                 segment.resolved ? "" : "opacity-80",
               )}
-              style={getLinkedTextDecorationStyle(segment.strike || isCompleted)}
+              style={getInlinePreviewStyle({
+                strike: segment.strike || isCompleted,
+                italic: segment.italic,
+                bold: segment.bold,
+                underline: true,
+              })}
             >
               {segment.text}
             </span>
@@ -6497,7 +6655,7 @@ function PlainTextPreview({
   isDisabled: boolean;
   className?: string;
 }) {
-  const { segments: renderedSegments } = splitTextForStrikethrough(text);
+  const { segments: renderedSegments } = splitTextForInlineFormatting(text);
 
   return (
     <div
@@ -6517,7 +6675,12 @@ function PlainTextPreview({
       {renderedSegments.map((segment) => (
         <span
           key={segment.key}
-          className={segment.strike ? "line-through" : undefined}
+          style={getInlinePreviewStyle({
+            strike: segment.strike,
+            italic: segment.italic,
+            bold: segment.bold,
+            underline: false,
+          })}
         >
           {segment.text}
         </span>
@@ -6537,7 +6700,7 @@ function LinkPreviewMeasure({
   className?: string;
   measureRef?: RefObject<HTMLDivElement | null>;
 }) {
-  const renderedSegments = applyStrikethroughToPreviewSegments(segments);
+  const renderedSegments = applyInlineFormattingToPreviewSegments(segments);
 
   return (
     <div
@@ -6552,7 +6715,12 @@ function LinkPreviewMeasure({
         segment.kind === "text" ? (
           <span
             key={segment.key}
-            className={segment.strike || isCompleted ? "line-through" : undefined}
+            style={getInlinePreviewStyle({
+              strike: segment.strike || isCompleted,
+              italic: segment.italic,
+              bold: segment.bold,
+              underline: false,
+            })}
           >
             {segment.text}
           </span>
@@ -6565,7 +6733,12 @@ function LinkPreviewMeasure({
                 ? "text-[var(--workspace-text-faint)]"
                 : "text-[var(--workspace-brand)]",
             )}
-            style={getLinkedTextDecorationStyle(segment.strike || isCompleted)}
+            style={getInlinePreviewStyle({
+              strike: segment.strike || isCompleted,
+              italic: segment.italic,
+              bold: segment.bold,
+              underline: true,
+            })}
           >
             {segment.text}
           </span>
@@ -6585,7 +6758,12 @@ function LinkPreviewMeasure({
               className={clsx(
                 "min-w-0 decoration-[1.5px] underline-offset-[3px]",
               )}
-              style={getLinkedTextDecorationStyle(segment.strike || isCompleted)}
+              style={getInlinePreviewStyle({
+                strike: segment.strike || isCompleted,
+                italic: segment.italic,
+                bold: segment.bold,
+                underline: true,
+              })}
             >
               {segment.text}
             </span>
@@ -6615,7 +6793,7 @@ function PlainTextMeasure({
   className?: string;
   measureRef?: RefObject<HTMLDivElement | null>;
 }) {
-  const { segments: renderedSegments } = splitTextForStrikethrough(text);
+  const { segments: renderedSegments } = splitTextForInlineFormatting(text);
 
   return (
     <div
@@ -6629,7 +6807,12 @@ function PlainTextMeasure({
       {renderedSegments.map((segment) => (
         <span
           key={segment.key}
-          className={segment.strike ? "line-through" : undefined}
+          style={getInlinePreviewStyle({
+            strike: segment.strike,
+            italic: segment.italic,
+            bold: segment.bold,
+            underline: false,
+          })}
         >
           {segment.text}
         </span>

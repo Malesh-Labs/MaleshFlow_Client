@@ -14,6 +14,7 @@ import {
   buildEmbeddingInput,
   buildRootEmbeddingInput,
 } from "../lib/domain/embeddings";
+import { splitTextForInlineFormatting } from "../lib/domain/inlineFormatting";
 
 test("extractLinks finds wiki links and node refs", () => {
   const links = extractLinks(
@@ -184,6 +185,71 @@ test("parseHeadingSyntax recognizes markdown-style heading prefixes", () => {
   assert.deepEqual(parseHeadingSyntax("#not a heading"), {
     level: null,
     text: "#not a heading",
+  });
+});
+
+test("splitTextForInlineFormatting applies strike, italic, and bold markers", () => {
+  const { segments, nextState } = splitTextForInlineFormatting(
+    "Before ~~gone~~ __soft__ **strong** after",
+  );
+
+  assert.deepEqual(
+    segments.map((segment) => ({
+      text: segment.text,
+      strike: segment.strike,
+      italic: segment.italic,
+      bold: segment.bold,
+    })),
+    [
+      {
+        text: "Before ",
+        strike: false,
+        italic: false,
+        bold: false,
+      },
+      {
+        text: "gone",
+        strike: true,
+        italic: false,
+        bold: false,
+      },
+      {
+        text: " ",
+        strike: false,
+        italic: false,
+        bold: false,
+      },
+      {
+        text: "soft",
+        strike: false,
+        italic: true,
+        bold: false,
+      },
+      {
+        text: " ",
+        strike: false,
+        italic: false,
+        bold: false,
+      },
+      {
+        text: "strong",
+        strike: false,
+        italic: false,
+        bold: true,
+      },
+      {
+        text: " after",
+        strike: false,
+        italic: false,
+        bold: false,
+      },
+    ],
+  );
+
+  assert.deepEqual(nextState, {
+    strike: false,
+    italic: false,
+    bold: false,
   });
 });
 

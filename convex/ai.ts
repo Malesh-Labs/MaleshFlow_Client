@@ -13,6 +13,10 @@ import {
   buildEmbeddingInput,
   buildRootEmbeddingInput,
 } from "../lib/domain/embeddings";
+import {
+  normalizeScreenshotImportNodes,
+  screenshotImportResultSchema,
+} from "../lib/domain/screenshotImport";
 import { replaceLinkMarkupWithLabels, stripLinkMarkup } from "../lib/domain/links";
 
 const taskMetadataSchema = z.object({
@@ -26,6 +30,8 @@ const knowledgeAnswerSchema = z.object({
   answer: z.string(),
   sourceIndexes: z.array(z.number().int().min(1)).max(8),
 });
+
+const screenshotImportOutputSchema = screenshotImportResultSchema;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const fallbackTextSearchRef = internal.aiData.fallbackTextSearch as any;
@@ -220,6 +226,73 @@ export const findArchivedNodesText = action({
       limit: Math.max(1, Math.min(args.limit ?? 12, 20)),
       includeArchived: true,
     });
+  },
+});
+
+export const parseOutlineScreenshot = action({
+  args: {
+    ownerKey: v.string(),
+    imageDataUrl: v.string(),
+  },
+  handler: async (ctx, args): Promise<unknown> => {
+    assertOwnerKey(args.ownerKey);
+    const client = getOpenAIClient();
+    if (!client) {
+      throw new Error("Screenshot import requires an OpenAI API key.");
+    }
+
+    const response = await client.responses.parse({
+      model: process.env.OPENAI_VISION_MODEL ?? "gpt-4.1-mini",
+      input: [
+        {
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text:
+                "You convert screenshots of outliner apps into structured outline nodes. " +
+                "Return only what is visibly present in the screenshot. Preserve nesting/order. " +
+                "Rows with visible checkboxes are tasks. Checked boxes are done; unchecked boxes are todo. " +
+                "Rows with regular bullets are notes. If a note row is visually prominent like a section heading, " +
+                "encode it as a note whose text starts with '### '. " +
+                "Preserve visible inline emphasis using '__double underscores__' for italics and '**double asterisks**' for bold. " +
+                "Ignore app chrome like counters, arrows, drag rails, and badges that are not part of the content text. " +
+                "Keep inline chip/pill text as plain text when it is clearly content.",
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text:
+                "Parse this screenshot into outline nodes for import. " +
+                "The large bold bullet rows should usually become '###' note headings.",
+            },
+            {
+              type: "input_image",
+              image_url: args.imageDataUrl,
+              detail: "high",
+            },
+          ],
+        },
+      ],
+      text: {
+        format: zodTextFormat(screenshotImportOutputSchema, "outline_screenshot_import"),
+      },
+    });
+
+    const parsed = response.output_parsed;
+    if (!parsed) {
+      throw new Error("Could not parse the screenshot into outline nodes.");
+    }
+
+    return {
+      summary: parsed.summary,
+      warnings: parsed.warnings,
+      nodes: normalizeScreenshotImportNodes(parsed.nodes),
+    };
   },
 });
 
