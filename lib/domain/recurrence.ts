@@ -5,8 +5,85 @@ export const RECURRENCE_FREQUENCIES = [
   "yearly",
 ] as const;
 
-export type RecurrenceFrequency = (typeof RECURRENCE_FREQUENCIES)[number] | null;
+export const RECURRENCE_UNITS = [
+  "day",
+  "week",
+  "month",
+  "year",
+] as const;
+
+export type RecurrencePreset = (typeof RECURRENCE_FREQUENCIES)[number];
+export type RecurrenceUnit = (typeof RECURRENCE_UNITS)[number];
+export type CustomRecurrenceFrequency = {
+  interval: number;
+  unit: RecurrenceUnit;
+};
+export type RecurrenceFrequency = RecurrencePreset | CustomRecurrenceFrequency | null;
 export type RecurringCompletionMode = "dueDate" | "today";
+
+function pluralizeRecurrenceUnit(unit: RecurrenceUnit, interval: number) {
+  return interval === 1 ? unit : `${unit}s`;
+}
+
+export function isRecurrencePreset(
+  frequency: RecurrenceFrequency,
+): frequency is RecurrencePreset {
+  return typeof frequency === "string";
+}
+
+export function isCustomRecurrenceFrequency(
+  value: unknown,
+): value is CustomRecurrenceFrequency {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.interval === "number" &&
+    Number.isInteger(record.interval) &&
+    record.interval > 0 &&
+    RECURRENCE_UNITS.includes(record.unit as RecurrenceUnit)
+  );
+}
+
+export function parseRecurrenceFrequency(value: unknown): RecurrenceFrequency {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (RECURRENCE_FREQUENCIES.includes(value as RecurrencePreset)) {
+    return value as RecurrencePreset;
+  }
+
+  if (isCustomRecurrenceFrequency(value)) {
+    return {
+      interval: value.interval,
+      unit: value.unit,
+    };
+  }
+
+  return null;
+}
+
+export function areRecurrenceFrequenciesEqual(
+  left: RecurrenceFrequency,
+  right: RecurrenceFrequency,
+) {
+  if (left === right) {
+    return true;
+  }
+
+  if (!left || !right) {
+    return false;
+  }
+
+  if (isRecurrencePreset(left) || isRecurrencePreset(right)) {
+    return false;
+  }
+
+  return left.interval === right.interval && left.unit === right.unit;
+}
 
 function toLocalNoon(date: Date) {
   return new Date(
@@ -74,6 +151,17 @@ export function isOverdueDueDate(timestamp: number | null | undefined, now = new
 }
 
 export function getRecurrenceLabel(frequency: RecurrenceFrequency) {
+  if (!frequency) {
+    return "";
+  }
+
+  if (!isRecurrencePreset(frequency)) {
+    return `Every ${frequency.interval} ${pluralizeRecurrenceUnit(
+      frequency.unit,
+      frequency.interval,
+    )}`;
+  }
+
   switch (frequency) {
     case "daily":
       return "Daily";
@@ -100,19 +188,36 @@ export function advanceRecurringDueDate(args: {
       : toLocalNoon(new Date(args.dueAt));
   const nextDate = new Date(baseDate);
 
-  switch (args.frequency) {
-    case "daily":
-      nextDate.setDate(nextDate.getDate() + 1);
-      break;
-    case "weekly":
-      nextDate.setDate(nextDate.getDate() + 7);
-      break;
-    case "monthly":
-      nextDate.setMonth(nextDate.getMonth() + 1);
-      break;
-    case "yearly":
-      nextDate.setFullYear(nextDate.getFullYear() + 1);
-      break;
+  if (isRecurrencePreset(args.frequency)) {
+    switch (args.frequency) {
+      case "daily":
+        nextDate.setDate(nextDate.getDate() + 1);
+        break;
+      case "weekly":
+        nextDate.setDate(nextDate.getDate() + 7);
+        break;
+      case "monthly":
+        nextDate.setMonth(nextDate.getMonth() + 1);
+        break;
+      case "yearly":
+        nextDate.setFullYear(nextDate.getFullYear() + 1);
+        break;
+    }
+  } else {
+    switch (args.frequency.unit) {
+      case "day":
+        nextDate.setDate(nextDate.getDate() + args.frequency.interval);
+        break;
+      case "week":
+        nextDate.setDate(nextDate.getDate() + args.frequency.interval * 7);
+        break;
+      case "month":
+        nextDate.setMonth(nextDate.getMonth() + args.frequency.interval);
+        break;
+      case "year":
+        nextDate.setFullYear(nextDate.getFullYear() + args.frequency.interval);
+        break;
+    }
   }
 
   return toLocalNoon(nextDate).getTime();

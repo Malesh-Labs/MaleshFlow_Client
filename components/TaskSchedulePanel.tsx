@@ -2,12 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
+  isRecurrencePreset,
   dateInputValueToTimestamp,
   formatDueDate,
   getRecurrenceLabel,
   getTodayReferenceDate,
   RECURRENCE_FREQUENCIES,
+  RECURRENCE_UNITS,
+  type RecurrencePreset,
   timestampToDateInputValue,
+  type RecurrenceUnit,
   type RecurrenceFrequency,
   type RecurringCompletionMode,
 } from "@/lib/domain/recurrence";
@@ -35,29 +39,69 @@ export function TaskSchedulePanel({
   onSaved,
 }: TaskSchedulePanelProps) {
   const [dueDateDraft, setDueDateDraft] = useState("");
-  const [recurrenceDraft, setRecurrenceDraft] = useState<RecurrenceFrequency>(null);
+  const [recurrenceModeDraft, setRecurrenceModeDraft] = useState<RecurrencePreset | "custom" | "">("");
+  const [customIntervalDraft, setCustomIntervalDraft] = useState("");
+  const [customUnitDraft, setCustomUnitDraft] = useState<RecurrenceUnit>("day");
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
     setDueDateDraft(timestampToDateInputValue(dueAt));
-    setRecurrenceDraft(recurrenceFrequency);
+    if (!recurrenceFrequency) {
+      setRecurrenceModeDraft("");
+      setCustomIntervalDraft("");
+      setCustomUnitDraft("day");
+    } else if (isRecurrencePreset(recurrenceFrequency)) {
+      setRecurrenceModeDraft(recurrenceFrequency);
+      setCustomIntervalDraft("");
+      setCustomUnitDraft("day");
+    } else {
+      setRecurrenceModeDraft("custom");
+      setCustomIntervalDraft(String(recurrenceFrequency.interval));
+      setCustomUnitDraft(recurrenceFrequency.unit);
+    }
     setErrorMessage("");
   }, [dueAt, recurrenceFrequency, taskTitle]);
 
+  const recurrenceDraft = useMemo<RecurrenceFrequency>(() => {
+    if (recurrenceModeDraft === "") {
+      return null;
+    }
+
+    if (recurrenceModeDraft !== "custom") {
+      return recurrenceModeDraft;
+    }
+
+    const interval = Number.parseInt(customIntervalDraft, 10);
+    if (!Number.isFinite(interval) || interval <= 0) {
+      return null;
+    }
+
+    return {
+      interval,
+      unit: customUnitDraft,
+    };
+  }, [customIntervalDraft, customUnitDraft, recurrenceModeDraft]);
+
   const summary = useMemo(() => {
     const parts: string[] = [];
-    if (dueAt) {
-      parts.push(`Due ${formatDueDate(dueAt)}`);
+    const draftDueAt = dateInputValueToTimestamp(dueDateDraft);
+    if (draftDueAt) {
+      parts.push(`Due ${formatDueDate(draftDueAt)}`);
     }
-    if (recurrenceFrequency) {
-      parts.push(getRecurrenceLabel(recurrenceFrequency));
+    if (recurrenceDraft) {
+      parts.push(getRecurrenceLabel(recurrenceDraft));
     }
     return parts.join(" • ");
-  }, [dueAt, recurrenceFrequency]);
+  }, [dueDateDraft, recurrenceDraft]);
 
   const handleSave = async () => {
     const nextDueAt = dateInputValueToTimestamp(dueDateDraft);
+    if (recurrenceModeDraft === "custom" && recurrenceDraft === null) {
+      setErrorMessage("Enter a valid custom cadence like 10 days.");
+      return;
+    }
+
     if (recurrenceDraft && !nextDueAt) {
       setErrorMessage("Recurring tasks need a due date.");
       return;
@@ -116,12 +160,18 @@ export function TaskSchedulePanel({
               Repeat
             </span>
             <select
-              value={recurrenceDraft ?? ""}
+              value={recurrenceModeDraft}
               onChange={(event) => {
-                const nextValue = event.target.value as Exclude<RecurrenceFrequency, null> | "";
-                const nextFrequency = nextValue === "" ? null : nextValue;
-                setRecurrenceDraft(nextFrequency);
-                if (!dueDateDraft && nextFrequency) {
+                const nextValue = event.target.value as RecurrencePreset | "custom" | "";
+                setRecurrenceModeDraft(nextValue);
+                if (nextValue === "") {
+                  setCustomIntervalDraft("");
+                  setCustomUnitDraft("day");
+                } else if (nextValue !== "custom") {
+                  setCustomIntervalDraft("");
+                  setCustomUnitDraft("day");
+                }
+                if (!dueDateDraft && nextValue) {
                   setDueDateDraft(
                     timestampToDateInputValue(getTodayReferenceDate().getTime()),
                   );
@@ -135,8 +185,52 @@ export function TaskSchedulePanel({
                   {getRecurrenceLabel(frequency)}
                 </option>
               ))}
+              <option value="custom">Custom…</option>
             </select>
           </label>
+
+          {recurrenceModeDraft === "custom" ? (
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,140px)_minmax(0,1fr)]">
+              <label className="block">
+                <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                  Every
+                </span>
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  inputMode="numeric"
+                  value={customIntervalDraft}
+                  onChange={(event) => setCustomIntervalDraft(event.target.value)}
+                  placeholder="10"
+                  className="mt-3 w-full border border-[var(--workspace-border)] bg-transparent px-3 py-2 text-sm outline-none transition focus:border-[var(--workspace-accent)]"
+                />
+              </label>
+
+              <label className="block">
+                <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                  Unit
+                </span>
+                <select
+                  value={customUnitDraft}
+                  onChange={(event) => setCustomUnitDraft(event.target.value as RecurrenceUnit)}
+                  className="mt-3 w-full border border-[var(--workspace-border)] bg-transparent px-3 py-2 text-sm outline-none transition focus:border-[var(--workspace-accent)]"
+                >
+                  {RECURRENCE_UNITS.map((unit) => (
+                    <option key={unit} value={unit}>
+                      {unit === "day"
+                        ? "Days"
+                        : unit === "week"
+                          ? "Weeks"
+                          : unit === "month"
+                            ? "Months"
+                            : "Years"}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          ) : null}
 
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
@@ -191,9 +285,16 @@ export function TaskSchedulePanel({
             type="button"
             onClick={() => {
               setDueDateDraft("");
-              setRecurrenceDraft(null);
+              setRecurrenceModeDraft("");
+              setCustomIntervalDraft("");
+              setCustomUnitDraft("day");
             }}
-            disabled={isSaving || (!dueDateDraft && recurrenceDraft === null)}
+            disabled={
+              isSaving ||
+              (!dueDateDraft &&
+                recurrenceModeDraft === "" &&
+                customIntervalDraft.length === 0)
+            }
             className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition enabled:hover:border-[var(--workspace-accent)] enabled:hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             Clear

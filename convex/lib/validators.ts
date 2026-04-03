@@ -19,6 +19,15 @@ export const recurrenceFrequencyValidator = v.union(
   v.literal("weekly"),
   v.literal("monthly"),
   v.literal("yearly"),
+  v.object({
+    interval: v.number(),
+    unit: v.union(
+      v.literal("day"),
+      v.literal("week"),
+      v.literal("month"),
+      v.literal("year"),
+    ),
+  }),
   v.null(),
 );
 export const nullableNodeIdValidator = v.union(v.id("nodes"), v.null());

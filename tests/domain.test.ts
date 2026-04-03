@@ -25,8 +25,11 @@ import {
 } from "../lib/domain/inlineFormatting";
 import {
   advanceRecurringDueDate,
+  areRecurrenceFrequenciesEqual,
   dateInputValueToTimestamp,
+  getRecurrenceLabel,
   isOverdueDueDate,
+  parseRecurrenceFrequency,
   timestampToDateInputValue,
 } from "../lib/domain/recurrence";
 
@@ -359,6 +362,47 @@ test("recurring due dates can advance from the original due date or today", () =
       now: new Date(2026, 3, 10, 8, 30, 0, 0),
     }),
     new Date(2026, 3, 17, 12, 0, 0, 0).getTime(),
+  );
+
+  assert.equal(
+    advanceRecurringDueDate({
+      dueAt,
+      frequency: {
+        interval: 10,
+        unit: "day",
+      },
+      mode: "dueDate",
+    }),
+    new Date(2026, 3, 11, 12, 0, 0, 0).getTime(),
+  );
+});
+
+test("custom recurrence labels and parsing work for widened cadence values", () => {
+  assert.equal(
+    getRecurrenceLabel({
+      interval: 10,
+      unit: "day",
+    }),
+    "Every 10 days",
+  );
+
+  assert.deepEqual(
+    parseRecurrenceFrequency({
+      interval: 3,
+      unit: "week",
+    }),
+    {
+      interval: 3,
+      unit: "week",
+    },
+  );
+
+  assert.equal(
+    areRecurrenceFrequenciesEqual(
+      { interval: 10, unit: "day" },
+      { interval: 10, unit: "day" },
+    ),
+    true,
   );
 });
 

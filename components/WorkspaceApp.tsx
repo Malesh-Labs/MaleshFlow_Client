@@ -40,10 +40,11 @@ import {
 import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
 import {
   advanceRecurringDueDate,
+  areRecurrenceFrequenciesEqual,
   formatDueDate,
   getRecurrenceLabel,
   isOverdueDueDate,
-  RECURRENCE_FREQUENCIES,
+  parseRecurrenceFrequency,
   type RecurrenceFrequency,
   type RecurringCompletionMode,
 } from "@/lib/domain/recurrence";
@@ -729,17 +730,14 @@ function getNodeRecurrenceFrequency(
   }
 
   if ("recurrenceFrequency" in node) {
-    return (node.recurrenceFrequency ?? null) as RecurrenceFrequency;
+    return parseRecurrenceFrequency(node.recurrenceFrequency);
   }
 
   const sourceMeta =
     "sourceMeta" in node && node.sourceMeta && typeof node.sourceMeta === "object"
       ? (node.sourceMeta as Record<string, unknown>)
       : {};
-  const frequency = sourceMeta.recurrenceFrequency;
-  return RECURRENCE_FREQUENCIES.includes(frequency as Exclude<RecurrenceFrequency, null>)
-    ? (frequency as Exclude<RecurrenceFrequency, null>)
-    : null;
+  return parseRecurrenceFrequency(sourceMeta.recurrenceFrequency);
 }
 
 function getRecurringCompletionTransition(
@@ -1494,9 +1492,7 @@ function isOutlineClipboardNode(value: unknown): value is OutlineClipboardNode {
     (record.dueAt === undefined || typeof record.dueAt === "number" || record.dueAt === null) &&
     (record.recurrenceFrequency === undefined ||
       record.recurrenceFrequency === null ||
-      RECURRENCE_FREQUENCIES.includes(
-        record.recurrenceFrequency as Exclude<RecurrenceFrequency, null>,
-      )) &&
+      parseRecurrenceFrequency(record.recurrenceFrequency) !== null) &&
     typeof record.lockKind === "boolean" &&
     Array.isArray(record.children) &&
     record.children.every((child) => isOutlineClipboardNode(child))
@@ -3360,7 +3356,10 @@ function ConfiguredWorkspace({
       beforeSnapshot.taskStatus === afterSnapshot.taskStatus &&
       beforeSnapshot.noteCompleted === afterSnapshot.noteCompleted &&
       beforeSnapshot.dueAt === afterSnapshot.dueAt &&
-      beforeSnapshot.recurrenceFrequency === afterSnapshot.recurrenceFrequency
+      areRecurrenceFrequenciesEqual(
+        beforeSnapshot.recurrenceFrequency ?? null,
+        afterSnapshot.recurrenceFrequency ?? null,
+      )
     ) {
       return;
     }
@@ -8432,7 +8431,10 @@ function OutlineNodeEditor({
       beforeSnapshot.taskStatus === afterValue.taskStatus &&
       beforeSnapshot.noteCompleted === afterValue.noteCompleted &&
       beforeSnapshot.dueAt === afterValue.dueAt &&
-      beforeSnapshot.recurrenceFrequency === afterValue.recurrenceFrequency
+      areRecurrenceFrequenciesEqual(
+        beforeSnapshot.recurrenceFrequency ?? null,
+        afterValue.recurrenceFrequency ?? null,
+      )
     ) {
       return null;
     }
