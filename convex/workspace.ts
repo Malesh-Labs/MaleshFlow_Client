@@ -665,33 +665,57 @@ export const getPageTree = query({
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
 
-    try {
-      const page = await ctx.db.get(args.pageId);
-      if (!page) {
-        return null;
-      }
+    const page = await ctx.db.get(args.pageId);
+    if (!page) {
+      return null;
+    }
 
-      const warnings: string[] = [];
-      const { nodes, truncated: nodesTruncated } = await listPageNodesForTree(ctx, args.pageId);
+    const warnings: string[] = [];
+
+    let nodes: Doc<"nodes">[] = [];
+    let nodesTruncated = false;
+    try {
+      const result = await listPageNodesForTree(ctx, args.pageId);
+      nodes = result.nodes;
+      nodesTruncated = result.truncated;
       if (nodesTruncated) {
         warnings.push(
           "This page is too large to load fully right now, so only the first portion is shown.",
         );
       }
-
-      const { backlinks, truncated: backlinksTruncated } = await listPageBacklinksForTree(
-        ctx,
-        args.pageId,
-      );
-      if (backlinksTruncated) {
-        warnings.push("Backlink counts are partial for this page.");
-      }
-
-      const visibleBacklinks = (await filterVisibleLinks(ctx, backlinks)).filter((link) => {
-        return link.kind === "page";
+    } catch (error) {
+      console.error("Failed to load page-tree nodes", {
+        pageId: args.pageId,
+        error,
       });
+      warnings.push(
+        "Some outline items could not be loaded right now, so this page may be partially empty.",
+      );
+    }
 
-      let nodeBacklinkCounts: Record<string, number> = {};
+    let visibleBacklinks: Doc<"links">[] = [];
+    let backlinksTruncated = false;
+    if (!page.archived && !nodesTruncated) {
+      try {
+        const backlinkResult = await listPageBacklinksForTree(ctx, args.pageId);
+        backlinksTruncated = backlinkResult.truncated;
+        if (backlinksTruncated) {
+          warnings.push("Backlink counts are partial for this page.");
+        }
+        visibleBacklinks = (await filterVisibleLinks(ctx, backlinkResult.backlinks)).filter(
+          (link) => link.kind === "page",
+        );
+      } catch (error) {
+        console.error("Failed to load page-tree backlinks", {
+          pageId: args.pageId,
+          error,
+        });
+        warnings.push("Backlink metadata was skipped while loading this page.");
+      }
+    }
+
+    let nodeBacklinkCounts: Record<string, number> = {};
+    if (!page.archived && nodes.length > 0 && !nodesTruncated) {
       try {
         nodeBacklinkCounts = await buildVisibleNodeBacklinkCounts(
           ctx,
@@ -704,36 +728,17 @@ export const getPageTree = query({
         });
         warnings.push("Some backlink badges were skipped while loading this page.");
       }
-
-      return {
-        page,
-        nodes,
-        backlinks: visibleBacklinks,
-        pageBacklinkCount: visibleBacklinks.length,
-        pageBacklinkCountTruncated: backlinksTruncated,
-        nodeBacklinkCounts,
-        loadWarning: warnings.length > 0 ? warnings.join(" ") : null,
-      };
-    } catch (error) {
-      console.error("Failed to load page tree", {
-        pageId: args.pageId,
-        error,
-      });
-      const page = await ctx.db.get(args.pageId);
-      if (!page) {
-        return null;
-      }
-      return {
-        page,
-        nodes: [],
-        backlinks: [],
-        pageBacklinkCount: 0,
-        pageBacklinkCountTruncated: false,
-        nodeBacklinkCounts: {},
-        loadWarning:
-          "This page could not be loaded fully right now, so the outline was temporarily skipped.",
-      };
     }
+
+    return {
+      page,
+      nodes,
+      backlinks: visibleBacklinks,
+      pageBacklinkCount: visibleBacklinks.length,
+      pageBacklinkCountTruncated: backlinksTruncated,
+      nodeBacklinkCounts,
+      loadWarning: warnings.length > 0 ? warnings.join(" ") : null,
+    };
   },
 });
 
