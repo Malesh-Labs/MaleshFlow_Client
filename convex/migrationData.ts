@@ -102,39 +102,119 @@ function getMigrationSourceMeta(
   return node.sourceMeta as Record<string, unknown>;
 }
 
-async function recomputeRunProgress(ctx: MutationCtx, runId: Id<"migrationRuns">) {
-  const chunks = await ctx.db
-    .query("migrationChunks")
-    .withIndex("by_run_and_order", (query) => query.eq("runId", runId))
-    .collect();
+function getStatusCounters(status: Doc<"migrationChunks">["status"]) {
+  return {
+    readyChunks: status === "ready" ? 1 : 0,
+    reviewChunks:
+      status === "pending" ||
+      status === "needs_review" ||
+      status === "ready" ||
+      status === "approved"
+        ? 1
+        : 0,
+    appliedChunks: status === "applied" ? 1 : 0,
+    skippedChunks: status === "skipped" ? 1 : 0,
+    errorChunks: status === "error" ? 1 : 0,
+  };
+}
 
-  const readyChunks = chunks.filter((chunk) => chunk.status === "ready").length;
-  const reviewChunks = chunks.filter(
-    (chunk) =>
-      chunk.status === "pending" ||
-      chunk.status === "needs_review" ||
-      chunk.status === "approved",
-  ).length;
-  const appliedChunks = chunks.filter((chunk) => chunk.status === "applied").length;
-  const skippedChunks = chunks.filter((chunk) => chunk.status === "skipped").length;
-  const errorChunks = chunks.filter((chunk) => chunk.status === "error").length;
-  const totalChunks = chunks.length;
+function getRunStatusFromCounts(run: Pick<
+  Doc<"migrationRuns">,
+  "totalChunks" | "appliedChunks" | "skippedChunks" | "errorChunks"
+>) {
+  if (run.errorChunks > 0) {
+    return "error" as const;
+  }
 
-  const status =
-    errorChunks > 0
-      ? "error"
-      : totalChunks > 0 && appliedChunks + skippedChunks === totalChunks
-        ? "completed"
-        : "reviewing";
+  if (run.totalChunks > 0 && run.appliedChunks + run.skippedChunks === run.totalChunks) {
+    return "completed" as const;
+  }
+
+  return "reviewing" as const;
+}
+
+async function patchRunProgressDelta(
+  ctx: MutationCtx,
+  runId: Id<"migrationRuns">,
+  deltas: Partial<
+    Pick<
+      Doc<"migrationRuns">,
+      | "totalChunks"
+      | "readyChunks"
+      | "reviewChunks"
+      | "appliedChunks"
+      | "skippedChunks"
+      | "errorChunks"
+      | "sourceDocumentCount"
+    >
+  >,
+) {
+  const run = await ctx.db.get(runId);
+  if (!run) {
+    return;
+  }
+
+  const nextRun = {
+    ...run,
+    totalChunks: Math.max(0, run.totalChunks + (deltas.totalChunks ?? 0)),
+    readyChunks: Math.max(0, run.readyChunks + (deltas.readyChunks ?? 0)),
+    reviewChunks: Math.max(0, run.reviewChunks + (deltas.reviewChunks ?? 0)),
+    appliedChunks: Math.max(0, run.appliedChunks + (deltas.appliedChunks ?? 0)),
+    skippedChunks: Math.max(0, run.skippedChunks + (deltas.skippedChunks ?? 0)),
+    errorChunks: Math.max(0, run.errorChunks + (deltas.errorChunks ?? 0)),
+    sourceDocumentCount: Math.max(
+      0,
+      run.sourceDocumentCount + (deltas.sourceDocumentCount ?? 0),
+    ),
+  };
+  const status = getRunStatusFromCounts(nextRun);
 
   await ctx.db.patch(runId, {
+    totalChunks: nextRun.totalChunks,
+    readyChunks: nextRun.readyChunks,
+    reviewChunks: nextRun.reviewChunks,
+    appliedChunks: nextRun.appliedChunks,
+    skippedChunks: nextRun.skippedChunks,
+    errorChunks: nextRun.errorChunks,
+    sourceDocumentCount: nextRun.sourceDocumentCount,
     status,
-    totalChunks,
-    readyChunks,
-    reviewChunks,
-    appliedChunks,
-    skippedChunks,
-    errorChunks,
+    updatedAt: getTimestamp(),
+    completedAt: status === "completed" ? getTimestamp() : undefined,
+    lastError: status === "error" ? run.lastError : undefined,
+  });
+}
+
+async function transitionChunkStatus(
+  ctx: MutationCtx,
+  runId: Id<"migrationRuns">,
+  previousStatus: Doc<"migrationChunks">["status"],
+  nextStatus: Doc<"migrationChunks">["status"],
+) {
+  if (previousStatus === nextStatus) {
+    return;
+  }
+
+  const previousCounters = getStatusCounters(previousStatus);
+  const nextCounters = getStatusCounters(nextStatus);
+
+  await patchRunProgressDelta(ctx, runId, {
+    readyChunks: nextCounters.readyChunks - previousCounters.readyChunks,
+    reviewChunks: nextCounters.reviewChunks - previousCounters.reviewChunks,
+    appliedChunks: nextCounters.appliedChunks - previousCounters.appliedChunks,
+    skippedChunks: nextCounters.skippedChunks - previousCounters.skippedChunks,
+    errorChunks: nextCounters.errorChunks - previousCounters.errorChunks,
+  });
+}
+
+async function recomputeRunProgress(ctx: MutationCtx, runId: Id<"migrationRuns">) {
+  const run = await ctx.db.get(runId);
+  if (!run) {
+    return;
+  }
+
+  const status = getRunStatusFromCounts(run);
+  await ctx.db.patch(runId, {
+    status,
     updatedAt: getTimestamp(),
     completedAt: status === "completed" ? getTimestamp() : undefined,
   });
@@ -559,11 +639,11 @@ export const skipMigrationChunk = mutation({
       throw new Error("Chunk not found.");
     }
 
+    await transitionChunkStatus(ctx, chunk.runId, chunk.status, "skipped");
     await ctx.db.patch(args.chunkId, {
       status: "skipped",
       updatedAt: getTimestamp(),
     });
-    await recomputeRunProgress(ctx, chunk.runId);
   },
 });
 
@@ -711,13 +791,11 @@ export const appendMigrationSourceDocument = internalMutation({
       });
     }
 
-    const run = await ctx.db.get(args.runId);
-    if (run) {
-      await ctx.db.patch(args.runId, {
-        sourceDocumentCount: run.sourceDocumentCount + 1,
-        updatedAt: now,
-      });
-    }
+    await patchRunProgressDelta(ctx, args.runId, {
+      sourceDocumentCount: 1,
+      totalChunks: args.document.chunks.length,
+      reviewChunks: args.document.chunks.length,
+    });
   },
 });
 
@@ -745,6 +823,7 @@ export const storeMigrationSuggestion = internalMutation({
       throw new Error("Chunk not found.");
     }
 
+    await transitionChunkStatus(ctx, chunk.runId, chunk.status, args.status);
     await ctx.db.patch(args.chunkId, {
       status: args.status,
       preview: args.preview,
@@ -753,7 +832,6 @@ export const storeMigrationSuggestion = internalMutation({
       matchedExampleId: args.matchedExampleId,
       updatedAt: getTimestamp(),
     });
-    await recomputeRunProgress(ctx, chunk.runId);
   },
 });
 
@@ -768,12 +846,16 @@ export const markMigrationChunkError = internalMutation({
       return;
     }
 
+    await transitionChunkStatus(ctx, chunk.runId, chunk.status, "error");
     await ctx.db.patch(args.chunkId, {
       status: "error",
       lastError: args.error,
       updatedAt: getTimestamp(),
     });
-    await recomputeRunProgress(ctx, chunk.runId);
+    await ctx.db.patch(chunk.runId, {
+      lastError: args.error,
+      updatedAt: getTimestamp(),
+    });
   },
 });
 
@@ -809,6 +891,7 @@ export const applyMigrationChunkInternal = internalMutation({
     const now = getTimestamp();
 
     if (plan.action === "skip") {
+      await transitionChunkStatus(ctx, chunk.runId, chunk.status, "skipped");
       await ctx.db.patch(args.chunkId, {
         status: "skipped",
         approvedPlan: plan,
@@ -816,7 +899,6 @@ export const applyMigrationChunkInternal = internalMutation({
         updatedAt: now,
         appliedAt: now,
       });
-      await recomputeRunProgress(ctx, chunk.runId);
       return chunk;
     }
 
@@ -892,6 +974,7 @@ export const applyMigrationChunkInternal = internalMutation({
       ? existingLessonsDoc
       : `${existingLessonsDoc.length > 0 ? `${existingLessonsDoc}\n` : ""}${lessonLine}`;
 
+    await transitionChunkStatus(ctx, chunk.runId, chunk.status, "applied");
     await ctx.db.patch(args.chunkId, {
       status: "applied",
       approvedPlan: plan,
@@ -910,6 +993,7 @@ export const applyMigrationChunkInternal = internalMutation({
     await ctx.db.patch(run._id, {
       lessonsDoc,
       updatedAt: now,
+      lastError: undefined,
     });
     await ctx.db.insert("migrationExamples", {
       sourceType: run.sourceType,
@@ -923,7 +1007,6 @@ export const applyMigrationChunkInternal = internalMutation({
     });
 
     await enqueuePageRootEmbeddingRefresh(ctx, destinationPageId);
-    await recomputeRunProgress(ctx, chunk.runId);
 
     return {
       destinationPageId,

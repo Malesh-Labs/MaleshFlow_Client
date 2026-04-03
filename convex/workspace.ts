@@ -23,6 +23,8 @@ function getTimestamp() {
   return Date.now();
 }
 
+const MAX_BACKLINK_COUNT_NODE_BATCH = 250;
+
 function getPageSourceMeta(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
   return page && typeof page.sourceMeta === "object" && page.sourceMeta
     ? (page.sourceMeta as Record<string, unknown>)
@@ -205,6 +207,10 @@ async function buildVisibleNodeBacklinkCounts(
   ctx: QueryCtx,
   nodeIds: Id<"nodes">[],
 ) {
+  if (nodeIds.length > MAX_BACKLINK_COUNT_NODE_BATCH) {
+    return {};
+  }
+
   const counts = await Promise.all(
     [...new Set(nodeIds)].map(async (nodeId) => {
       const links = await ctx.db
@@ -282,10 +288,15 @@ export const getSidebarTree = query({
         link.resolved &&
         link.targetPageId !== null,
     );
-    const nodeBacklinkCounts = await buildVisibleNodeBacklinkCounts(
-      ctx,
-      nodes.map((node) => node._id),
-    );
+    let nodeBacklinkCounts: Record<string, number> = {};
+    try {
+      nodeBacklinkCounts = await buildVisibleNodeBacklinkCounts(
+        ctx,
+        nodes.map((node) => node._id),
+      );
+    } catch {
+      nodeBacklinkCounts = {};
+    }
     return {
       page: sidebarPage,
       nodes,
