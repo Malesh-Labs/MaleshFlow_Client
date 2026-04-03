@@ -36,6 +36,10 @@ import {
   parseRecurrenceFrequency,
   timestampToDateInputValue,
 } from "../lib/domain/recurrence";
+import {
+  buildDefaultMigrationLessonsDoc,
+  normalizeImportedOutlineText,
+} from "../lib/domain/migration";
 
 test("extractLinks finds wiki links and node refs", () => {
   const links = extractLinks(
@@ -460,6 +464,20 @@ test("parseMarkdownFile converts headings, bullets, and tasks into nodes", () =>
   assert.equal(page.nodes[2]?.kind, "task");
   assert.equal(page.nodes[2]?.taskStatus, "todo");
   assert.equal(page.nodes[2]?.parentTempId, page.nodes[1]?.tempId);
+});
+
+test("normalizeImportedOutlineText collapses long separator glyphs", () => {
+  assert.equal(
+    normalizeImportedOutlineText("alpha\n—————————\nomega"),
+    "alpha\n---\nomega",
+  );
+});
+
+test("buildDefaultMigrationLessonsDoc seeds dynalist-specific guidance", () => {
+  const doc = buildDefaultMigrationLessonsDoc("dynalist");
+  assert.match(doc, /Dynalist Migration Lessons/);
+  assert.match(doc, /\[\[label\]\]/);
+  assert.match(doc, /---/);
 });
 
 test("serializePageToMarkdown emits readable markdown with tasks", () => {

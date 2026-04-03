@@ -21,8 +21,13 @@ import type {
   MigrationChunkAncestor,
   MigrationChunkPlan,
   MigrationNormalizedNode,
+  MigrationSourceType,
 } from "../lib/domain/migration";
-import { migrationChunkPlanSchema } from "../lib/domain/migration";
+import {
+  buildDefaultMigrationLessonsDoc,
+  migrationChunkPlanSchema,
+  normalizeImportedOutlineText,
+} from "../lib/domain/migration";
 import { extractLinkMatches } from "../lib/domain/links";
 import { stripTagSyntax } from "../lib/domain/migration";
 
@@ -120,8 +125,12 @@ function getStatusCounters(status: Doc<"migrationChunks">["status"]) {
 
 function getRunStatusFromCounts(run: Pick<
   Doc<"migrationRuns">,
-  "totalChunks" | "appliedChunks" | "skippedChunks" | "errorChunks"
+  "status" | "totalChunks" | "appliedChunks" | "skippedChunks" | "errorChunks"
 >) {
+  if (run.status === "abandoned") {
+    return "abandoned" as const;
+  }
+
   if (run.errorChunks > 0) {
     return "error" as const;
   }
@@ -221,6 +230,11 @@ async function recomputeRunProgress(ctx: MutationCtx, runId: Id<"migrationRuns">
 }
 
 async function getNextChunkNeedingAttention(ctx: QueryCtx, runId: Id<"migrationRuns">) {
+  const run = await ctx.db.get(runId);
+  if (!run || run.status === "abandoned") {
+    return null;
+  }
+
   const statuses: Array<Doc<"migrationChunks">["status"]> = [
     "error",
     "needs_review",
@@ -242,6 +256,43 @@ async function getNextChunkNeedingAttention(ctx: QueryCtx, runId: Id<"migrationR
   }
 
   return null;
+}
+
+async function readMigrationLessonsDoc(
+  ctx: QueryCtx | MutationCtx,
+  sourceType: MigrationSourceType,
+) {
+  return await ctx.db
+    .query("migrationLessons")
+    .withIndex("by_source_type", (query) => query.eq("sourceType", sourceType))
+    .unique();
+}
+
+async function ensureMigrationLessonsDoc(
+  ctx: MutationCtx,
+  sourceType: MigrationSourceType,
+) {
+  const existing = await readMigrationLessonsDoc(ctx, sourceType);
+
+  if (existing) {
+    return existing;
+  }
+
+  const now = getTimestamp();
+  const lessonsDoc = buildDefaultMigrationLessonsDoc(sourceType);
+  const lessonId = await ctx.db.insert("migrationLessons", {
+    sourceType,
+    lessonsDoc,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const created = await ctx.db.get(lessonId);
+  if (!created) {
+    throw new Error("Could not create migration lessons doc.");
+  }
+
+  return created;
 }
 
 function buildRunSourceDocumentSummaries(
@@ -306,7 +357,7 @@ function applyTextTransforms(
   transforms: MigrationChunkPlan["transforms"],
   knownPageIdsByTitle: Map<string, Id<"pages">>,
 ) {
-  let nextText = text;
+  let nextText = normalizeImportedOutlineText(text);
   if (transforms.stripTags) {
     nextText = stripTagSyntax(nextText);
   }
@@ -571,6 +622,25 @@ export const listMigrationRuns = query({
   },
 });
 
+export const getMigrationLessonsDoc = query({
+  args: {
+    ownerKey: v.string(),
+    sourceType: v.union(
+      v.literal("dynalist"),
+      v.literal("workflowy"),
+      v.literal("logseq"),
+    ),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const entry = await readMigrationLessonsDoc(ctx, args.sourceType);
+    return {
+      sourceType: args.sourceType,
+      lessonsDoc: entry?.lessonsDoc ?? buildDefaultMigrationLessonsDoc(args.sourceType),
+    };
+  },
+});
+
 export const getMigrationRun = query({
   args: {
     ownerKey: v.string(),
@@ -605,6 +675,8 @@ export const getMigrationRun = query({
 
     return {
       run,
+      lessonsDoc:
+        (await readMigrationLessonsDoc(ctx, run.sourceType))?.lessonsDoc ?? run.lessonsDoc,
       sourceDocuments: buildRunSourceDocumentSummaries(sourceDocuments, chunks),
       nextChunk,
       recentChunks,
@@ -615,14 +687,49 @@ export const getMigrationRun = query({
 export const updateMigrationLessonsDoc = mutation({
   args: {
     ownerKey: v.string(),
-    runId: v.id("migrationRuns"),
+    sourceType: v.union(
+      v.literal("dynalist"),
+      v.literal("workflowy"),
+      v.literal("logseq"),
+    ),
+    runId: v.optional(v.id("migrationRuns")),
     lessonsDoc: v.string(),
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
-    await ctx.db.patch(args.runId, {
+    const lessonsEntry = await ensureMigrationLessonsDoc(ctx, args.sourceType);
+    await ctx.db.patch(lessonsEntry._id, {
       lessonsDoc: args.lessonsDoc,
       updatedAt: getTimestamp(),
+    });
+    if (args.runId) {
+      const run = await ctx.db.get(args.runId);
+      if (run) {
+        await ctx.db.patch(args.runId, {
+          lessonsDoc: args.lessonsDoc,
+          updatedAt: getTimestamp(),
+        });
+      }
+    }
+  },
+});
+
+export const abandonMigrationRun = mutation({
+  args: {
+    ownerKey: v.string(),
+    runId: v.id("migrationRuns"),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const run = await ctx.db.get(args.runId);
+    if (!run) {
+      throw new Error("Migration run not found.");
+    }
+
+    await ctx.db.patch(args.runId, {
+      status: "abandoned",
+      updatedAt: getTimestamp(),
+      completedAt: getTimestamp(),
     });
   },
 });
@@ -703,16 +810,17 @@ export const createMigrationRun = internalMutation({
     ),
     title: v.string(),
     sourceSummary: v.string(),
-    lessonsDoc: v.string(),
+    lessonsDoc: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = getTimestamp();
+    const lessonsEntry = await ensureMigrationLessonsDoc(ctx, args.sourceType);
     return await ctx.db.insert("migrationRuns", {
       sourceType: args.sourceType,
       status: "draft",
       title: args.title,
       sourceSummary: args.sourceSummary,
-      lessonsDoc: args.lessonsDoc,
+      lessonsDoc: args.lessonsDoc ?? lessonsEntry.lessonsDoc,
       totalChunks: 0,
       readyChunks: 0,
       reviewChunks: 0,
@@ -973,6 +1081,10 @@ export const applyMigrationChunkInternal = internalMutation({
     const lessonsDoc = existingLessonsDoc.includes(lessonLine)
       ? existingLessonsDoc
       : `${existingLessonsDoc.length > 0 ? `${existingLessonsDoc}\n` : ""}${lessonLine}`;
+    const lessonsEntry = await ensureMigrationLessonsDoc(ctx, run.sourceType);
+    const nextPersistentLessons = lessonsEntry.lessonsDoc.trimEnd().includes(lessonLine)
+      ? lessonsEntry.lessonsDoc.trimEnd()
+      : `${lessonsEntry.lessonsDoc.trimEnd().length > 0 ? `${lessonsEntry.lessonsDoc.trimEnd()}\n` : ""}${lessonLine}`;
 
     await transitionChunkStatus(ctx, chunk.runId, chunk.status, "applied");
     await ctx.db.patch(args.chunkId, {
@@ -994,6 +1106,10 @@ export const applyMigrationChunkInternal = internalMutation({
       lessonsDoc,
       updatedAt: now,
       lastError: undefined,
+    });
+    await ctx.db.patch(lessonsEntry._id, {
+      lessonsDoc: nextPersistentLessons,
+      updatedAt: now,
     });
     await ctx.db.insert("migrationExamples", {
       sourceType: run.sourceType,

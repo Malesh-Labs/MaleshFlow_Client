@@ -5,11 +5,13 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
+import type { MigrationChunkPlan } from "@/lib/domain/migration";
 
 const EMPTY_MIGRATION_RUNS: Doc<"migrationRuns">[] = [];
 
 type MigrationRunDetails = {
   run: Doc<"migrationRuns">;
+  lessonsDoc: string;
   sourceDocuments: Array<{
     document: Doc<"migrationSourceDocuments">;
     totalChunks: number;
@@ -62,6 +64,7 @@ export function MigrationPanel({ ownerKey }: MigrationPanelProps) {
   const [isApplying, setIsApplying] = useState(false);
   const [isApplyingToRemaining, setIsApplyingToRemaining] = useState(false);
   const [isSavingLessons, setIsSavingLessons] = useState(false);
+  const [isAbandoningRun, setIsAbandoningRun] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const runs = useQuery(api.migrationData.listMigrationRuns, { ownerKey }) ?? EMPTY_MIGRATION_RUNS;
@@ -80,8 +83,13 @@ export function MigrationPanel({ ownerKey }: MigrationPanelProps) {
   const applyMigrationChunkToRemaining = useAction(
     api.migration.applyMigrationChunkToRemaining,
   );
+  const lessonsDocEntry = useQuery(api.migrationData.getMigrationLessonsDoc, {
+    ownerKey,
+    sourceType: runDetails?.run.sourceType ?? sourceType,
+  });
   const updateMigrationLessonsDoc = useMutation(api.migrationData.updateMigrationLessonsDoc);
   const skipMigrationChunk = useMutation(api.migrationData.skipMigrationChunk);
+  const abandonMigrationRun = useMutation(api.migrationData.abandonMigrationRun);
 
   const latestRunId = runs[0]?._id ?? null;
 
@@ -92,23 +100,18 @@ export function MigrationPanel({ ownerKey }: MigrationPanelProps) {
   }, [activeRunId, latestRunId]);
 
   const nextChunk = runDetails?.nextChunk ?? null;
-  const suggestion = nextChunk?.suggestion as
-    | {
-        summary: string;
-        rationale: string;
-        reviewInstruction: string;
-        preview: string[];
-        action: string;
-      }
-    | undefined;
+  const suggestion = nextChunk?.suggestion as MigrationChunkPlan | undefined;
 
   useEffect(() => {
-    if (!runDetails?.run) {
+    if (runDetails?.run) {
+      setLessonsDraft(runDetails.lessonsDoc);
       return;
     }
 
-    setLessonsDraft(runDetails.run.lessonsDoc);
-  }, [runDetails?.run, runDetails?.run?._id, runDetails?.run?.lessonsDoc]);
+    if (lessonsDocEntry) {
+      setLessonsDraft(lessonsDocEntry.lessonsDoc);
+    }
+  }, [lessonsDocEntry, runDetails?.lessonsDoc, runDetails?.run]);
 
   useEffect(() => {
     setGuidanceDraft(nextChunk?.guidance ?? suggestion?.reviewInstruction ?? "");
@@ -318,16 +321,13 @@ export function MigrationPanel({ ownerKey }: MigrationPanelProps) {
   };
 
   const handleSaveLessons = async () => {
-    if (!runDetails?.run) {
-      return;
-    }
-
     setIsSavingLessons(true);
     setErrorMessage("");
     try {
       await updateMigrationLessonsDoc({
         ownerKey,
-        runId: runDetails.run._id,
+        sourceType: runDetails?.run.sourceType ?? sourceType,
+        runId: runDetails?.run?._id,
         lessonsDoc: lessonsDraft,
       });
       setStatusMessage("Lessons doc saved.");
@@ -339,6 +339,40 @@ export function MigrationPanel({ ownerKey }: MigrationPanelProps) {
       setIsSavingLessons(false);
     }
   };
+
+  const handleAbandonRun = async () => {
+    if (!runDetails?.run) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Abandon "${runDetails.run.title}"? You can start a new ${runDetails.run.sourceType} migration afterward, but this run will stop being treated as active.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setIsAbandoningRun(true);
+    setErrorMessage("");
+    try {
+      await abandonMigrationRun({
+        ownerKey,
+        runId: runDetails.run._id,
+      });
+      setStatusMessage("Migration run abandoned.");
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Could not abandon the migration run.",
+      );
+    } finally {
+      setIsAbandoningRun(false);
+    }
+  };
+
+  const destinationDetails = suggestion?.destination ?? null;
+  const previewContentLines = (nextChunk?.preview ?? []).slice(
+    suggestion?.action === "skip" ? 1 : 2,
+  );
 
   return (
     <div className="grid h-[min(82vh,920px)] grid-cols-1 gap-0 overflow-hidden md:grid-cols-[1.1fr_0.9fr]">
@@ -500,9 +534,20 @@ export function MigrationPanel({ ownerKey }: MigrationPanelProps) {
                     ))}
                   </select>
                 </div>
-                <p className="mt-3 text-xs uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                    <p className="mt-3 text-xs uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
                   {runProgressLabel}
-                </p>
+                  {runDetails.run.status === "abandoned" ? " • abandoned" : ""}
+                    </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    disabled={isAbandoningRun || runDetails.run.status === "abandoned"}
+                    onClick={() => void handleAbandonRun()}
+                    className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-danger)] hover:text-[var(--workspace-danger)] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isAbandoningRun ? "Abandoning…" : "Abandon Run"}
+                  </button>
+                </div>
               </div>
 
               {nextChunk ? (
@@ -552,18 +597,59 @@ export function MigrationPanel({ ownerKey }: MigrationPanelProps) {
                       <p className="mt-2 text-sm leading-6 text-[var(--workspace-text-subtle)]">
                         {suggestion.rationale}
                       </p>
-                      {(nextChunk.preview ?? []).length > 0 ? (
-                        <div className="mt-3 space-y-2">
-                          {(nextChunk.preview ?? []).map((line, index) => (
-                            <p
-                              key={`${nextChunk._id}:preview:${index}`}
-                              className="text-sm text-[var(--workspace-text)]"
-                            >
-                              {line}
+                      <div className="mt-4 grid gap-4 md:grid-cols-2">
+                        <div className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface)] p-3">
+                          <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                            Target
+                          </p>
+                          <p className="mt-2 text-sm text-[var(--workspace-text)]">
+                            {suggestion.action === "skip"
+                              ? "Skip this chunk"
+                              : suggestion.action === "create_page"
+                                ? "Create page"
+                                : "Append to existing run page"}
+                          </p>
+                          {destinationDetails ? (
+                            <div className="mt-3 space-y-2 text-sm text-[var(--workspace-text-subtle)]">
+                              <p>Page: {destinationDetails.title}</p>
+                              <p>Type: {destinationDetails.pageType}</p>
+                              <p>Visibility: {destinationDetails.archived ? "Archived" : "Active"}</p>
+                              <p>
+                                Section: {destinationDetails.sectionSlot ?? "Main outline"}
+                              </p>
+                              <p>
+                                Transforms:
+                                {` ${suggestion.transforms.stripTags ? "strip tags" : "keep tags"}, ${suggestion.transforms.omitEmptyLines ? "omit empty lines" : "keep empty lines"}, ${suggestion.transforms.flattenUnresolvedLinks ? "flatten unresolved links" : "keep unresolved links"}, ${suggestion.transforms.forceKind ? `force ${suggestion.transforms.forceKind}s` : "keep original kinds"}`}
+                              </p>
+                            </div>
+                          ) : (
+                            <p className="mt-3 text-sm text-[var(--workspace-text-subtle)]">
+                              No destination page will be changed.
                             </p>
-                          ))}
+                          )}
                         </div>
-                      ) : null}
+                        <div className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface)] p-3">
+                          <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                            Imported preview
+                          </p>
+                          <div className="mt-2 space-y-2">
+                            {previewContentLines.length > 0 ? (
+                              previewContentLines.map((line, index) => (
+                                <p
+                                  key={`${nextChunk._id}:preview:${index}`}
+                                  className="whitespace-pre-wrap break-words text-sm text-[var(--workspace-text)]"
+                                >
+                                  {line}
+                                </p>
+                              ))
+                            ) : (
+                              <p className="text-sm text-[var(--workspace-text-subtle)]">
+                                No imported lines preview available.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   ) : null}
 
@@ -606,14 +692,16 @@ export function MigrationPanel({ ownerKey }: MigrationPanelProps) {
                       onClick={() => void handleSkip()}
                       className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
                     >
-                      Skip
+                      Deny / Skip
                     </button>
                   </div>
                 </div>
               ) : (
                 <div className="px-4 py-5">
                   <p className="text-sm text-[var(--workspace-text-subtle)]">
-                    No chunks are waiting for review in this run.
+                    {runDetails.run.status === "abandoned"
+                      ? "This migration run was abandoned. Start a new run from the same source app whenever you're ready."
+                      : "No chunks are waiting for review in this run."}
                   </p>
                 </div>
               )}
@@ -632,17 +720,20 @@ export function MigrationPanel({ ownerKey }: MigrationPanelProps) {
           <section className="border border-[var(--workspace-border)] bg-[var(--workspace-surface)] p-4">
             <div className="flex items-center justify-between gap-3">
               <p className="text-sm font-medium text-[var(--workspace-text)]">
-                Running lessons doc
+                App lessons doc
               </p>
               <button
                 type="button"
-                disabled={!runDetails?.run || isSavingLessons}
+                disabled={isSavingLessons}
                 onClick={() => void handleSaveLessons()}
                 className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
               >
                 {isSavingLessons ? "Saving…" : "Save"}
               </button>
             </div>
+            <p className="mt-2 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+              {runDetails?.run?.sourceType ?? sourceType}
+            </p>
             <textarea
               value={lessonsDraft}
               onChange={(event) => setLessonsDraft(event.target.value)}

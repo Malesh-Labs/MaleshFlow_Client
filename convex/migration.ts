@@ -12,6 +12,7 @@ import {
   chunkMigrationDocument,
   detectJournalDateFromPath,
   migrationChunkPlanSchema,
+  normalizeImportedOutlineText,
   type MigrationChunkPlan,
   type MigrationChunkSnapshot,
   type MigrationNormalizedNode,
@@ -191,7 +192,7 @@ function parseDynalistNodeTargetId(url: string) {
 function cleanDynalistInternalLinks(text: string, nodeLabelsById: Map<string, string>) {
   const matches = extractLinkMatches(text);
   if (matches.length === 0 && !text.includes("dynalist.io")) {
-    return text.trim();
+    return normalizeImportedOutlineText(text);
   }
 
   let cursor = 0;
@@ -203,7 +204,11 @@ function cleanDynalistInternalLinks(text: string, nodeLabelsById: Map<string, st
       match.link.targetUrl.includes("dynalist.io")
     ) {
       const targetNodeId = parseDynalistNodeTargetId(match.link.targetUrl);
-      nextText += nodeLabelsById.get(targetNodeId ?? "") ?? match.link.text;
+      const replacementLabel =
+        match.link.text.trim() ||
+        nodeLabelsById.get(targetNodeId ?? "")?.trim() ||
+        "";
+      nextText += replacementLabel.length > 0 ? `[[${replacementLabel}]]` : "";
     } else {
       nextText += text.slice(match.start, match.end);
     }
@@ -213,10 +218,13 @@ function cleanDynalistInternalLinks(text: string, nodeLabelsById: Map<string, st
 
   nextText = nextText.replace(
     /https?:\/\/dynalist\.io\/[^\s)]+/g,
-    (url) => nodeLabelsById.get(parseDynalistNodeTargetId(url) ?? "") ?? "",
+    (url) => {
+      const label = nodeLabelsById.get(parseDynalistNodeTargetId(url) ?? "")?.trim() ?? "";
+      return label.length > 0 ? `[[${label}]]` : "";
+    },
   );
 
-  return nextText.replace(/\s{2,}/g, " ").trim();
+  return normalizeImportedOutlineText(nextText.replace(/\s{2,}/g, " ").trim());
 }
 
 function normalizeDynalistDocument(
@@ -242,7 +250,9 @@ function normalizeDynalistDocument(
 
     const content = cleanDynalistInternalLinks(node.content?.trim() ?? "", nodeLabelsById);
     const note = cleanDynalistInternalLinks(node.note?.trim() ?? "", nodeLabelsById);
-    const baseText = [content, note].filter((value) => value.length > 0).join("\n");
+    const baseText = normalizeImportedOutlineText(
+      [content, note].filter((value) => value.length > 0).join("\n"),
+    );
     const headingLevel = Math.max(0, Math.min(3, node.heading ?? 0)) as 0 | 1 | 2 | 3;
 
     return {
@@ -302,7 +312,9 @@ function normalizeWorkflowyNode(
     layoutMode === "h1" ? 1 : layoutMode === "h2" ? 2 : layoutMode === "h3" ? 3 : 0;
   const kind = layoutMode === "todo" ? "task" : "note";
   const note = node.note?.trim() ?? "";
-  const baseText = [node.name.trim(), note].filter((value) => value.length > 0).join("\n");
+  const baseText = normalizeImportedOutlineText(
+    [node.name.trim(), note].filter((value) => value.length > 0).join("\n"),
+  );
 
   return {
     sourceNodeId: node.id,
@@ -337,10 +349,11 @@ function normalizeLogseqFile(path: string, content: string): MigrationSourceDocu
       node.tempId,
       {
         sourceNodeId: `${parsed.sourcePath}:${node.tempId}`,
-        text:
+        text: normalizeImportedOutlineText(
           typeof node.sourceMeta?.headingDepth === "number" && node.sourceMeta.headingDepth > 0
             ? withHeadingPrefix(node.text, node.sourceMeta.headingDepth)
             : node.text,
+        ),
         kind: node.kind,
         taskStatus: node.taskStatus,
         headingLevel:
@@ -372,34 +385,65 @@ function normalizeLogseqFile(path: string, content: string): MigrationSourceDocu
   };
 }
 
-function buildInitialLessonsDoc(sourceType: MigrationSourceType) {
-  return [
-    "# Migration Lessons",
-    "",
-    `Source app: ${sourceType}`,
-    "- Approved chunk decisions will accumulate here.",
-    "- Edit this document as needed before generating the next suggestion.",
-  ].join("\n");
+function summarizePlanTarget(
+  plan: MigrationChunkPlan,
+  sourceDocumentTitle: string,
+) {
+  if (plan.action === "skip") {
+    return `Skip this chunk from ${sourceDocumentTitle}.`;
+  }
+
+  const actionLabel =
+    plan.action === "create_page" ? "Create" : "Append to";
+  const destination = plan.destination;
+  return `${actionLabel} ${destination?.archived ? "archived " : ""}${destination?.pageType ?? "note"} page "${destination?.title ?? sourceDocumentTitle}"${destination?.sectionSlot ? ` in ${destination.sectionSlot}` : ""}.`;
+}
+
+function buildChunkContentPreview(
+  chunkText: string,
+  plan: MigrationChunkPlan,
+) {
+  const lines = normalizeImportedOutlineText(chunkText)
+    .split("\n")
+    .map((line) => {
+      let nextLine = line;
+      if (plan.transforms.stripTags) {
+        nextLine = nextLine.replace(/(^|\s)#[A-Za-z0-9_/-]+/g, "$1").replace(/\s{2,}/g, " ").trim();
+      }
+      if (plan.transforms.flattenUnresolvedLinks) {
+        nextLine = nextLine.replace(/\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g, "$1");
+      }
+      return nextLine;
+    })
+    .filter((line) => !plan.transforms.omitEmptyLines || line.trim().length > 0)
+    .slice(0, 8);
+
+  if (lines.length === 0) {
+    return ["(No visible lines would be imported.)"];
+  }
+
+  return lines;
 }
 
 function buildSuggestionPreview(
   plan: MigrationChunkPlan,
   sourceDocumentTitle: string,
+  chunkText: string,
 ) {
-  if (plan.preview.length > 0) {
-    return plan.preview;
-  }
-
-  if (plan.action === "skip") {
-    return [`Skip this chunk from ${sourceDocumentTitle}.`];
-  }
-
-  return [
-    `${plan.action === "create_page" ? "Create" : "Append to"} ${plan.destination?.archived ? "archived " : ""}${plan.destination?.pageType ?? "note"} page "${plan.destination?.title ?? sourceDocumentTitle}".`,
-    plan.destination?.sectionSlot
-      ? `Place imported content in ${plan.destination.sectionSlot}.`
-      : "Place imported content in the main outline.",
+  const destinationLines = [
+    summarizePlanTarget(plan, sourceDocumentTitle),
+    ...(plan.destination?.sectionSlot
+      ? [`Place imported content in ${plan.destination.sectionSlot}.`]
+      : plan.action === "skip"
+        ? []
+        : ["Place imported content in the main outline."]),
   ];
+  const contentLines =
+    plan.action === "skip"
+      ? ["Nothing will be imported from this chunk."]
+      : buildChunkContentPreview(chunkText, plan);
+
+  return [...destinationLines, ...contentLines];
 }
 
 function buildDestinationTitleForSourceDocument(
@@ -458,7 +502,7 @@ function buildBulkPlanForSourceDocument(
       }
     : null;
 
-  const plan: MigrationChunkPlan = {
+    const plan: MigrationChunkPlan = {
     ...templatePlan,
     action,
     summary:
@@ -479,7 +523,7 @@ function buildBulkPlanForSourceDocument(
 
   return {
     ...plan,
-    preview: buildSuggestionPreview(plan, sourceDocument.title),
+    preview: buildSuggestionPreview(plan, sourceDocument.title, ""),
   };
 }
 
@@ -560,7 +604,6 @@ async function createMigrationRunFromDocuments(
     sourceType,
     title: `${sourceType[0]?.toUpperCase() ?? ""}${sourceType.slice(1)} migration`,
     sourceSummary: `${documents.length} source document${documents.length === 1 ? "" : "s"}`,
-    lessonsDoc: buildInitialLessonsDoc(sourceType),
   })) as Id<"migrationRuns">;
 
   for (const [index, document] of documents.entries()) {
@@ -820,7 +863,11 @@ export const suggestMigrationChunk = action({
       }
     }
 
-    const preview = buildSuggestionPreview(plan, context.sourceDocument.title);
+    const preview = buildSuggestionPreview(
+      plan,
+      context.sourceDocument.title,
+      context.chunk.chunkText,
+    );
     const status = examples.length > 0 ? "ready" : "needs_review";
 
     await ctx.runMutation(storeMigrationSuggestionRef, {

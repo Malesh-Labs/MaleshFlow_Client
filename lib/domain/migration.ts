@@ -22,6 +22,7 @@ export const MIGRATION_RUN_STATUSES = [
   "draft",
   "reviewing",
   "completed",
+  "abandoned",
   "error",
 ] as const;
 
@@ -285,4 +286,52 @@ export function withHeadingPrefix(text: string, headingLevel: number) {
   }
 
   return `${"#".repeat(Math.min(3, headingLevel))} ${trimmed}`;
+}
+
+const IMPORT_SEPARATOR_PATTERN = /^[\s\-—–―_─]{3,}$/;
+
+export function normalizeImportedOutlineText(text: string) {
+  return text
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+      if (IMPORT_SEPARATOR_PATTERN.test(trimmed)) {
+        return line.replace(trimmed, "---");
+      }
+      return line;
+    })
+    .join("\n")
+    .trim();
+}
+
+export function buildDefaultMigrationLessonsDoc(sourceType: MigrationSourceType) {
+  if (sourceType === "dynalist") {
+    return [
+      "# Dynalist Migration Lessons",
+      "",
+      "- Default to archived note pages unless the chunk clearly belongs in another page type.",
+      "- Convert Dynalist internal links like [label](https://dynalist.io/...) into [[label]].",
+      "- Normalize long separator lines like ————————— into ---.",
+      "- Pause for review when structure or destination is ambiguous.",
+    ].join("\n");
+  }
+
+  if (sourceType === "workflowy") {
+    return [
+      "# WorkFlowy Migration Lessons",
+      "",
+      "- Reuse the simplest safe destination unless the chunk clearly suggests a special page type.",
+      "- Keep the outline structure intact by default.",
+      "- Pause for review when the destination page or page type is ambiguous.",
+    ].join("\n");
+  }
+
+  return [
+    "# Logseq Migration Lessons",
+    "",
+    "- Keep Logseq tags unless the user explicitly asks to strip them.",
+    "- Convert resolvable wiki links into app page links when possible, otherwise flatten them to plain text.",
+    "- Pause for review when a chunk could map to multiple page types or destinations.",
+  ].join("\n");
 }

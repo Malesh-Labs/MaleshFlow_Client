@@ -127,6 +127,7 @@ export default defineSchema({
       v.literal("draft"),
       v.literal("reviewing"),
       v.literal("completed"),
+      v.literal("abandoned"),
       v.literal("error"),
     ),
     title: v.string(),
@@ -146,6 +147,17 @@ export default defineSchema({
   })
     .index("by_createdAt", ["createdAt"])
     .index("by_status_updatedAt", ["status", "updatedAt"]),
+
+  migrationLessons: defineTable({
+    sourceType: v.union(
+      v.literal("dynalist"),
+      v.literal("workflowy"),
+      v.literal("logseq"),
+    ),
+    lessonsDoc: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_source_type", ["sourceType"]),
 
   migrationSourceDocuments: defineTable({
     runId: v.id("migrationRuns"),
