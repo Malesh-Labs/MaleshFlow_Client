@@ -30,6 +30,9 @@ const MAX_PAGE_TREE_NODES = 1200;
 const MAX_PAGE_TREE_NODE_TEXT_CHARS = 250_000;
 const MAX_PAGE_TREE_BACKLINKS = 1200;
 const MAX_NODE_AI_SUBTREE_NODES = 2000;
+const PAGE_DELETE_NODE_BATCH_SIZE = 100;
+const PAGE_DELETE_LINK_BATCH_SIZE = 200;
+const PAGE_DELETE_MESSAGE_BATCH_SIZE = 200;
 
 function collectCappedSubtreeNodes(
   rootNodeId: Id<"nodes">,
@@ -146,6 +149,33 @@ function getPageSourceMeta(page: Pick<Doc<"pages">, "sourceMeta"> | null | undef
 
 function isSidebarSpecialPage(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
   return getPageSourceMeta(page).specialPage === "sidebar";
+}
+
+function isPagePendingDeletion(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
+  return getPageSourceMeta(page).deletingForever === true;
+}
+
+async function takePageDeletionNodeBatch(
+  ctx: QueryCtx,
+  pageId: Id<"pages">,
+) {
+  const activeNodes = await ctx.db
+    .query("nodes")
+    .withIndex("by_page_archived", (query) =>
+      query.eq("pageId", pageId).eq("archived", false),
+    )
+    .take(PAGE_DELETE_NODE_BATCH_SIZE);
+
+  if (activeNodes.length > 0) {
+    return activeNodes;
+  }
+
+  return await ctx.db
+    .query("nodes")
+    .withIndex("by_page_archived", (query) =>
+      query.eq("pageId", pageId).eq("archived", true),
+    )
+    .take(PAGE_DELETE_NODE_BATCH_SIZE);
 }
 
 function normalizeLinkSearchQuery(value: string) {
@@ -363,7 +393,9 @@ export const listPages = query({
           .collect(),
       ]);
 
-      return [...activePages, ...archivedPages].filter((page) => !isSidebarSpecialPage(page));
+      return [...activePages, ...archivedPages].filter(
+        (page) => !isSidebarSpecialPage(page) && !isPagePendingDeletion(page),
+      );
     }
 
     return (await ctx.db
@@ -371,7 +403,9 @@ export const listPages = query({
       .withIndex("by_archived_position", (query) =>
         query.eq("archived", false),
       )
-      .collect()).filter((page) => !isSidebarSpecialPage(page));
+      .collect()).filter(
+      (page) => !isSidebarSpecialPage(page) && !isPagePendingDeletion(page),
+    );
   },
 });
 
@@ -666,7 +700,7 @@ export const getPageTree = query({
     assertOwnerKey(args.ownerKey);
 
     const page = await ctx.db.get(args.pageId);
-    if (!page) {
+    if (!page || isPagePendingDeletion(page)) {
       return null;
     }
 
@@ -786,42 +820,123 @@ export const deletePageForever = mutation({
       throw new Error("Only archived pages can be deleted forever.");
     }
 
-    const pageNodes = await listPageNodes(ctx.db, args.pageId);
-    const rootNodes = pageNodes.filter((node) => node.parentNodeId === null);
+    if (!isPagePendingDeletion(page)) {
+      await ctx.db.patch(args.pageId, {
+        sourceMeta: {
+          ...getPageSourceMeta(page),
+          deletingForever: true,
+          deletingForeverStartedAt: getTimestamp(),
+        },
+        updatedAt: getTimestamp(),
+      });
+    }
 
-    for (const rootNode of rootNodes) {
-      await deleteNodeTree(ctx.db, rootNode._id);
+    await ctx.scheduler.runAfter(0, internal.workspace.deletePageForeverBatch, {
+      pageId: args.pageId,
+    });
+  },
+});
+
+export const deletePageForeverBatch = internalMutation({
+  args: {
+    pageId: v.id("pages"),
+  },
+  handler: async (ctx, args) => {
+    const page = await ctx.db.get(args.pageId);
+    if (!page) {
+      return;
+    }
+
+    const nodeBatch = await takePageDeletionNodeBatch(ctx, args.pageId);
+    if (nodeBatch.length > 0) {
+      for (const node of nodeBatch) {
+        const outboundLinks = await ctx.db
+          .query("links")
+          .withIndex("by_source_node", (query) => query.eq("sourceNodeId", node._id))
+          .collect();
+        const inboundLinks = await ctx.db
+          .query("links")
+          .withIndex("by_target_node", (query) => query.eq("targetNodeId", node._id))
+          .collect();
+        const embeddingJobs = await ctx.db
+          .query("embeddingJobs")
+          .withIndex("by_node", (query) => query.eq("nodeId", node._id))
+          .collect();
+        const embeddings = await ctx.db
+          .query("nodeEmbeddings")
+          .withIndex("by_node", (query) => query.eq("nodeId", node._id))
+          .collect();
+
+        for (const link of new Map(
+          [...outboundLinks, ...inboundLinks].map((link) => [link._id, link]),
+        ).values()) {
+          await ctx.db.delete(link._id);
+        }
+
+        for (const job of embeddingJobs) {
+          await ctx.db.delete(job._id);
+        }
+
+        for (const embedding of embeddings) {
+          await ctx.db.delete(embedding._id);
+        }
+
+        await ctx.db.delete(node._id);
+      }
+
+      await ctx.scheduler.runAfter(0, internal.workspace.deletePageForeverBatch, {
+        pageId: args.pageId,
+      });
+      return;
     }
 
     const outboundPageLinks = await ctx.db
       .query("links")
       .withIndex("by_source_page", (query) => query.eq("sourcePageId", args.pageId))
-      .collect();
+      .take(PAGE_DELETE_LINK_BATCH_SIZE);
     const inboundPageLinks = await ctx.db
       .query("links")
       .withIndex("by_target_page", (query) => query.eq("targetPageId", args.pageId))
-      .collect();
+      .take(PAGE_DELETE_LINK_BATCH_SIZE);
 
-    for (const link of [...outboundPageLinks, ...inboundPageLinks]) {
-      await ctx.db.delete(link._id);
+    const pageLinkBatch = [...new Map(
+      [...outboundPageLinks, ...inboundPageLinks].map((link) => [link._id, link]),
+    ).values()];
+    if (pageLinkBatch.length > 0) {
+      for (const link of pageLinkBatch) {
+        await ctx.db.delete(link._id);
+      }
+
+      await ctx.scheduler.runAfter(0, internal.workspace.deletePageForeverBatch, {
+        pageId: args.pageId,
+      });
+      return;
     }
 
     const pageThreads = await ctx.db
       .query("chatThreads")
       .withIndex("by_page_updatedAt", (query) => query.eq("pageId", args.pageId))
-      .collect();
+      .take(1);
 
-    for (const thread of pageThreads) {
+    if (pageThreads.length > 0) {
+      const thread = pageThreads[0]!;
       const messages = await ctx.db
         .query("chatMessages")
         .withIndex("by_thread_createdAt", (query) => query.eq("threadId", thread._id))
-        .collect();
+        .take(PAGE_DELETE_MESSAGE_BATCH_SIZE);
 
-      for (const message of messages) {
-        await ctx.db.delete(message._id);
+      if (messages.length > 0) {
+        for (const message of messages) {
+          await ctx.db.delete(message._id);
+        }
+      } else {
+        await ctx.db.delete(thread._id);
       }
 
-      await ctx.db.delete(thread._id);
+      await ctx.scheduler.runAfter(0, internal.workspace.deletePageForeverBatch, {
+        pageId: args.pageId,
+      });
+      return;
     }
 
     await ctx.db.delete(args.pageId);
@@ -880,7 +995,9 @@ export const searchLinkTargets = query({
       .query("pages")
       .withIndex("by_archived_position", (query) => query.eq("archived", false))
       .collect();
-    const visiblePages = pages.filter((page) => !isSidebarSpecialPage(page));
+    const visiblePages = pages.filter(
+      (page) => !isSidebarSpecialPage(page) && !isPagePendingDeletion(page),
+    );
 
     const pageResults = [...visiblePages]
       .filter((page) => linkSearchScore(page.title, normalizedQuery) !== Number.POSITIVE_INFINITY)
