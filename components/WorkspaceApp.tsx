@@ -713,9 +713,7 @@ function normalizePageTitleKey(value: string) {
 
 function getDocumentTitle(pageTitle: string | null | undefined) {
   const trimmedTitle = pageTitle?.trim();
-  return trimmedTitle && trimmedTitle.length > 0
-    ? `${trimmedTitle} - Malesh Flow`
-    : "Malesh Flow";
+  return trimmedTitle && trimmedTitle.length > 0 ? trimmedTitle : "Malesh Flow";
 }
 
 function readPageIdFromLocation() {
