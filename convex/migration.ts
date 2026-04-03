@@ -132,7 +132,8 @@ async function fetchDynalistJson<T>(
     _code?: string;
     _msg?: string;
   };
-  if (data._code && data._code !== "OK") {
+  const normalizedCode = data._code?.trim().toUpperCase();
+  if (normalizedCode && normalizedCode !== "OK") {
     throw new Error(data._msg || `Dynalist error: ${data._code}`);
   }
 
