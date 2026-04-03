@@ -24,6 +24,86 @@ function getTimestamp() {
 }
 
 const MAX_BACKLINK_COUNT_NODE_BATCH = 250;
+const PAGE_TREE_NODE_BATCH_SIZE = 200;
+const PAGE_TREE_BACKLINK_BATCH_SIZE = 200;
+const MAX_PAGE_TREE_NODES = 1200;
+const MAX_PAGE_TREE_NODE_TEXT_CHARS = 250_000;
+const MAX_PAGE_TREE_BACKLINKS = 1200;
+
+async function listPageNodesForTree(
+  ctx: QueryCtx,
+  pageId: Id<"pages">,
+) {
+  const nodes: Doc<"nodes">[] = [];
+  let cursor: string | null = null;
+  let textChars = 0;
+
+  while (true) {
+    const result = await ctx.db
+      .query("nodes")
+      .withIndex("by_page_archived", (query) =>
+        query.eq("pageId", pageId).eq("archived", false),
+      )
+      .paginate({ cursor, numItems: PAGE_TREE_NODE_BATCH_SIZE });
+
+    for (const node of result.page) {
+      const nextTextChars = textChars + node.text.length;
+      if (nodes.length >= MAX_PAGE_TREE_NODES || nextTextChars > MAX_PAGE_TREE_NODE_TEXT_CHARS) {
+        return {
+          nodes,
+          truncated: true,
+        };
+      }
+
+      nodes.push(node);
+      textChars = nextTextChars;
+    }
+
+    if (result.isDone) {
+      return {
+        nodes,
+        truncated: false,
+      };
+    }
+
+    cursor = result.continueCursor;
+  }
+}
+
+async function listPageBacklinksForTree(
+  ctx: QueryCtx,
+  pageId: Id<"pages">,
+) {
+  const backlinks: Doc<"links">[] = [];
+  let cursor: string | null = null;
+
+  while (true) {
+    const result = await ctx.db
+      .query("links")
+      .withIndex("by_target_page", (query) => query.eq("targetPageId", pageId))
+      .paginate({ cursor, numItems: PAGE_TREE_BACKLINK_BATCH_SIZE });
+
+    for (const link of result.page) {
+      if (backlinks.length >= MAX_PAGE_TREE_BACKLINKS) {
+        return {
+          backlinks,
+          truncated: true,
+        };
+      }
+
+      backlinks.push(link);
+    }
+
+    if (result.isDone) {
+      return {
+        backlinks,
+        truncated: false,
+      };
+    }
+
+    cursor = result.continueCursor;
+  }
+}
 
 function getPageSourceMeta(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
   return page && typeof page.sourceMeta === "object" && page.sourceMeta
@@ -557,25 +637,48 @@ export const getPageTree = query({
       return null;
     }
 
-    const nodes = await listPageNodes(ctx.db, args.pageId);
-    const backlinks = await ctx.db
-      .query("links")
-      .withIndex("by_target_page", (query) => query.eq("targetPageId", args.pageId))
-      .collect();
-    const visibleBacklinks = (await filterVisibleLinks(ctx, backlinks)).filter(
-      (link) => link.kind === "page",
-    );
-    const nodeBacklinkCounts = await buildVisibleNodeBacklinkCounts(
+    const warnings: string[] = [];
+    const { nodes, truncated: nodesTruncated } = await listPageNodesForTree(ctx, args.pageId);
+    if (nodesTruncated) {
+      warnings.push(
+        "This page is too large to load fully right now, so only the first portion is shown.",
+      );
+    }
+
+    const { backlinks, truncated: backlinksTruncated } = await listPageBacklinksForTree(
       ctx,
-      nodes.map((node) => node._id),
+      args.pageId,
     );
+    if (backlinksTruncated) {
+      warnings.push("Backlink counts are partial for this page.");
+    }
+
+    const visibleBacklinks = (await filterVisibleLinks(ctx, backlinks)).filter((link) => {
+      return link.kind === "page";
+    });
+
+    let nodeBacklinkCounts: Record<string, number> = {};
+    try {
+      nodeBacklinkCounts = await buildVisibleNodeBacklinkCounts(
+        ctx,
+        nodes.map((node) => node._id),
+      );
+    } catch (error) {
+      console.error("Failed to build page-tree node backlink counts", {
+        pageId: args.pageId,
+        error,
+      });
+      warnings.push("Some backlink badges were skipped while loading this page.");
+    }
 
     return {
       page,
       nodes,
       backlinks: visibleBacklinks,
       pageBacklinkCount: visibleBacklinks.length,
+      pageBacklinkCountTruncated: backlinksTruncated,
       nodeBacklinkCounts,
+      loadWarning: warnings.length > 0 ? warnings.join(" ") : null,
     };
   },
 });

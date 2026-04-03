@@ -87,7 +87,9 @@ type PageTreeResult = {
   nodes: Doc<"nodes">[];
   backlinks: Doc<"links">[];
   pageBacklinkCount: number;
+  pageBacklinkCountTruncated?: boolean;
   nodeBacklinkCounts: Record<string, number>;
+  loadWarning?: string | null;
 };
 type SidebarTreeResult = {
   page: PageDoc;
@@ -2202,6 +2204,8 @@ function ConfiguredWorkspace({
     [sidebarTree?.linkedPageIds],
   );
   const pageBacklinkCount = activePageTree?.pageBacklinkCount ?? 0;
+  const isPageBacklinkCountTruncated = activePageTree?.pageBacklinkCountTruncated ?? false;
+  const pageLoadWarning = activePageTree?.loadWarning ?? null;
 
   const modelSection = findSectionNode(tree, "model");
   const recentExamplesSection = findSectionNode(tree, "recentExamples");
@@ -5054,9 +5058,11 @@ function ConfiguredWorkspace({
                           type="button"
                           onClick={() => openFindPaletteForQuery(buildPageBacklinkSearchQuery(selectedPage))}
                           className="rounded-full border border-[var(--workspace-border)] px-2 py-1 text-[10px] tracking-[0.2em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                          title={`Show ${pageBacklinkCount} incoming link${pageBacklinkCount === 1 ? "" : "s"}`}
+                          title={`Show ${pageBacklinkCount}${isPageBacklinkCountTruncated ? "+" : ""} incoming link${pageBacklinkCount === 1 ? "" : "s"}`}
                         >
-                          {pageBacklinkCount} link{pageBacklinkCount === 1 ? "" : "s"}
+                          {pageBacklinkCount}
+                          {isPageBacklinkCountTruncated ? "+" : ""} link
+                          {pageBacklinkCount === 1 ? "" : "s"}
                         </button>
                       ) : null}
                       {isPageArchived ? (
@@ -5082,6 +5088,11 @@ function ConfiguredWorkspace({
                       disabled={isPageArchived}
                       className="mt-4 w-full border-0 bg-transparent p-0 text-4xl font-semibold tracking-tight text-[var(--workspace-text-subtle)] outline-none disabled:text-[var(--workspace-text-muted)]"
                     />
+                    {pageLoadWarning ? (
+                      <div className="mt-4 rounded-md border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-3 py-2 text-sm text-[var(--workspace-text-faint)]">
+                        {pageLoadWarning}
+                      </div>
+                    ) : null}
                   </div>
                 </div>
                 <div className="mt-6 h-px bg-[var(--workspace-border-subtle)]" />
