@@ -24,6 +24,13 @@ import {
 import { createPortal } from "react-dom";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
+import {
+  buildJournalFeedbackUserPrompt,
+  buildModelRewriteUserPrompt,
+  JOURNAL_FEEDBACK_SYSTEM_PROMPT,
+  MODEL_REGENERATE_REQUEST,
+  MODEL_REWRITE_SYSTEM_PROMPT,
+} from "@/lib/domain/aiPrompts";
 import { parseHeadingSyntax } from "@/lib/domain/displaySyntax";
 import {
   applySelectedInlineFormattingShortcut,
@@ -94,8 +101,6 @@ const RECURRING_TASK_COMPLETION_MODE_STORAGE_KEY =
 const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
 const OUTLINE_CLIPBOARD_MIME_TYPE = "application/x-maleshflow-outline";
 const WORKSPACE_AI_CHAT_TEXTAREA_ID = "workspace-ai-chat-textarea";
-const MODEL_REGENERATE_PROMPT =
-  "Regenerate the Model section using the current Model lines and the Recent section as context. Refine it into a concise, useful model while preserving important intent and signal.";
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
@@ -2138,6 +2143,11 @@ function ConfiguredWorkspace({
   const [pageTitleDraft, setPageTitleDraft] = useState("");
   const [chatStatus, setChatStatus] = useState("");
   const [journalFeedbackStatus, setJournalFeedbackStatus] = useState("");
+  const [modelPromptNote, setModelPromptNote] = useState("");
+  const [journalFeedbackPromptNote, setJournalFeedbackPromptNote] = useState("");
+  const [activeAiPromptEditor, setActiveAiPromptEditor] = useState<
+    "model" | "journalFeedback" | null
+  >(null);
   const [embeddingRebuildStatus, setEmbeddingRebuildStatus] = useState("");
   const [isCreatingPage, setIsCreatingPage] = useState<SidebarSection | null>(null);
   const [isSendingChat, setIsSendingChat] = useState(false);
@@ -2389,6 +2399,54 @@ function ConfiguredWorkspace({
   const journalFeedbackSection = findSectionNode(tree, "journalFeedback");
   const scratchpadLiveSection = findSectionNode(tree, "scratchpadLive");
   const scratchpadPreviousSection = findSectionNode(tree, "scratchpadPrevious");
+  const modelPromptLines = useMemo(
+    () =>
+      (modelSection?.children ?? [])
+        .map((node) => node.text.trim())
+        .filter((line) => line.length > 0),
+    [modelSection],
+  );
+  const recentPromptLines = useMemo(
+    () =>
+      (recentExamplesSection?.children ?? [])
+        .map((node) => node.text.trim())
+        .filter((line) => line.length > 0),
+    [recentExamplesSection],
+  );
+  const journalThoughtPromptLines = useMemo(
+    () =>
+      (journalThoughtsSection?.children ?? [])
+        .map((node) => node.text.trim())
+        .filter((line) => line.length > 0),
+    [journalThoughtsSection],
+  );
+  const modelPromptPreview = useMemo(
+    () =>
+      buildModelRewriteUserPrompt({
+        pageTitle: selectedPage?.title ?? "(untitled)",
+        request: MODEL_REGENERATE_REQUEST,
+        userNote: modelPromptNote,
+        existingModelLines: modelPromptLines,
+        recentExampleLines: recentPromptLines,
+      }),
+    [modelPromptLines, modelPromptNote, recentPromptLines, selectedPage?.title],
+  );
+  const journalFeedbackPromptPreview = useMemo(
+    () =>
+      buildJournalFeedbackUserPrompt({
+        pageTitle: selectedPage?.title ?? "(untitled)",
+        userNote: journalFeedbackPromptNote,
+        thoughtLines: journalThoughtPromptLines,
+      }),
+    [journalFeedbackPromptNote, journalThoughtPromptLines, selectedPage?.title],
+  );
+
+  useEffect(() => {
+    setActiveAiPromptEditor(null);
+    setModelPromptNote("");
+    setJournalFeedbackPromptNote("");
+  }, [selectedPageId]);
+
   const genericRoots =
     pageMeta.pageType === "task"
       ? collectChildren(
@@ -4895,6 +4953,10 @@ function ConfiguredWorkspace({
       const result = (await generateJournalFeedback({
         ownerKey,
         pageId: selectedPageId,
+        userNote:
+          journalFeedbackPromptNote.trim().length > 0
+            ? journalFeedbackPromptNote.trim()
+            : undefined,
       })) as {
         summary: string;
         feedbackLines: string[];
@@ -4922,7 +4984,8 @@ function ConfiguredWorkspace({
       const result = (await rewriteModelSection({
         ownerKey,
         pageId: selectedPageId,
-        prompt: MODEL_REGENERATE_PROMPT,
+        prompt: MODEL_REGENERATE_REQUEST,
+        userNote: modelPromptNote.trim().length > 0 ? modelPromptNote.trim() : undefined,
       })) as {
         summary: string;
       };
@@ -5665,15 +5728,39 @@ function ConfiguredWorkspace({
                       recurringCompletionMode={recurringCompletionMode}
                       depthOffset={sectionDepthOffset}
                       statusMessage={chatStatus}
+                      headerDetail={
+                        activeAiPromptEditor === "model" ? (
+                          <AiPromptEditorPanel
+                            userNote={modelPromptNote}
+                            onUserNoteChange={setModelPromptNote}
+                            systemPrompt={MODEL_REWRITE_SYSTEM_PROMPT}
+                            userPromptPreview={modelPromptPreview}
+                            helperText="Linked page/node context from Model and Recent is also dereferenced and included when present. The last few model-regeneration messages are also included in the backend request."
+                          />
+                        ) : null
+                      }
                       action={
-                        <button
-                          type="button"
-                          onClick={() => void handleRegenerateModel()}
-                          disabled={isSendingChat || isPageArchived}
-                          className="border border-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)] disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {isSendingChat ? "Regenerating…" : "Regenerate Model"}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setActiveAiPromptEditor((current) =>
+                                current === "model" ? null : "model",
+                              )
+                            }
+                            className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                          >
+                            Prompt
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleRegenerateModel()}
+                            disabled={isSendingChat || isPageArchived}
+                            className="border border-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)] disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {isSendingChat ? "Regenerating…" : "Regenerate Model"}
+                          </button>
+                        </div>
                       }
                     />
                   </div>
@@ -5805,7 +5892,30 @@ function ConfiguredWorkspace({
                       recurringCompletionMode={recurringCompletionMode}
                       depthOffset={sectionDepthOffset}
                       statusMessage={journalFeedbackStatus}
+                      headerDetail={
+                        activeAiPromptEditor === "journalFeedback" ? (
+                          <AiPromptEditorPanel
+                            userNote={journalFeedbackPromptNote}
+                            onUserNoteChange={setJournalFeedbackPromptNote}
+                            systemPrompt={JOURNAL_FEEDBACK_SYSTEM_PROMPT}
+                            userPromptPreview={journalFeedbackPromptPreview}
+                            helperText="Linked page/node context from Thoughts/Stuff is also dereferenced and included when present."
+                          />
+                        ) : null
+                      }
                       action={
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setActiveAiPromptEditor((current) =>
+                                current === "journalFeedback" ? null : "journalFeedback",
+                              )
+                            }
+                            className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                          >
+                            Prompt
+                          </button>
                           <button
                             type="button"
                             onClick={() => void handleGenerateJournalFeedback()}
@@ -5814,7 +5924,8 @@ function ConfiguredWorkspace({
                           >
                             {isGeneratingJournalFeedback ? "Generating…" : "Generate Feedback"}
                           </button>
-                        }
+                        </div>
+                      }
                       />
                     </div>
                   </div>
@@ -6409,6 +6520,64 @@ function ConfiguredWorkspace({
   );
 }
 
+function AiPromptEditorPanel({
+  userNote,
+  onUserNoteChange,
+  systemPrompt,
+  userPromptPreview,
+  helperText,
+}: {
+  userNote: string;
+  onUserNoteChange: (value: string) => void;
+  systemPrompt: string;
+  userPromptPreview: string;
+  helperText: string;
+}) {
+  return (
+    <div className="border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] p-4">
+      <div className="grid gap-4 xl:grid-cols-2">
+        <label className="block">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+            Add Note For AI
+          </span>
+          <textarea
+            value={userNote}
+            onChange={(event) => onUserNoteChange(event.target.value)}
+            rows={4}
+            placeholder="Optional extra instruction to prepend before the default request…"
+            className="mt-2 w-full resize-y border border-[var(--workspace-border)] bg-transparent px-3 py-2 text-sm leading-6 text-[var(--workspace-text)] outline-none transition focus:border-[var(--workspace-accent)]"
+          />
+        </label>
+        <div className="space-y-4">
+          <label className="block">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+              System Prompt
+            </span>
+            <textarea
+              readOnly
+              value={systemPrompt}
+              rows={5}
+              className="mt-2 w-full resize-y border border-[var(--workspace-border-subtle)] bg-transparent px-3 py-2 text-xs leading-5 text-[var(--workspace-text-subtle)] outline-none"
+            />
+          </label>
+          <label className="block">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+              User Prompt Preview
+            </span>
+            <textarea
+              readOnly
+              value={userPromptPreview}
+              rows={10}
+              className="mt-2 w-full resize-y border border-[var(--workspace-border-subtle)] bg-transparent px-3 py-2 text-xs leading-5 text-[var(--workspace-text-subtle)] outline-none"
+            />
+          </label>
+        </div>
+      </div>
+      <p className="mt-3 text-xs leading-5 text-[var(--workspace-text-faint)]">{helperText}</p>
+    </div>
+  );
+}
+
 function PageSection({
   title,
   sectionNode,
@@ -6450,6 +6619,7 @@ function PageSection({
   depthOffset = 0,
   mobileIndentStep = 0,
   action = null,
+  headerDetail = null,
   statusMessage = "",
   compact = false,
   showHeader = true,
@@ -6498,6 +6668,7 @@ function PageSection({
   depthOffset?: number;
   mobileIndentStep?: number;
   action?: ReactNode;
+  headerDetail?: ReactNode;
   statusMessage?: string;
   compact?: boolean;
   showHeader?: boolean;
@@ -6527,6 +6698,7 @@ function PageSection({
           {statusMessage ? (
             <p className="mt-2 text-sm text-[var(--workspace-text-subtle)]">{statusMessage}</p>
           ) : null}
+          {headerDetail ? <div className="mt-3">{headerDetail}</div> : null}
           <div className="mt-2 border-b border-[var(--workspace-border)]" />
         </>
       ) : null}

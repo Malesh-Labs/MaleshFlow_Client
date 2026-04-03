@@ -7,6 +7,10 @@ import {
   rewriteMatchingPageWikiLinks,
 } from "../lib/domain/links";
 import { parseHeadingSyntax } from "../lib/domain/displaySyntax";
+import {
+  buildJournalFeedbackUserPrompt,
+  buildModelRewriteUserPrompt,
+} from "../lib/domain/aiPrompts";
 import { extractTagMatches, extractTags } from "../lib/domain/tags";
 import { parseMarkdownFile, serializePageToMarkdown } from "../lib/domain/markdown";
 import {
@@ -298,6 +302,32 @@ test("applySelectedInlineFormattingShortcut wraps and unwraps selected text", ()
       selectionEnd: 13,
     },
   );
+});
+
+test("buildModelRewriteUserPrompt prepends an optional user note", () => {
+  const prompt = buildModelRewriteUserPrompt({
+    pageTitle: "Signals",
+    request: "Refresh the model.",
+    userNote: "Lean more practical than abstract.",
+    existingModelLines: ["Current line"],
+    recentExampleLines: ["Recent line"],
+    recentConversationLines: ["user: prior note"],
+  });
+
+  assert.match(prompt, /User note to honor first: Lean more practical than abstract\./);
+  assert.match(prompt, /Request: Refresh the model\./);
+  assert.match(prompt, /Current Model lines:\n- Current line/);
+});
+
+test("buildJournalFeedbackUserPrompt prepends an optional user note", () => {
+  const prompt = buildJournalFeedbackUserPrompt({
+    pageTitle: "2026-04-03",
+    userNote: "Be blunt but kind.",
+    thoughtLines: ["First thought", "Second thought"],
+  });
+
+  assert.match(prompt, /User note to honor first: Be blunt but kind\./);
+  assert.match(prompt, /Thoughts\/Stuff:\n- First thought\n- Second thought/);
 });
 
 test("recurring due dates can advance from the original due date or today", () => {

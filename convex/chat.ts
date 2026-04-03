@@ -8,6 +8,12 @@ import { action } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { assertOwnerKey } from "./lib/auth";
+import {
+  buildJournalFeedbackUserPrompt,
+  buildModelRewriteUserPrompt,
+  JOURNAL_FEEDBACK_SYSTEM_PROMPT,
+  MODEL_REWRITE_SYSTEM_PROMPT,
+} from "../lib/domain/aiPrompts";
 import { chatPlanSchema, type ChatPlan } from "../lib/domain/chat";
 
 type PlannerWorkspace = {
@@ -295,6 +301,7 @@ export const rewriteModelSection = action({
     prompt: v.string(),
     pageId: v.id("pages"),
     threadId: v.optional(v.id("chatThreads")),
+    userNote: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{
     threadId: Id<"chatThreads">;
@@ -314,7 +321,10 @@ export const rewriteModelSection = action({
 
     await ctx.runMutation(storeUserMessageRef, {
       threadId,
-      text: args.prompt,
+      text:
+        args.userNote && args.userNote.trim().length > 0
+          ? `${args.userNote.trim()}\n\n${args.prompt}`
+          : args.prompt,
     });
 
     const modelContext = await ctx.runQuery(getModelPageContextRef, {
@@ -351,31 +361,18 @@ export const rewriteModelSection = action({
     let modelLines = fallbackModelLines;
     let shouldApplyModelLines = false;
     const model = process.env.OPENAI_CHAT_MODEL ?? "gpt-5-mini";
-    const systemPrompt =
-      "You rewrite only the Model section of a page. Use Recent Examples only as evidence and inspiration. Never rewrite, summarize, or mention the Recent Examples section in the output. Return concise plain-text model lines only. No bullets, no numbering, no markdown headings, no checkbox syntax.";
-    const userPrompt = [
-      `Page title: ${modelContext.page.title}`,
-      `Request: ${args.prompt}`,
-      "",
-      "Current Model lines:",
-      existingModelLines.length > 0
-        ? existingModelLines.map((line: string) => `- ${line}`).join("\n")
-        : "(empty)",
-      "",
-      "Recent Examples for context only:",
-      recentExampleLines.length > 0
-        ? recentExampleLines.map((line: string) => `- ${line}`).join("\n")
-        : "(empty)",
-      explicitLinkedContext.trim().length > 0
-        ? ["", "Dereferenced linked context from Current Model and Recent Examples:", explicitLinkedContext].join("\n")
-        : "",
-      "",
-      "Recent conversation:",
-      priorMessages
+    const systemPrompt = MODEL_REWRITE_SYSTEM_PROMPT;
+    const userPrompt = buildModelRewriteUserPrompt({
+      pageTitle: modelContext.page.title,
+      request: args.prompt,
+      userNote: args.userNote,
+      existingModelLines,
+      recentExampleLines,
+      explicitLinkedContext,
+      recentConversationLines: priorMessages
         .slice(-6)
-        .map((message: { role: string; text: string }) => `${message.role}: ${message.text}`)
-        .join("\n") || "(none)",
-    ].join("\n");
+        .map((message: { role: string; text: string }) => `${message.role}: ${message.text}`),
+    });
     const debug: ModelRewriteDebug = {
       model,
       systemPrompt,
@@ -459,6 +456,7 @@ export const generateJournalFeedback = action({
   args: {
     ownerKey: v.string(),
     pageId: v.id("pages"),
+    userNote: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{
     summary: string;
@@ -502,24 +500,16 @@ export const generateJournalFeedback = action({
         input: [
           {
             role: "system",
-            content:
-              "You generate the Feedback section for a personal journal. Read the Thoughts/Stuff section and return concise plain-text feedback lines that summarize patterns, add perspective, and offer grounded guidance. Be supportive, practical, and non-judgmental. No bullets, no numbering, no markdown headings, no checkbox syntax.",
+            content: JOURNAL_FEEDBACK_SYSTEM_PROMPT,
           },
           {
             role: "user",
-            content: [
-              `Journal date/title: ${journalContext.page.title}`,
-              "",
-              "Thoughts/Stuff:",
-              thoughtLines.map((line: string) => `- ${line}`).join("\n"),
-              explicitLinkedContext.trim().length > 0
-                ? [
-                    "",
-                    "Dereferenced linked context from Thoughts/Stuff:",
-                    explicitLinkedContext,
-                  ].join("\n")
-                : "",
-            ].join("\n"),
+            content: buildJournalFeedbackUserPrompt({
+              pageTitle: journalContext.page.title,
+              userNote: args.userNote,
+              thoughtLines,
+              explicitLinkedContext,
+            }),
           },
         ],
         text: {
