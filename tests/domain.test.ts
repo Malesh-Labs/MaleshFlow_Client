@@ -14,7 +14,11 @@ import {
   buildEmbeddingInput,
   buildRootEmbeddingInput,
 } from "../lib/domain/embeddings";
-import { splitTextForInlineFormatting } from "../lib/domain/inlineFormatting";
+import {
+  applySelectedInlineFormattingShortcut,
+  hasRenderableInlineFormatting,
+  splitTextForInlineFormatting,
+} from "../lib/domain/inlineFormatting";
 import {
   advanceRecurringDueDate,
   dateInputValueToTimestamp,
@@ -257,6 +261,43 @@ test("splitTextForInlineFormatting applies strike, italic, and bold markers", ()
     italic: false,
     bold: false,
   });
+});
+
+test("hasRenderableInlineFormatting detects plain inline emphasis without requiring links", () => {
+  assert.equal(hasRenderableInlineFormatting("plain text"), false);
+  assert.equal(hasRenderableInlineFormatting("__soft__ text"), true);
+  assert.equal(hasRenderableInlineFormatting("**strong** text"), true);
+  assert.equal(hasRenderableInlineFormatting("~~gone~~ text"), true);
+  assert.equal(hasRenderableInlineFormatting("__"), false);
+});
+
+test("applySelectedInlineFormattingShortcut wraps and unwraps selected text", () => {
+  assert.deepEqual(
+    applySelectedInlineFormattingShortcut("hello world", 0, 5, "__"),
+    {
+      value: "__hello__ world",
+      selectionStart: 2,
+      selectionEnd: 7,
+    },
+  );
+
+  assert.deepEqual(
+    applySelectedInlineFormattingShortcut("__hello__ world", 0, 9, "__"),
+    {
+      value: "hello world",
+      selectionStart: 0,
+      selectionEnd: 5,
+    },
+  );
+
+  assert.deepEqual(
+    applySelectedInlineFormattingShortcut("hello world", 6, 11, "**"),
+    {
+      value: "hello **world**",
+      selectionStart: 8,
+      selectionEnd: 13,
+    },
+  );
 });
 
 test("recurring due dates can advance from the original due date or today", () => {

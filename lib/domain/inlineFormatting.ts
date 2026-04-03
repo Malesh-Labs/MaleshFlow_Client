@@ -12,6 +12,8 @@ export type InlineTextSegment = {
   bold: boolean;
 };
 
+export type InlineFormattingShortcutMarker = "__" | "**";
+
 const DEFAULT_STATE: InlineFormattingState = {
   strike: false,
   italic: false,
@@ -95,5 +97,39 @@ export function splitTextForInlineFormatting(
   return {
     segments,
     nextState: state,
+  };
+}
+
+export function hasRenderableInlineFormatting(text: string) {
+  const { segments } = splitTextForInlineFormatting(text);
+  return segments.some((segment) => segment.strike || segment.italic || segment.bold);
+}
+
+export function applySelectedInlineFormattingShortcut(
+  text: string,
+  selectionStart: number,
+  selectionEnd: number,
+  marker: InlineFormattingShortcutMarker,
+) {
+  const start = Math.max(0, Math.min(selectionStart, selectionEnd));
+  const end = Math.max(start, Math.max(selectionStart, selectionEnd));
+  if (start === end) {
+    return null;
+  }
+
+  const selectedText = text.slice(start, end);
+  const isWrapped =
+    selectedText.startsWith(marker) &&
+    selectedText.endsWith(marker) &&
+    selectedText.length >= marker.length * 2;
+  const replacement = isWrapped
+    ? selectedText.slice(marker.length, selectedText.length - marker.length)
+    : `${marker}${selectedText}${marker}`;
+  const selectionOffset = isWrapped ? 0 : marker.length;
+
+  return {
+    value: `${text.slice(0, start)}${replacement}${text.slice(end)}`,
+    selectionStart: start + selectionOffset,
+    selectionEnd: start + selectionOffset + replacement.length - selectionOffset * 2,
   };
 }

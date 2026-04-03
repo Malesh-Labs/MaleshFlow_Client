@@ -25,7 +25,11 @@ import { createPortal } from "react-dom";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { parseHeadingSyntax } from "@/lib/domain/displaySyntax";
-import { splitTextForInlineFormatting } from "@/lib/domain/inlineFormatting";
+import {
+  applySelectedInlineFormattingShortcut,
+  hasRenderableInlineFormatting,
+  splitTextForInlineFormatting,
+} from "@/lib/domain/inlineFormatting";
 import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
 import {
   advanceRecurringDueDate,
@@ -128,9 +132,6 @@ const PALETTE_MODE_ORDER: PaletteMode[] = [
   "nodes",
   "chat",
   "actions",
-  "archive",
-  "migration",
-  "screenshotImport",
 ];
 type NodeSearchResult = {
   node: Doc<"nodes">;
@@ -7685,7 +7686,7 @@ function OutlineNodeEditor({
   );
   const displayDraft = headingSyntax.text;
   const isHeadingLine = headingSyntax.level !== null;
-  const hasStrikethroughSyntax = displayDraft.includes("~~");
+  const hasInlineFormattingPreview = hasRenderableInlineFormatting(displayDraft);
   const shouldHideNoteMarker = false;
   const shouldRevealVisualPlaceholder = isFocused || isSelected;
   const nodeLinkTargetIds = useMemo(
@@ -7725,7 +7726,7 @@ function OutlineNodeEditor({
     !isFocused &&
     !isVisualEmptyLine &&
     !isVisualSeparatorLine &&
-    (isDimmedLine || isHeadingLine || hasStrikethroughSyntax) &&
+    (isDimmedLine || isHeadingLine || hasInlineFormattingPreview) &&
     !hasPageLinkPreview;
   const hasDisplayPreview = hasPageLinkPreview || hasPlainTextPreview;
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
@@ -8689,6 +8690,60 @@ function OutlineNodeEditor({
         });
         return;
       }
+    }
+
+    if (isModifier && !event.shiftKey && !event.altKey && normalizedKey === "i") {
+      const replacement = applySelectedInlineFormattingShortcut(
+        event.currentTarget.value,
+        event.currentTarget.selectionStart ?? 0,
+        event.currentTarget.selectionEnd ?? 0,
+        "__",
+      );
+
+      if (replacement) {
+        event.preventDefault();
+        setDraft(replacement.value);
+        history.updateDraftValue(editorId, editorTarget, replacement.value);
+        setCaretPosition(replacement.selectionEnd);
+        window.requestAnimationFrame(() => {
+          textareaRef.current?.focus();
+          textareaRef.current?.setSelectionRange(
+            replacement.selectionStart,
+            replacement.selectionEnd,
+          );
+        });
+        return;
+      }
+
+      event.preventDefault();
+      return;
+    }
+
+    if (isModifier && !event.shiftKey && !event.altKey && normalizedKey === "b") {
+      const replacement = applySelectedInlineFormattingShortcut(
+        event.currentTarget.value,
+        event.currentTarget.selectionStart ?? 0,
+        event.currentTarget.selectionEnd ?? 0,
+        "**",
+      );
+
+      if (replacement) {
+        event.preventDefault();
+        setDraft(replacement.value);
+        history.updateDraftValue(editorId, editorTarget, replacement.value);
+        setCaretPosition(replacement.selectionEnd);
+        window.requestAnimationFrame(() => {
+          textareaRef.current?.focus();
+          textareaRef.current?.setSelectionRange(
+            replacement.selectionStart,
+            replacement.selectionEnd,
+          );
+        });
+        return;
+      }
+
+      event.preventDefault();
+      return;
     }
 
     if (autocompleteToken && autocompleteSuggestions.length > 0) {
@@ -9801,6 +9856,58 @@ function InlineComposer({
         });
         return;
       }
+    }
+
+    if (isModifier && !event.shiftKey && !event.altKey && normalizedKey === "i") {
+      const replacement = applySelectedInlineFormattingShortcut(
+        event.currentTarget.value,
+        event.currentTarget.selectionStart ?? 0,
+        event.currentTarget.selectionEnd ?? 0,
+        "__",
+      );
+
+      if (replacement) {
+        event.preventDefault();
+        setDraft(replacement.value);
+        setCaretPosition(replacement.selectionEnd);
+        window.requestAnimationFrame(() => {
+          textareaRef.current?.focus();
+          textareaRef.current?.setSelectionRange(
+            replacement.selectionStart,
+            replacement.selectionEnd,
+          );
+        });
+        return;
+      }
+
+      event.preventDefault();
+      return;
+    }
+
+    if (isModifier && !event.shiftKey && !event.altKey && normalizedKey === "b") {
+      const replacement = applySelectedInlineFormattingShortcut(
+        event.currentTarget.value,
+        event.currentTarget.selectionStart ?? 0,
+        event.currentTarget.selectionEnd ?? 0,
+        "**",
+      );
+
+      if (replacement) {
+        event.preventDefault();
+        setDraft(replacement.value);
+        setCaretPosition(replacement.selectionEnd);
+        window.requestAnimationFrame(() => {
+          textareaRef.current?.focus();
+          textareaRef.current?.setSelectionRange(
+            replacement.selectionStart,
+            replacement.selectionEnd,
+          );
+        });
+        return;
+      }
+
+      event.preventDefault();
+      return;
     }
 
     if (event.key === "Escape") {
