@@ -6218,6 +6218,12 @@ function LinkAutocompleteMenu({
   );
 }
 
+function getLinkedTextDecorationStyle(shouldStrike: boolean): CSSProperties {
+  return {
+    textDecorationLine: shouldStrike ? "underline line-through" : "underline",
+  };
+}
+
 function LinkedTextPreview({
   segments,
   onFocusLine,
@@ -6281,12 +6287,12 @@ function LinkedTextPreview({
               onOpenTag(segment.text);
             }}
             className={clsx(
-              "inline cursor-pointer underline decoration-[1.5px] underline-offset-[3px] transition",
+              "inline cursor-pointer decoration-[1.5px] underline-offset-[3px] transition",
               isCompleted
                 ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text-faint)]"
                 : "text-[var(--workspace-brand)] hover:text-[var(--workspace-brand-hover)]",
-              segment.strike || isCompleted ? "line-through" : "",
             )}
+            style={getLinkedTextDecorationStyle(segment.strike || isCompleted)}
           >
             {segment.text}
           </button>
@@ -6306,12 +6312,12 @@ function LinkedTextPreview({
                 event.stopPropagation();
               }}
               className={clsx(
-                "inline cursor-pointer underline decoration-[1.5px] underline-offset-[3px] transition",
+                "inline cursor-pointer decoration-[1.5px] underline-offset-[3px] transition",
                 isCompleted
                   ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text-faint)]"
                   : "text-[var(--workspace-brand)] hover:text-[var(--workspace-brand-hover)]",
-                segment.strike || isCompleted ? "line-through" : "",
               )}
+              style={getLinkedTextDecorationStyle(segment.strike || isCompleted)}
             >
               {segment.text}
             </a>
@@ -6343,9 +6349,9 @@ function LinkedTextPreview({
             >
               <span
                 className={clsx(
-                  "underline decoration-[1.5px] underline-offset-[3px]",
-                  segment.strike || isCompleted ? "line-through" : "",
+                  "decoration-[1.5px] underline-offset-[3px]",
                 )}
+                style={getLinkedTextDecorationStyle(segment.strike || isCompleted)}
               >
                 {segment.text}
               </span>
@@ -6363,8 +6369,8 @@ function LinkedTextPreview({
           ) : (
             <span
               key={segment.key}
-            className={clsx(
-                "inline underline decoration-[1.5px] underline-offset-[3px]",
+              className={clsx(
+                "inline decoration-[1.5px] underline-offset-[3px]",
                 isCompleted
                   ? "text-[var(--workspace-text-faint)]"
                   : "text-[var(--workspace-brand)]",
@@ -6372,8 +6378,8 @@ function LinkedTextPreview({
                   ? "decoration-dotted"
                   : "decoration-[var(--workspace-brand)]/70",
                 segment.resolved ? "" : "opacity-80",
-                segment.strike || isCompleted ? "line-through" : "",
               )}
+              style={getLinkedTextDecorationStyle(segment.strike || isCompleted)}
             >
               {segment.text}
             </span>
@@ -6458,12 +6464,12 @@ function LinkPreviewMeasure({
           <span
             key={segment.key}
             className={clsx(
-              "inline underline decoration-[1.5px] underline-offset-[3px]",
+              "inline decoration-[1.5px] underline-offset-[3px]",
               isCompleted
                 ? "text-[var(--workspace-text-faint)]"
                 : "text-[var(--workspace-brand)]",
-              segment.strike || isCompleted ? "line-through" : "",
             )}
+            style={getLinkedTextDecorationStyle(segment.strike || isCompleted)}
           >
             {segment.text}
           </span>
@@ -6481,9 +6487,9 @@ function LinkPreviewMeasure({
           >
             <span
               className={clsx(
-                "underline decoration-[1.5px] underline-offset-[3px]",
-                segment.strike || isCompleted ? "line-through" : "",
+                "decoration-[1.5px] underline-offset-[3px]",
               )}
+              style={getLinkedTextDecorationStyle(segment.strike || isCompleted)}
             >
               {segment.text}
             </span>
