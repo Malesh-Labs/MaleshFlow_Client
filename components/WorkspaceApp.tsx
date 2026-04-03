@@ -1710,10 +1710,10 @@ function stripDimmedSyntaxPrefix(value: string) {
   return value.replace(/^(\s*)%%\s*/, "$1");
 }
 
-function splitTextForStrikethrough(text: string) {
+function splitTextForStrikethrough(text: string, initialStrike = false) {
   const segments: Array<{ key: string; text: string; strike: boolean }> = [];
   let remaining = text;
-  let strike = false;
+  let strike = initialStrike;
   let index = 0;
 
   while (remaining.length > 0) {
@@ -1741,7 +1741,10 @@ function splitTextForStrikethrough(text: string) {
     index += 1;
   }
 
-  return segments;
+  return {
+    segments,
+    nextStrike: strike,
+  };
 }
 
 function applyStrikethroughToPreviewSegments(segments: LinkPreviewSegment[]) {
@@ -1757,7 +1760,8 @@ function applyStrikethroughToPreviewSegments(segments: LinkPreviewSegment[]) {
       continue;
     }
 
-    for (const textSegment of splitTextForStrikethrough(segment.text)) {
+    const splitResult = splitTextForStrikethrough(segment.text, strike);
+    for (const textSegment of splitResult.segments) {
       rendered.push({
         key: `${segment.key}:${textSegment.key}`,
         kind: "text",
@@ -1765,11 +1769,7 @@ function applyStrikethroughToPreviewSegments(segments: LinkPreviewSegment[]) {
         strike: textSegment.strike,
       });
     }
-
-    const toggles = (segment.text.match(/~~/g) ?? []).length;
-    if (toggles % 2 === 1) {
-      strike = !strike;
-    }
+    strike = splitResult.nextStrike;
   }
 
   return rendered;
@@ -6399,7 +6399,7 @@ function PlainTextPreview({
   isDisabled: boolean;
   className?: string;
 }) {
-  const renderedSegments = splitTextForStrikethrough(text);
+  const { segments: renderedSegments } = splitTextForStrikethrough(text);
 
   return (
     <div
@@ -6517,7 +6517,7 @@ function PlainTextMeasure({
   className?: string;
   measureRef?: RefObject<HTMLDivElement | null>;
 }) {
-  const renderedSegments = splitTextForStrikethrough(text);
+  const { segments: renderedSegments } = splitTextForStrikethrough(text);
 
   return (
     <div
