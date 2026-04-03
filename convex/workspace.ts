@@ -24,8 +24,6 @@ function getTimestamp() {
 }
 
 const MAX_BACKLINK_COUNT_NODE_BATCH = 250;
-const PAGE_TREE_NODE_BATCH_SIZE = 200;
-const PAGE_TREE_BACKLINK_BATCH_SIZE = 200;
 const MAX_PAGE_TREE_NODES = 1200;
 const MAX_PAGE_TREE_NODE_TEXT_CHARS = 250_000;
 const MAX_PAGE_TREE_BACKLINKS = 1200;
@@ -70,75 +68,48 @@ async function listPageNodesForTree(
   ctx: QueryCtx,
   pageId: Id<"pages">,
 ) {
+  const fetchedNodes = await ctx.db
+    .query("nodes")
+    .withIndex("by_page_archived", (query) =>
+      query.eq("pageId", pageId).eq("archived", false),
+    )
+    .take(MAX_PAGE_TREE_NODES + 1);
+
   const nodes: Doc<"nodes">[] = [];
-  let cursor: string | null = null;
   let textChars = 0;
 
-  while (true) {
-    const result = await ctx.db
-      .query("nodes")
-      .withIndex("by_page_archived", (query) =>
-        query.eq("pageId", pageId).eq("archived", false),
-      )
-      .paginate({ cursor, numItems: PAGE_TREE_NODE_BATCH_SIZE });
-
-    for (const node of result.page) {
-      const nextTextChars = textChars + node.text.length;
-      if (nodes.length >= MAX_PAGE_TREE_NODES || nextTextChars > MAX_PAGE_TREE_NODE_TEXT_CHARS) {
-        return {
-          nodes,
-          truncated: true,
-        };
-      }
-
-      nodes.push(node);
-      textChars = nextTextChars;
-    }
-
-    if (result.isDone) {
+  for (const node of fetchedNodes) {
+    const nextTextChars = textChars + node.text.length;
+    if (nodes.length >= MAX_PAGE_TREE_NODES || nextTextChars > MAX_PAGE_TREE_NODE_TEXT_CHARS) {
       return {
         nodes,
-        truncated: false,
+        truncated: true,
       };
     }
 
-    cursor = result.continueCursor;
+    nodes.push(node);
+    textChars = nextTextChars;
   }
+
+  return {
+    nodes,
+    truncated: fetchedNodes.length > MAX_PAGE_TREE_NODES,
+  };
 }
 
 async function listPageBacklinksForTree(
   ctx: QueryCtx,
   pageId: Id<"pages">,
 ) {
-  const backlinks: Doc<"links">[] = [];
-  let cursor: string | null = null;
+  const backlinks = await ctx.db
+    .query("links")
+    .withIndex("by_target_page", (query) => query.eq("targetPageId", pageId))
+    .take(MAX_PAGE_TREE_BACKLINKS + 1);
 
-  while (true) {
-    const result = await ctx.db
-      .query("links")
-      .withIndex("by_target_page", (query) => query.eq("targetPageId", pageId))
-      .paginate({ cursor, numItems: PAGE_TREE_BACKLINK_BATCH_SIZE });
-
-    for (const link of result.page) {
-      if (backlinks.length >= MAX_PAGE_TREE_BACKLINKS) {
-        return {
-          backlinks,
-          truncated: true,
-        };
-      }
-
-      backlinks.push(link);
-    }
-
-    if (result.isDone) {
-      return {
-        backlinks,
-        truncated: false,
-      };
-    }
-
-    cursor = result.continueCursor;
-  }
+  return {
+    backlinks: backlinks.slice(0, MAX_PAGE_TREE_BACKLINKS),
+    truncated: backlinks.length > MAX_PAGE_TREE_BACKLINKS,
+  };
 }
 
 function getPageSourceMeta(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
