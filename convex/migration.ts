@@ -402,6 +402,87 @@ function buildSuggestionPreview(
   ];
 }
 
+function buildDestinationTitleForSourceDocument(
+  templatePlan: MigrationChunkPlan,
+  sourceDocument: {
+    title: string;
+    detectedJournalDate: string | null;
+    destinationPageTitle: string | null;
+  },
+) {
+  if (sourceDocument.destinationPageTitle) {
+    return sourceDocument.destinationPageTitle;
+  }
+
+  if (
+    templatePlan.destination?.pageType === "journal" &&
+    sourceDocument.detectedJournalDate
+  ) {
+    return sourceDocument.detectedJournalDate;
+  }
+
+  return sourceDocument.title;
+}
+
+function buildBulkPlanForSourceDocument(
+  templatePlan: MigrationChunkPlan,
+  sourceDocument: {
+    title: string;
+    detectedJournalDate: string | null;
+    destinationPageId: Id<"pages"> | null;
+    destinationPageTitle: string | null;
+  },
+): MigrationChunkPlan {
+  if (templatePlan.action === "skip") {
+    return {
+      ...templatePlan,
+      summary: `Skip ${sourceDocument.title}.`,
+      rationale:
+        "You chose to carry this same skip principle through the rest of the migration.",
+      preview: [`Skip this chunk from ${sourceDocument.title}.`],
+      destination: null,
+    };
+  }
+
+  const destinationTitle = buildDestinationTitleForSourceDocument(
+    templatePlan,
+    sourceDocument,
+  );
+  const action = sourceDocument.destinationPageId
+    ? "append_to_existing_run_destination"
+    : "create_page";
+  const destination = templatePlan.destination
+    ? {
+        ...templatePlan.destination,
+        title: destinationTitle,
+      }
+    : null;
+
+  const plan: MigrationChunkPlan = {
+    ...templatePlan,
+    action,
+    summary:
+      action === "create_page"
+        ? `Create ${destination?.archived ? "archived " : ""}${destination?.pageType ?? "note"} page for ${sourceDocument.title}.`
+        : `Continue importing ${sourceDocument.title}.`,
+    rationale:
+      action === "create_page"
+        ? "You chose to reuse the same migration principle for the rest of this run, while adapting the destination title to this source document."
+        : "This source document already has a destination page in the current migration, so the same principle continues there.",
+    reviewInstruction: templatePlan.reviewInstruction,
+    destination,
+    transforms: {
+      ...templatePlan.transforms,
+    },
+    preview: [],
+  };
+
+  return {
+    ...plan,
+    preview: buildSuggestionPreview(plan, sourceDocument.title),
+  };
+}
+
 function buildHeuristicPlan(args: {
   sourceType: MigrationSourceType;
   sourceDocument: {
@@ -804,5 +885,126 @@ export const applyMigrationChunk = action({
       });
       throw error;
     }
+  },
+});
+
+export const applyMigrationChunkToRemaining = action({
+  args: {
+    ownerKey: v.string(),
+    chunkId: v.id("migrationChunks"),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const context = (await ctx.runQuery(getMigrationChunkContextRef, {
+      chunkId: args.chunkId,
+    })) as
+      | {
+          run: {
+            _id: Id<"migrationRuns">;
+          };
+          chunk: {
+            _id: Id<"migrationChunks">;
+            chunkText: string;
+            status: string;
+            sourceDocumentEntryId: Id<"migrationSourceDocuments">;
+            suggestion?: MigrationChunkPlan;
+            guidance?: string;
+          };
+          allSourceDocuments: Array<{
+            _id: Id<"migrationSourceDocuments">;
+            title: string;
+            detectedJournalDate: string | null;
+            destinationPageId: Id<"pages"> | null;
+            destinationPageTitle: string | null;
+          }>;
+          allChunks: Array<{
+            _id: Id<"migrationChunks">;
+            order: number;
+            chunkText: string;
+            status: string;
+            sourceDocumentEntryId: Id<"migrationSourceDocuments">;
+          }>;
+        }
+      | null;
+    if (!context) {
+      throw new Error("Migration chunk not found.");
+    }
+
+    const basePlan = context.chunk.suggestion;
+    if (!basePlan) {
+      throw new Error("Generate a suggestion before bulk-applying this migration principle.");
+    }
+
+    const guidance = context.chunk.guidance ?? "";
+    const sourceDocumentById = new Map(
+      context.allSourceDocuments.map((document) => [document._id, document]),
+    );
+    const chunksToApply = context.allChunks
+      .filter((chunk) =>
+        ["pending", "needs_review", "ready", "approved", "error"].includes(chunk.status),
+      )
+      .sort((left, right) => {
+        const leftDoc = sourceDocumentById.get(left.sourceDocumentEntryId);
+        const rightDoc = sourceDocumentById.get(right.sourceDocumentEntryId);
+        const leftOrder = leftDoc ? context.allSourceDocuments.findIndex((entry) => entry._id === leftDoc._id) : 0;
+        const rightOrder = rightDoc ? context.allSourceDocuments.findIndex((entry) => entry._id === rightDoc._id) : 0;
+        if (leftOrder !== rightOrder) {
+          return leftOrder - rightOrder;
+        }
+        return left.order - right.order;
+      });
+
+    let appliedChunks = 0;
+    let skippedChunks = 0;
+    let errorChunks = 0;
+
+    for (const chunk of chunksToApply) {
+      const sourceDocument = sourceDocumentById.get(chunk.sourceDocumentEntryId);
+      if (!sourceDocument) {
+        errorChunks += 1;
+        await ctx.runMutation(markMigrationChunkErrorRef, {
+          chunkId: chunk._id,
+          error: "Migration source document was not found for bulk apply.",
+        });
+        continue;
+      }
+
+      const effectivePlan =
+        chunk._id === context.chunk._id
+          ? basePlan
+          : buildBulkPlanForSourceDocument(basePlan, sourceDocument);
+
+      try {
+        const exampleVector = await createEmbedding(
+          `${guidance}\n\n${chunk.chunkText}`.trim(),
+        );
+        await ctx.runMutation(applyMigrationChunkInternalRef, {
+          ownerKey: args.ownerKey,
+          chunkId: chunk._id,
+          plan: effectivePlan,
+          guidance,
+          exampleVector,
+        });
+        if (effectivePlan.action === "skip") {
+          skippedChunks += 1;
+        } else {
+          appliedChunks += 1;
+        }
+      } catch (error) {
+        errorChunks += 1;
+        await ctx.runMutation(markMigrationChunkErrorRef, {
+          chunkId: chunk._id,
+          error:
+            error instanceof Error ? error.message : "Bulk migration apply failed.",
+        });
+      }
+    }
+
+    return {
+      appliedChunks,
+      skippedChunks,
+      errorChunks,
+      totalProcessed: chunksToApply.length,
+    };
   },
 });

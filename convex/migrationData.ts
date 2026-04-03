@@ -587,12 +587,17 @@ export const getMigrationChunkContext = internalQuery({
       .query("migrationSourceDocuments")
       .withIndex("by_run_and_order", (query) => query.eq("runId", run._id))
       .collect();
+    const allChunks = await ctx.db
+      .query("migrationChunks")
+      .withIndex("by_run_and_order", (query) => query.eq("runId", run._id))
+      .collect();
 
     return {
       run,
       sourceDocument,
       chunk,
       allSourceDocuments,
+      allChunks,
     };
   },
 });

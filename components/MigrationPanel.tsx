@@ -60,6 +60,7 @@ export function MigrationPanel({ ownerKey }: MigrationPanelProps) {
   const [isStartingRun, setIsStartingRun] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
+  const [isApplyingToRemaining, setIsApplyingToRemaining] = useState(false);
   const [isSavingLessons, setIsSavingLessons] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -76,6 +77,9 @@ export function MigrationPanel({ ownerKey }: MigrationPanelProps) {
   const startLogseqMigration = useAction(api.migration.startLogseqMigration);
   const suggestMigrationChunk = useAction(api.migration.suggestMigrationChunk);
   const applyMigrationChunk = useAction(api.migration.applyMigrationChunk);
+  const applyMigrationChunkToRemaining = useAction(
+    api.migration.applyMigrationChunkToRemaining,
+  );
   const updateMigrationLessonsDoc = useMutation(api.migrationData.updateMigrationLessonsDoc);
   const skipMigrationChunk = useMutation(api.migrationData.skipMigrationChunk);
 
@@ -118,6 +122,7 @@ export function MigrationPanel({ ownerKey }: MigrationPanelProps) {
 
     return `${runDetails.run.appliedChunks}/${runDetails.run.totalChunks} applied • ${runDetails.run.reviewChunks} left to review`;
   }, [runDetails?.run]);
+  const remainingChunkCount = Math.max((runDetails?.run.reviewChunks ?? 0) - 1, 0);
 
   const handleToggleSource = (sourceId: string) => {
     setSelectedSourceIds((current) => {
@@ -271,6 +276,44 @@ export function MigrationPanel({ ownerKey }: MigrationPanelProps) {
       setErrorMessage(
         error instanceof Error ? error.message : "Could not skip the chunk.",
       );
+    }
+  };
+
+  const handleApplyToRemaining = async () => {
+    if (!nextChunk || !suggestion || remainingChunkCount <= 0) {
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Apply this same migration principle to the remaining ${remainingChunkCount} chunk${remainingChunkCount === 1 ? "" : "s"} in this run? This will immediately process them using the current approved strategy, while still adapting titles and destinations per source document.`,
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setIsApplyingToRemaining(true);
+    setErrorMessage("");
+    try {
+      const result = (await applyMigrationChunkToRemaining({
+        ownerKey,
+        chunkId: nextChunk._id,
+      })) as {
+        appliedChunks: number;
+        skippedChunks: number;
+        errorChunks: number;
+        totalProcessed: number;
+      };
+      setStatusMessage(
+        `Processed ${result.totalProcessed} chunk${result.totalProcessed === 1 ? "" : "s"} • ${result.appliedChunks} applied${result.skippedChunks > 0 ? ` • ${result.skippedChunks} skipped` : ""}${result.errorChunks > 0 ? ` • ${result.errorChunks} errors` : ""}.`,
+      );
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not apply this principle to the remaining chunks.",
+      );
+    } finally {
+      setIsApplyingToRemaining(false);
     }
   };
 
@@ -539,14 +582,27 @@ export function MigrationPanel({ ownerKey }: MigrationPanelProps) {
                     </button>
                     <button
                       type="button"
-                      disabled={!suggestion || isApplying}
+                      disabled={!suggestion || isApplying || isApplyingToRemaining}
                       onClick={() => void handleApply()}
                       className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition hover:bg-[var(--workspace-brand-hover)] disabled:cursor-wait disabled:opacity-60"
                     >
                       {isApplying ? "Applying…" : "Approve & Apply"}
                     </button>
+                    {remainingChunkCount > 0 ? (
+                      <button
+                        type="button"
+                        disabled={!suggestion || isApplying || isApplyingToRemaining}
+                        onClick={() => void handleApplyToRemaining()}
+                        className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {isApplyingToRemaining
+                          ? "Applying to Rest…"
+                          : `Apply to Rest (${remainingChunkCount})`}
+                      </button>
+                    ) : null}
                     <button
                       type="button"
+                      disabled={isApplying || isApplyingToRemaining}
                       onClick={() => void handleSkip()}
                       className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
                     >
