@@ -2980,6 +2980,25 @@ function ConfiguredWorkspace({
   }, [paletteOpen]);
 
   useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+
+    if (paletteOpen) {
+      document.body.style.overflow = "hidden";
+      document.documentElement.style.overflow = "hidden";
+    }
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+    };
+  }, [paletteOpen]);
+
+  useEffect(() => {
     setLocationPageId(readPageIdFromLocation());
 
     const handlePopState = () => {
@@ -6099,7 +6118,7 @@ function ConfiguredWorkspace({
       </div>
       {paletteOpen ? (
         <div
-          className="fixed inset-0 z-50 bg-[var(--workspace-text)]/20 p-4 sm:p-8"
+          className="fixed inset-0 z-50 overflow-hidden bg-[var(--workspace-text)]/20 p-4 sm:p-8"
           onClick={() => {
             setPaletteOpen(false);
             setPaletteQuery("");
@@ -6110,7 +6129,7 @@ function ConfiguredWorkspace({
         >
           <div
             className={clsx(
-              "mx-auto mt-16 w-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]",
+              "mx-auto mt-16 flex max-h-[calc(100vh-8rem)] w-full flex-col overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]",
               paletteMode === "migration"
                 ? "max-w-6xl"
                 : paletteMode === "chat" ||
@@ -6282,6 +6301,7 @@ function ConfiguredWorkspace({
             <div
               ref={paletteResultsRef}
               className={clsx(
+                "min-h-0",
                 paletteMode === "chat" ||
                   paletteMode === "archive" ||
                   paletteMode === "migration" ||
@@ -7554,7 +7574,7 @@ function WorkspaceAiChatPanel({
       {showHistoryPanel ? (
         <div
           ref={historyRef}
-          className="min-h-0 flex-1 overflow-y-auto border-b border-[var(--workspace-border-subtle)] px-5 py-4"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-b border-[var(--workspace-border-subtle)] px-5 py-4 [touch-action:pan-y]"
         >
           <div className="space-y-4">
             {messages.map((message) => {
