@@ -7242,6 +7242,28 @@ function OutlineNodeEditor({
     focusElementAtEnd(textareaRef.current);
   };
 
+  const restoreEditorSelection = (
+    selectionStart: number,
+    selectionEnd: number,
+    attemptsRemaining = 2,
+  ) => {
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) {
+        if (attemptsRemaining > 0) {
+          restoreEditorSelection(selectionStart, selectionEnd, attemptsRemaining - 1);
+        }
+        return;
+      }
+
+      onBeginTextEditing();
+      textarea.focus();
+      const nextSelectionStart = Math.min(selectionStart, textarea.value.length);
+      const nextSelectionEnd = Math.min(selectionEnd, textarea.value.length);
+      textarea.setSelectionRange(nextSelectionStart, nextSelectionEnd);
+    });
+  };
+
   const focusAdjacentVisibleNode = (direction: -1 | 1) => {
     const shells = Array.from(
       document.querySelectorAll<HTMLElement>("[data-node-shell][data-node-id]"),
@@ -8145,6 +8167,8 @@ function OutlineNodeEditor({
       }
 
       event.preventDefault();
+      const selectionStart = event.currentTarget.selectionStart ?? draft.length;
+      const selectionEnd = event.currentTarget.selectionEnd ?? selectionStart;
       const saveResult = await commitNodeText(draft);
       const historyEntries: HistoryEntry[] = [];
       if (saveResult.updateEntry) {
@@ -8226,6 +8250,7 @@ function OutlineNodeEditor({
           focusAfterRedoId: editorId,
         });
       }
+      restoreEditorSelection(selectionStart, selectionEnd);
       return;
     }
 
