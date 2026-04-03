@@ -1152,10 +1152,13 @@ export const renamePage = mutation({
 
       const nextText = rewriteMatchingPageWikiLinks(
         sourceNode.text,
-        (targetPageTitle) =>
-          (slugify(targetPageTitle, { lower: true, strict: true }) || "untitled") ===
-          previousSlug,
+        (link) =>
+          link.targetPageRef === (args.pageId as string) ||
+          (!!link.targetPageTitle &&
+            (slugify(link.targetPageTitle, { lower: true, strict: true }) || "untitled") ===
+              previousSlug),
         nextTitle,
+        page.title,
       );
 
       if (nextText === sourceNode.text) {

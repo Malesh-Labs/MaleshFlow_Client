@@ -26,7 +26,12 @@ import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { parseHeadingSyntax } from "@/lib/domain/displaySyntax";
 import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
-import { applySelectedLinkShortcut, extractLinkMatches } from "@/lib/domain/links";
+import {
+  applySelectedLinkShortcut,
+  extractLinkMatches,
+  getExplicitWikiLinkPreviewText,
+  replaceLinkMarkupWithLabels,
+} from "@/lib/domain/links";
 import { extractTagMatches } from "@/lib/domain/tags";
 import {
   buildNodeSelectionIds,
@@ -773,8 +778,12 @@ function buildNodeClipboardLink(node: Pick<Doc<"nodes">, "_id" | "text">) {
   return `[[${sanitizeLinkLabel(node.text)}|node:${node._id}]]`;
 }
 
-function buildPageBacklinkSearchQuery(page: Pick<Doc<"pages">, "title">) {
-  return `[[${page.title}]]`;
+function buildPageLinkInsertText(page: Pick<Doc<"pages">, "_id" | "title">) {
+  return `[[${sanitizeLinkLabel(page.title)}|page:${page._id}]]`;
+}
+
+function buildPageBacklinkSearchQuery(page: Pick<Doc<"pages">, "_id">) {
+  return `page:${page._id}`;
 }
 
 function buildNodeBacklinkSearchQuery(node: { _id: string }) {
@@ -792,13 +801,20 @@ function getNodeIdFromTarget(target: EventTarget | null) {
 function resolveExplicitKnowledgeLinkTargets(
   value: string,
   pagesByTitle: Map<string, PageDoc>,
+  pagesById: Map<string, PageDoc>,
 ) {
   const linkedPageIds = new Set<Id<"pages">>();
   const linkedNodeIds = new Set<Id<"nodes">>();
 
   for (const match of extractLinkMatches(value)) {
     if (match.link.kind === "page") {
-      const page = pagesByTitle.get(normalizePageTitleKey(match.link.targetPageTitle));
+      const page =
+        (match.link.targetPageRef
+          ? pagesById.get(match.link.targetPageRef)
+          : null) ??
+        (match.link.targetPageTitle
+          ? pagesByTitle.get(normalizePageTitleKey(match.link.targetPageTitle))
+          : null);
       if (page && !page.archived) {
         linkedPageIds.add(page._id);
       }
@@ -876,7 +892,12 @@ function getActiveLinkToken(value: string, caretPosition: number | null) {
   }
 
   const inner = beforeCaret.slice(startIndex + 2);
-  if (inner.includes("]]") || inner.includes("\n") || inner.includes("|node:")) {
+  if (
+    inner.includes("]]") ||
+    inner.includes("\n") ||
+    inner.includes("|node:") ||
+    inner.includes("|page:")
+  ) {
     return null;
   }
 
@@ -924,7 +945,7 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
     kind: "page",
     title: page.title,
     subtitle: "Page",
-    insertText: `[[${page.title}]]`,
+    insertText: buildPageLinkInsertText(page),
   }));
 
   const nodeSuggestions: LinkSuggestion[] = results.nodes
@@ -1070,6 +1091,7 @@ function useFloatingMenuPosition(
 function buildLinkPreviewSegments(
   value: string,
   pagesByTitle: Map<string, PageDoc>,
+  pagesById: Map<string, PageDoc> = new Map(),
   nodeTargetsById: Map<string, NodeLinkTargetResolution>,
 ): LinkPreviewSegment[] {
   const linkMatches = extractLinkMatches(value);
@@ -1124,11 +1146,18 @@ function buildLinkPreviewSegments(
         pageTypeBadge: null,
       });
     } else if (match.link.kind === "page") {
-      const page = pagesByTitle.get(normalizePageTitleKey(match.link.targetPageTitle));
+      const page =
+        (match.link.targetPageRef
+          ? pagesById.get(match.link.targetPageRef)
+          : null) ??
+        (match.link.targetPageTitle
+          ? pagesByTitle.get(normalizePageTitleKey(match.link.targetPageTitle))
+          : null);
+      const pagePreviewText = getExplicitWikiLinkPreviewText(match.link.label);
       segments.push({
         key: `page:${match.start}`,
         kind: "link",
-        text: match.link.targetPageTitle,
+        text: pagePreviewText || page?.title || match.link.targetPageTitle || "Linked page",
         pageId: page?._id ?? null,
         nodeId: null,
         archived: page?.archived ?? false,
@@ -1139,17 +1168,14 @@ function buildLinkPreviewSegments(
       });
     } else {
       const targetNode = nodeTargetsById.get(match.link.targetNodeRef);
-      const nodeLabel = match.link.label.startsWith("[[")
-        ? match.link.label
-            .slice(2, -2)
-            .replace(/^(?:node:[a-zA-Z0-9_-]+)$/, "")
-            .replace(/\|node:[a-zA-Z0-9_-]+$/, "")
-            .trim()
+      const nodeLabel = getExplicitWikiLinkPreviewText(match.link.label);
+      const renderedTargetNodeText = targetNode
+        ? replaceLinkMarkupWithLabels(targetNode.text).trim()
         : "";
       segments.push({
         key: `node:${match.start}`,
         kind: "link",
-        text: nodeLabel || targetNode?.text.trim() || "Linked node",
+        text: nodeLabel || renderedTargetNodeText || "Linked node",
         pageId: targetNode?.pageId ?? null,
         nodeId: targetNode?.nodeId ?? null,
         archived: targetNode?.pageArchived ?? false,
@@ -4337,7 +4363,11 @@ function ConfiguredWorkspace({
     setIsWorkspaceChatLoading(true);
     setWorkspaceChatError("");
     try {
-      const explicitTargets = resolveExplicitKnowledgeLinkTargets(question, pagesByTitle);
+      const explicitTargets = resolveExplicitKnowledgeLinkTargets(
+        question,
+        pagesByTitle,
+        pagesById,
+      );
       await chatWithWorkspace({
         ownerKey,
         question,
@@ -4355,7 +4385,7 @@ function ConfiguredWorkspace({
     } finally {
       setIsWorkspaceChatLoading(false);
     }
-  }, [chatWithWorkspace, ownerKey, pagesByTitle, workspaceChatDraft]);
+  }, [chatWithWorkspace, ownerKey, pagesById, pagesByTitle, workspaceChatDraft]);
 
   const handleArchivePage = async (page: PageDoc, archived: boolean) => {
     await archivePage({
@@ -4662,6 +4692,7 @@ function ConfiguredWorkspace({
                       onSelectionExtend={extendNodeSelection}
                       availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
+                      pagesById={pagesById}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
@@ -5059,6 +5090,7 @@ function ConfiguredWorkspace({
                         onSelectionExtend={extendNodeSelection}
                         availableTags={sortedTags}
                         pagesByTitle={pagesByTitle}
+                        pagesById={pagesById}
                         onOpenPage={handleSelectPage}
                         onOpenNode={handleOpenLinkedNode}
                         onOpenTag={openFindPaletteForQuery}
@@ -5099,6 +5131,7 @@ function ConfiguredWorkspace({
                           onSelectionExtend={extendNodeSelection}
                           availableTags={sortedTags}
                           pagesByTitle={pagesByTitle}
+                          pagesById={pagesById}
                           onOpenPage={handleSelectPage}
                           onOpenNode={handleOpenLinkedNode}
                           onOpenTag={openFindPaletteForQuery}
@@ -5148,6 +5181,7 @@ function ConfiguredWorkspace({
                       onSelectionExtend={extendNodeSelection}
                       availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
+                      pagesById={pagesById}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
@@ -5199,6 +5233,7 @@ function ConfiguredWorkspace({
                       onSelectionExtend={extendNodeSelection}
                       availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
+                      pagesById={pagesById}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
@@ -5242,6 +5277,7 @@ function ConfiguredWorkspace({
                       onSelectionExtend={extendNodeSelection}
                       availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
+                      pagesById={pagesById}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
@@ -5282,6 +5318,7 @@ function ConfiguredWorkspace({
                       onSelectionExtend={extendNodeSelection}
                       availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
+                      pagesById={pagesById}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
@@ -5336,6 +5373,7 @@ function ConfiguredWorkspace({
                         onSelectionExtend={extendNodeSelection}
                         availableTags={sortedTags}
                         pagesByTitle={pagesByTitle}
+                        pagesById={pagesById}
                         onOpenPage={handleSelectPage}
                         onOpenNode={handleOpenLinkedNode}
                         onOpenTag={openFindPaletteForQuery}
@@ -5376,6 +5414,7 @@ function ConfiguredWorkspace({
                         onSelectionExtend={extendNodeSelection}
                         availableTags={sortedTags}
                         pagesByTitle={pagesByTitle}
+                        pagesById={pagesById}
                         onOpenPage={handleSelectPage}
                         onOpenNode={handleOpenLinkedNode}
                         onOpenTag={openFindPaletteForQuery}
@@ -5417,6 +5456,7 @@ function ConfiguredWorkspace({
                       onSelectionExtend={extendNodeSelection}
                       availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
+                      pagesById={pagesById}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
@@ -5807,6 +5847,7 @@ function PageSection({
   onSelectionExtend,
   availableTags,
   pagesByTitle,
+  pagesById = new Map(),
   onOpenPage,
   onOpenNode,
   onOpenTag,
@@ -5853,6 +5894,7 @@ function PageSection({
   onSelectionExtend: (nodeId: string) => void;
   availableTags: SidebarTagResult[];
   pagesByTitle: Map<string, PageDoc>;
+  pagesById?: Map<string, PageDoc>;
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   onOpenTag: (tag: string) => void;
@@ -5930,6 +5972,7 @@ function PageSection({
           onSelectionExtend={onSelectionExtend}
           availableTags={availableTags}
           pagesByTitle={pagesByTitle}
+          pagesById={pagesById}
           onOpenPage={onOpenPage}
           onOpenNode={onOpenNode}
           onOpenTag={onOpenTag}
@@ -5974,6 +6017,7 @@ function OutlineNodeList({
   onSelectionExtend,
   availableTags,
   pagesByTitle,
+  pagesById = new Map(),
   onOpenPage,
   onOpenNode,
   onOpenTag,
@@ -6016,6 +6060,7 @@ function OutlineNodeList({
   onSelectionExtend: (nodeId: string) => void;
   availableTags: SidebarTagResult[];
   pagesByTitle: Map<string, PageDoc>;
+  pagesById?: Map<string, PageDoc>;
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   onOpenTag: (tag: string) => void;
@@ -6093,6 +6138,7 @@ function OutlineNodeList({
           onSelectionExtend={onSelectionExtend}
           availableTags={availableTags}
           pagesByTitle={pagesByTitle}
+          pagesById={pagesById}
           onOpenPage={onOpenPage}
           onOpenNode={onOpenNode}
           onOpenTag={onOpenTag}
@@ -6179,6 +6225,7 @@ function LinkedTextPreview({
   onOpenNode,
   onOpenTag,
   isDisabled,
+  isCompleted,
   className,
 }: {
   segments: LinkPreviewSegment[];
@@ -6187,6 +6234,7 @@ function LinkedTextPreview({
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   onOpenTag: (tag: string) => void;
   isDisabled: boolean;
+  isCompleted: boolean;
   className?: string;
 }) {
   const renderedSegments = applyStrikethroughToPreviewSegments(segments);
@@ -6214,7 +6262,7 @@ function LinkedTextPreview({
         segment.kind === "text" ? (
           <span
             key={segment.key}
-            className={segment.strike ? "line-through" : undefined}
+            className={segment.strike || isCompleted ? "line-through" : undefined}
           >
             {segment.text}
           </span>
@@ -6233,8 +6281,11 @@ function LinkedTextPreview({
               onOpenTag(segment.text);
             }}
             className={clsx(
-              "inline cursor-pointer text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px] transition hover:text-[var(--workspace-brand-hover)]",
-              segment.strike ? "line-through" : "",
+              "inline cursor-pointer underline decoration-[1.5px] underline-offset-[3px] transition",
+              isCompleted
+                ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text-faint)]"
+                : "text-[var(--workspace-brand)] hover:text-[var(--workspace-brand-hover)]",
+              segment.strike || isCompleted ? "line-through" : "",
             )}
           >
             {segment.text}
@@ -6255,8 +6306,11 @@ function LinkedTextPreview({
                 event.stopPropagation();
               }}
               className={clsx(
-                "inline cursor-pointer text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px] transition hover:text-[var(--workspace-brand-hover)]",
-                segment.strike ? "line-through" : "",
+                "inline cursor-pointer underline decoration-[1.5px] underline-offset-[3px] transition",
+                isCompleted
+                  ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text-faint)]"
+                  : "text-[var(--workspace-brand)] hover:text-[var(--workspace-brand-hover)]",
+                segment.strike || isCompleted ? "line-through" : "",
               )}
             >
               {segment.text}
@@ -6280,20 +6334,28 @@ function LinkedTextPreview({
                 onOpenPage(segment.pageId!);
               }}
               className={clsx(
-                "inline-flex align-top cursor-pointer items-center gap-1 text-[var(--workspace-brand)] transition hover:text-[var(--workspace-brand-hover)]",
+                "inline-flex align-top cursor-pointer items-center gap-1 transition",
+                isCompleted
+                  ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text-faint)]"
+                  : "text-[var(--workspace-brand)] hover:text-[var(--workspace-brand-hover)]",
                 segment.archived ? "opacity-75" : "",
               )}
             >
               <span
                 className={clsx(
                   "underline decoration-[1.5px] underline-offset-[3px]",
-                  segment.strike ? "line-through" : "",
+                  segment.strike || isCompleted ? "line-through" : "",
                 )}
               >
                 {segment.text}
               </span>
               {segment.pageTypeBadge ? (
-                <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none no-underline">
+                <span
+                  className={clsx(
+                    "inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none no-underline",
+                    isCompleted ? "opacity-70" : "",
+                  )}
+                >
                   {segment.pageTypeBadge}
                 </span>
               ) : null}
@@ -6301,13 +6363,16 @@ function LinkedTextPreview({
           ) : (
             <span
               key={segment.key}
-              className={clsx(
-                "inline text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px]",
+            className={clsx(
+                "inline underline decoration-[1.5px] underline-offset-[3px]",
+                isCompleted
+                  ? "text-[var(--workspace-text-faint)]"
+                  : "text-[var(--workspace-brand)]",
                 segment.linkKind === "node"
                   ? "decoration-dotted"
                   : "decoration-[var(--workspace-brand)]/70",
                 segment.resolved ? "" : "opacity-80",
-                segment.strike ? "line-through" : "",
+                segment.strike || isCompleted ? "line-through" : "",
               )}
             >
               {segment.text}
@@ -6361,10 +6426,12 @@ function PlainTextPreview({
 
 function LinkPreviewMeasure({
   segments,
+  isCompleted,
   className,
   measureRef,
 }: {
   segments: LinkPreviewSegment[];
+  isCompleted: boolean;
   className?: string;
   measureRef?: RefObject<HTMLDivElement | null>;
 }) {
@@ -6383,7 +6450,7 @@ function LinkPreviewMeasure({
         segment.kind === "text" ? (
           <span
             key={segment.key}
-            className={segment.strike ? "line-through" : undefined}
+            className={segment.strike || isCompleted ? "line-through" : undefined}
           >
             {segment.text}
           </span>
@@ -6391,8 +6458,11 @@ function LinkPreviewMeasure({
           <span
             key={segment.key}
             className={clsx(
-              "inline text-[var(--workspace-brand)] underline decoration-[1.5px] underline-offset-[3px]",
-              segment.strike ? "line-through" : "",
+              "inline underline decoration-[1.5px] underline-offset-[3px]",
+              isCompleted
+                ? "text-[var(--workspace-text-faint)]"
+                : "text-[var(--workspace-brand)]",
+              segment.strike || isCompleted ? "line-through" : "",
             )}
           >
             {segment.text}
@@ -6401,7 +6471,10 @@ function LinkPreviewMeasure({
           <span
             key={segment.key}
             className={clsx(
-              "inline-flex align-top items-center gap-1 text-[var(--workspace-brand)]",
+              "inline-flex align-top items-center gap-1",
+              isCompleted
+                ? "text-[var(--workspace-text-faint)]"
+                : "text-[var(--workspace-brand)]",
               segment.archived ? "opacity-75" : "",
               !segment.resolved ? "opacity-80" : "",
             )}
@@ -6409,13 +6482,18 @@ function LinkPreviewMeasure({
             <span
               className={clsx(
                 "underline decoration-[1.5px] underline-offset-[3px]",
-                segment.strike ? "line-through" : "",
+                segment.strike || isCompleted ? "line-through" : "",
               )}
             >
               {segment.text}
             </span>
             {segment.pageTypeBadge ? (
-              <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none no-underline">
+              <span
+                className={clsx(
+                  "inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none no-underline",
+                  isCompleted ? "opacity-70" : "",
+                )}
+              >
                 {segment.pageTypeBadge}
               </span>
             ) : null}
@@ -6829,6 +6907,7 @@ function OutlineNodeEditor({
   onSelectionExtend,
   availableTags,
   pagesByTitle,
+  pagesById = new Map(),
   onOpenPage,
   onOpenNode,
   onOpenTag,
@@ -6876,6 +6955,7 @@ function OutlineNodeEditor({
   onSelectionExtend: (nodeId: string) => void;
   availableTags: SidebarTagResult[];
   pagesByTitle: Map<string, PageDoc>;
+  pagesById?: Map<string, PageDoc>;
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   onOpenTag: (tag: string) => void;
@@ -6959,8 +7039,8 @@ function OutlineNodeEditor({
     return next;
   }, [resolvedNodeLinks]);
   const linkPreviewSegments = useMemo(() => {
-    return buildLinkPreviewSegments(displayDraft, pagesByTitle, nodeTargetsById);
-  }, [displayDraft, nodeTargetsById, pagesByTitle]);
+    return buildLinkPreviewSegments(displayDraft, pagesByTitle, pagesById, nodeTargetsById);
+  }, [displayDraft, nodeTargetsById, pagesById, pagesByTitle]);
   const hasPageLinkPreview =
     !isFocused &&
     !isVisualEmptyLine &&
@@ -8427,6 +8507,7 @@ function OutlineNodeEditor({
               <LinkPreviewMeasure
                 measureRef={previewMeasureRef}
                 segments={linkPreviewSegments}
+                isCompleted={isCompleted}
                 className={clsx(
                   previewTypographyClass,
                   isCompleted
@@ -8458,6 +8539,7 @@ function OutlineNodeEditor({
                 onOpenNode={onOpenNode}
                 onOpenTag={onOpenTag}
                 isDisabled={isDisabled || activeDraggedNodeId !== null}
+                isCompleted={isCompleted}
                 className={clsx(
                   previewTypographyClass,
                   isCompleted
@@ -8608,6 +8690,7 @@ function OutlineNodeEditor({
               onSelectionExtend={onSelectionExtend}
               availableTags={availableTags}
               pagesByTitle={pagesByTitle}
+              pagesById={pagesById}
           onOpenPage={onOpenPage}
           onOpenNode={onOpenNode}
           onOpenTag={onOpenTag}

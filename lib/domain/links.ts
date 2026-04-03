@@ -2,7 +2,8 @@ export type ExtractedLink =
   | {
       kind: "page";
       label: string;
-      targetPageTitle: string;
+      targetPageTitle?: string;
+      targetPageRef?: string;
     }
   | {
       kind: "node";
@@ -25,6 +26,7 @@ export type ExtractedLinkMatch = {
 const WIKI_LINK_PATTERN = /\[\[([^[\]]+)\]\]/g;
 const NODE_LINK_PATTERN = /\(\(([a-zA-Z0-9_-]+)\)\)/g;
 const MARKDOWN_LINK_PATTERN = /\[([^\]]+)\]\(([^)\s]+)\)/g;
+const PAGE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?page:([a-zA-Z0-9_-]+)$/;
 const NODE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?node:([a-zA-Z0-9_-]+)$/;
 const COMPLETE_MARKDOWN_LINK_PATTERN = /^\[([^\]]+)\]\(([^)]*)\)$/;
 const COMPLETE_WIKI_LINK_PATTERN = /^\[\[([^[\]]+)\]\]$/;
@@ -35,6 +37,25 @@ export function extractLinkMatches(text: string) {
   for (const match of text.matchAll(WIKI_LINK_PATTERN)) {
     const inner = match[1]?.trim();
     if (!inner) {
+      continue;
+    }
+
+    const pageMatch = inner.match(PAGE_WIKI_TARGET_PATTERN);
+    if (pageMatch) {
+      const ref = pageMatch[2]?.trim();
+      if (!ref) {
+        continue;
+      }
+
+      matches.push({
+        start: match.index ?? 0,
+        end: (match.index ?? 0) + match[0].length,
+        link: {
+          kind: "page",
+          label: match[0],
+          targetPageRef: ref,
+        },
+      });
       continue;
     }
 
@@ -60,11 +81,11 @@ export function extractLinkMatches(text: string) {
     matches.push({
       start: match.index ?? 0,
       end: (match.index ?? 0) + match[0].length,
-      link: {
-        kind: "page",
-        label: match[0],
-        targetPageTitle: inner,
-      },
+        link: {
+          kind: "page",
+          label: match[0],
+          targetPageTitle: inner,
+        },
     });
   }
 
@@ -113,7 +134,7 @@ export function extractLinks(text: string) {
 
 function getReadableLinkLabel(match: ExtractedLinkMatch) {
   if (match.link.kind === "page") {
-    return match.link.targetPageTitle;
+    return getExplicitWikiLinkPreviewText(match.link.label) || match.link.targetPageTitle || "";
   }
 
   if (match.link.kind === "external") {
@@ -121,14 +142,22 @@ function getReadableLinkLabel(match: ExtractedLinkMatch) {
   }
 
   if (match.link.label.startsWith("[[")) {
-    return match.link.label
-      .slice(2, -2)
-      .replace(/^(?:node:[a-zA-Z0-9_-]+)$/, "")
-      .replace(/\|node:[a-zA-Z0-9_-]+$/, "")
-      .trim();
+    return getExplicitWikiLinkPreviewText(match.link.label);
   }
 
   return "";
+}
+
+export function getExplicitWikiLinkPreviewText(label: string) {
+  if (!label.startsWith("[[") || !label.endsWith("]]")) {
+    return "";
+  }
+
+  return label
+    .slice(2, -2)
+    .replace(/^(?:node|page):[a-zA-Z0-9_-]+$/, "")
+    .replace(/\|(node|page):[a-zA-Z0-9_-]+$/, "")
+    .trim();
 }
 
 function replaceLinkMarkup(
@@ -169,8 +198,11 @@ export function replaceLinkMarkupWithLabels(text: string) {
 
 export function rewriteMatchingPageWikiLinks(
   text: string,
-  shouldRewrite: (targetPageTitle: string) => boolean,
+  shouldRewrite: (
+    link: Extract<ExtractedLink, { kind: "page" }>,
+  ) => boolean,
   nextTitle: string,
+  previousTitle?: string,
 ) {
   const matches = extractLinkMatches(text);
   if (matches.length === 0) {
@@ -185,8 +217,25 @@ export function rewriteMatchingPageWikiLinks(
       nextText += text.slice(cursor, match.start);
     }
 
-    if (match.link.kind === "page" && shouldRewrite(match.link.targetPageTitle)) {
-      nextText += `[[${nextTitle}]]`;
+    if (match.link.kind === "page" && shouldRewrite(match.link)) {
+      if (match.link.targetPageRef) {
+        const previewText = getExplicitWikiLinkPreviewText(match.link.label);
+        if (
+          previewText.length === 0 ||
+          previewText.localeCompare(previousTitle ?? "", undefined, {
+            sensitivity: "base",
+          }) !== 0
+        ) {
+          nextText +=
+            previewText.length === 0
+              ? `[[page:${match.link.targetPageRef}]]`
+              : text.slice(match.start, match.end);
+        } else {
+          nextText += `[[${nextTitle}|page:${match.link.targetPageRef}]]`;
+        }
+      } else {
+        nextText += `[[${nextTitle}]]`;
+      }
     } else {
       nextText += text.slice(match.start, match.end);
     }

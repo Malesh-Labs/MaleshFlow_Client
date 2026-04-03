@@ -17,13 +17,23 @@ import {
 
 test("extractLinks finds wiki links and node refs", () => {
   const links = extractLinks(
-    "Plan [[Launch Page]] after reviewing ((node_123)), [[Attachment note|node:node_456]], and [OpenAI](openai.com).",
+    "Plan [[Launch Page]], [[Launch Page|page:page_123]], [[page:page_456]] after reviewing ((node_123)), [[Attachment note|node:node_456]], and [OpenAI](openai.com).",
   );
   assert.deepEqual(links, [
     {
       kind: "page",
       label: "[[Launch Page]]",
       targetPageTitle: "Launch Page",
+    },
+    {
+      kind: "page",
+      label: "[[Launch Page|page:page_123]]",
+      targetPageRef: "page_123",
+    },
+    {
+      kind: "page",
+      label: "[[page:page_456]]",
+      targetPageRef: "page_456",
     },
     {
       kind: "node",
@@ -81,17 +91,20 @@ test("extractLinkMatches preserves ranges for inline rendering", () => {
 
 test("rewriteMatchingPageWikiLinks updates only matched resolved page links", () => {
   const text =
-    "See [[Old Title]], [[old title]], [[Other Page]], [[Label|node:node_123]], and [OpenAI](openai.com).";
+    "See [[Old Title]], [[old title]], [[Old Title|page:page_123]], [[page:page_123]], [[Custom label|page:page_123]], [[Other Page]], [[Label|node:node_123]], and [OpenAI](openai.com).";
 
   const rewritten = rewriteMatchingPageWikiLinks(
     text,
-    (targetPageTitle) => targetPageTitle.toLowerCase() === "old title",
+    (link) =>
+      link.targetPageRef === "page_123" ||
+      link.targetPageTitle?.toLowerCase() === "old title",
     "New Title",
+    "Old Title",
   );
 
   assert.equal(
     rewritten,
-    "See [[New Title]], [[New Title]], [[Other Page]], [[Label|node:node_123]], and [OpenAI](openai.com).",
+    "See [[New Title]], [[New Title]], [[New Title|page:page_123]], [[page:page_123]], [[Custom label|page:page_123]], [[Other Page]], [[Label|node:node_123]], and [OpenAI](openai.com).",
   );
 });
 

@@ -141,14 +141,21 @@ export async function syncLinksForNode(
     }
 
     if (link.kind === "page") {
-      const slug = slugify(link.targetPageTitle, { lower: true, strict: true }) || "untitled";
-      const targetPage = await getPageBySlug(db, slug);
+      const targetPage =
+        link.targetPageRef
+          ? await db.get(link.targetPageRef as Id<"pages">)
+          : link.targetPageTitle
+            ? await getPageBySlug(
+                db,
+                slugify(link.targetPageTitle, { lower: true, strict: true }) || "untitled",
+              )
+            : null;
       await db.insert("links", {
         sourcePageId: node.pageId,
         sourceNodeId: node._id,
         targetPageId: targetPage?._id ?? null,
         targetNodeId: null,
-        targetPageTitle: link.targetPageTitle,
+        targetPageTitle: link.targetPageTitle ?? targetPage?.title ?? null,
         targetNodeRef: null,
         label: link.label,
         kind: "page",
