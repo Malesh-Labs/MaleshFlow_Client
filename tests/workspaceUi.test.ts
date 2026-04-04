@@ -92,3 +92,39 @@ test("filterPagesForCommandPalette matches note page type search terms", () => {
     ["1"],
   );
 });
+
+test("filterPagesForCommandPalette prefers most recently updated or created pages", () => {
+  const results = filterPagesForCommandPalette(
+    [
+      {
+        _id: "1",
+        title: "Older",
+        archived: false,
+        position: 1024,
+        createdAt: 100,
+        updatedAt: 200,
+      },
+      {
+        _id: "2",
+        title: "Newest Edit",
+        archived: false,
+        position: 512,
+        createdAt: 150,
+        updatedAt: 900,
+      },
+      {
+        _id: "3",
+        title: "Newest Create",
+        archived: false,
+        position: 256,
+        createdAt: 800,
+      },
+    ],
+    "",
+  );
+
+  assert.deepEqual(
+    results.map((page) => page._id),
+    ["2", "3", "1"],
+  );
+});

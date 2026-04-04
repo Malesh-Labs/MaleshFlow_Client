@@ -3,6 +3,8 @@ export type CommandPalettePage = {
   title: string;
   archived: boolean;
   position: number;
+  createdAt?: number;
+  updatedAt?: number;
   searchTerms?: string[];
 };
 
@@ -51,6 +53,10 @@ function pageSearchScore(page: CommandPalettePage, query: string) {
   );
 }
 
+function getPageRecency(page: CommandPalettePage) {
+  return page.updatedAt ?? page.createdAt ?? Number.NEGATIVE_INFINITY;
+}
+
 export function filterPagesForCommandPalette<T extends CommandPalettePage>(
   pages: T[],
   query: string,
@@ -74,6 +80,12 @@ export function filterPagesForCommandPalette<T extends CommandPalettePage>(
 
       if (left.archived !== right.archived) {
         return left.archived ? 1 : -1;
+      }
+
+      const leftRecency = getPageRecency(left);
+      const rightRecency = getPageRecency(right);
+      if (leftRecency !== rightRecency) {
+        return rightRecency - leftRecency;
       }
 
       if (left.position !== right.position) {
