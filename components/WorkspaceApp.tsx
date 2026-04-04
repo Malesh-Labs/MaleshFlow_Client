@@ -10849,7 +10849,12 @@ function OutlineNodeEditor({
   };
 
   return (
-    <div className="space-y-px">
+    <div
+      className={clsx(
+        "space-y-px",
+        isPlannerDayRoot ? "mb-8" : "",
+      )}
+    >
       <div
         data-node-shell
         data-node-id={node._id}
@@ -11198,7 +11203,7 @@ function OutlineNodeEditor({
           </div>
         </div>
         {isPlannerDayRoot ? (
-          <div className="ml-[1.375rem] mt-1 border-t border-[var(--workspace-border)]/80" />
+          <div className="ml-[1.375rem] mt-2 mb-4 border-t border-[var(--workspace-border)]/80" />
         ) : null}
       </div>
       {hasChildren && (shouldRenderChildren || !isCollapsed) ? (
