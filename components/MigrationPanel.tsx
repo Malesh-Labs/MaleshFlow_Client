@@ -379,7 +379,7 @@ export function MigrationPanel({ ownerKey }: MigrationPanelProps) {
       <div className="flex min-h-0 flex-col border-r border-[var(--workspace-border-subtle)]">
         <div className="border-b border-[var(--workspace-border-subtle)] px-5 py-4">
           <p className="text-xs uppercase tracking-[0.22em] text-[var(--workspace-accent)]">
-            Migration
+            Import From App
           </p>
           <p className="mt-2 text-sm text-[var(--workspace-text-subtle)]">
             Snapshot a source, review chunk-by-chunk suggestions, then explicitly approve each change before it touches the workspace.
@@ -491,7 +491,7 @@ export function MigrationPanel({ ownerKey }: MigrationPanelProps) {
                 onClick={() => void handleStartRun()}
                 className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {isStartingRun ? "Starting…" : "Start Migration"}
+                {isStartingRun ? "Starting…" : "Start Import"}
               </button>
               <span className="text-xs uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
                 {sourceType === "logseq"

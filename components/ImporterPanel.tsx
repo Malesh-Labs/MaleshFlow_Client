@@ -183,6 +183,9 @@ export function ImporterPanel({
   return (
     <div className="flex h-[min(78vh,820px)] flex-col">
       <div className="border-b border-[var(--workspace-border-subtle)] px-5 py-4">
+        <p className="text-xs uppercase tracking-[0.22em] text-[var(--workspace-accent)]">
+          Import From Text
+        </p>
         <p className="text-sm text-[var(--workspace-text-subtle)]">
           Paste text, choose a target page, preview the parsed nodes, then import them.
           Dynalist markdown links become wiki links, long separator lines become <code>---</code>, and date markers like <code>!(YYYY-MM-DD | 6m)</code> or <code>!(YYYY-MM-DD - YYYY-MM-DD)</code> become real task scheduling metadata.

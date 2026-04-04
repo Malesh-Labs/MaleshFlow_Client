@@ -3765,9 +3765,9 @@ function ConfiguredWorkspace({
       },
       {
         key: "migration",
-        title: "Migration",
+        title: "Import From App",
         subtitle: "Snapshot Dynalist, WorkFlowy, or Logseq and review chunk-by-chunk changes before applying them.",
-        keywords: ["migration", "import", "dynalist", "workflowy", "logseq", "archive"],
+        keywords: ["migration", "import", "app", "dynalist", "workflowy", "logseq", "archive"],
         actionLabel: "Open",
         onSelect: () => {
           switchPaletteMode("migration");
@@ -3775,10 +3775,11 @@ function ConfiguredWorkspace({
       },
       {
         key: "import-text",
-        title: "Importer",
+        title: "Import From Text",
         subtitle: "Paste text, normalize Dynalist-style content, preview the parsed nodes, and import them into a chosen page.",
         keywords: [
           "import",
+          "text import",
           "paste",
           "text",
           "dynalist",
@@ -7498,7 +7499,7 @@ function ConfiguredWorkspace({
                     }}
                     className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition"
                   >
-                    Migration
+                    Import From App
                   </button>
                 ) : null}
                 {paletteMode === "importer" ? (
@@ -7509,7 +7510,7 @@ function ConfiguredWorkspace({
                     }}
                     className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition"
                   >
-                    Importer
+                    Import From Text
                   </button>
                 ) : null}
                 {paletteMode === "screenshotImport" ? (
