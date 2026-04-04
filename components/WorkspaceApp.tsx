@@ -6713,9 +6713,6 @@ function ConfiguredWorkspace({
                     {plannerStatus ? (
                       <p className="text-sm text-[var(--workspace-text-subtle)]">{plannerStatus}</p>
                     ) : null}
-                    <p className="text-sm text-[var(--workspace-text-faint)]">
-                      Edit the Monday-Sunday template by typing under those weekday rows below. Completed planner tasks currently archive into the global archived <span className="text-[var(--workspace-text-subtle)]">Past Weeks</span> page.
-                    </p>
                     {plannerNextTaskSuggestion ? (
                       <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4">
                         <div className="w-full max-w-lg border border-[var(--workspace-border)] bg-[var(--workspace-surface)] p-5 shadow-2xl">
