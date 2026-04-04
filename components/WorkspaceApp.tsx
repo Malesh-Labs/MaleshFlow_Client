@@ -6707,6 +6707,9 @@ function ConfiguredWorkspace({
                     {plannerStatus ? (
                       <p className="text-sm text-[var(--workspace-text-subtle)]">{plannerStatus}</p>
                     ) : null}
+                    <p className="text-sm text-[var(--workspace-text-faint)]">
+                      Edit the Monday-Sunday template by typing under those weekday rows below. Completed planner tasks currently archive into the global archived <span className="text-[var(--workspace-text-subtle)]">Past Weeks</span> page.
+                    </p>
                     {plannerNextTaskSuggestion ? (
                       <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4">
                         <div className="w-full max-w-lg border border-[var(--workspace-border)] bg-[var(--workspace-surface)] p-5 shadow-2xl">
@@ -9365,6 +9368,9 @@ function OutlineNodeEditor({
   const isTaskCompleted = node.kind === "task" && node.taskStatus === "done";
   const isCompleted = isTaskCompleted || isNoteCompleted;
   const isLocked = nodeMeta.locked === true;
+  const isPlannerTemplateWeekdayRoot =
+    typeof nodeMeta.plannerTemplateWeekday === "string" &&
+    node.parentNodeId !== null;
   const isDisabled = isLocked || isPageReadOnly;
   const editorId = getNodeEditorId(node._id as Id<"nodes">);
   const editorTarget = useMemo(
@@ -11054,7 +11060,11 @@ function OutlineNodeEditor({
                 (isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder
                   ? "text-transparent"
                   : "",
-                hasDisplayPreview ? "text-transparent caret-transparent" : "",
+                hasDisplayPreview
+                  ? isDisabled
+                    ? "invisible"
+                    : "text-transparent caret-transparent"
+                  : "",
               )}
               />
             {hasPageLinkPreview ? (
@@ -11286,6 +11296,26 @@ function OutlineNodeEditor({
         />
           </div>
         </div>
+      ) : null}
+      {!hasChildren && isPlannerTemplateWeekdayRoot ? (
+        <InlineComposer
+          key={`template-empty-composer:${pageId}:${node._id}`}
+          ownerKey={ownerKey}
+          pageId={pageId}
+          parentNodeId={node._id as Id<"nodes">}
+          treeScopeNodes={node.children}
+          nodeMap={nodeMap}
+          availableTags={availableTags}
+          createNodesBatch={createNodesBatch}
+          insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+          historyInstanceKey={`template-empty:${node._id}`}
+          readOnly={isPageReadOnly}
+          depth={depth + 1}
+          mobileIndentStep={mobileIndentStep}
+          persistWhenEmpty
+          placeholder="Write a template line…"
+          onBeginTextEditing={onBeginTextEditing}
+        />
       ) : null}
       {pendingSiblingComposerVisible ? (
         <InlineComposer
