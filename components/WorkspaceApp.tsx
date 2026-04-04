@@ -2394,6 +2394,7 @@ function ConfiguredWorkspace({
     api.workspace.replaceNodeAndInsertSiblings,
   );
   const setNodeTreeArchived = useMutation(api.workspace.setNodeTreeArchived);
+  const setNodeTreesArchivedBatch = useMutation(api.workspace.setNodeTreesArchivedBatch);
   const rewriteModelSection = useAction(api.chat.rewriteModelSection);
   const generateJournalFeedback = useAction(api.chat.generateJournalFeedback);
   const runPlannerChat = useAction(api.chat.runPlannerChat);
@@ -3035,6 +3036,32 @@ function ConfiguredWorkspace({
       });
     },
     [ownerKey, updateNode, updateNodesBatch],
+  );
+  const executeNodeArchiveBatch = useCallback(
+    async (
+      nodeIds: Id<"nodes">[],
+      archived: boolean,
+    ) => {
+      if (nodeIds.length === 0) {
+        return;
+      }
+
+      if (nodeIds.length === 1) {
+        await setNodeTreeArchived({
+          ownerKey,
+          nodeId: nodeIds[0]!,
+          archived,
+        });
+        return;
+      }
+
+      await setNodeTreesArchivedBatch({
+        ownerKey,
+        nodeIds,
+        archived,
+      });
+    },
+    [ownerKey, setNodeTreeArchived, setNodeTreesArchivedBatch],
   );
   const canImportScreenshotWithoutSelection =
     (
@@ -4854,6 +4881,7 @@ function ConfiguredWorkspace({
     }
 
     const historyEntries: Array<Extract<HistoryEntry, { type: "archive_node_tree" }>> = [];
+    const nodeIdsToArchive: Id<"nodes">[] = [];
 
     for (const node of deletableNodes) {
       const context = findNodeContext(sidebarNodes, tree, node._id as string);
@@ -4865,11 +4893,7 @@ function ConfiguredWorkspace({
               (node.parentNodeId as Id<"nodes"> | null) ?? null,
             );
 
-      await setNodeTreeArchived({
-        ownerKey,
-        nodeId: node._id as Id<"nodes">,
-        archived: true,
-      });
+      nodeIdsToArchive.push(node._id as Id<"nodes">);
 
       historyEntries.push({
         type: "archive_node_tree",
@@ -4879,6 +4903,8 @@ function ConfiguredWorkspace({
         focusAfterRedoId,
       });
     }
+
+    await executeNodeArchiveBatch(nodeIdsToArchive, true);
 
     clearNodeSelection();
 
@@ -4900,11 +4926,10 @@ function ConfiguredWorkspace({
     });
   }, [
     clearNodeSelection,
+    executeNodeArchiveBatch,
     history,
-    ownerKey,
     pagesById,
     selectedNodeIds,
-    setNodeTreeArchived,
     sidebarNodes,
     tree,
     visibleNodeOrder,

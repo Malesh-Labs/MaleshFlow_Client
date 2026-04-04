@@ -2415,6 +2415,54 @@ export const setNodeTreeArchived = mutation({
   },
 });
 
+export const setNodeTreesArchivedBatch = mutation({
+  args: {
+    ownerKey: v.string(),
+    nodeIds: v.array(v.id("nodes")),
+    archived: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    if (args.nodeIds.length === 0) {
+      return null;
+    }
+
+    const touchedPageIds = new Set<Id<"pages">>();
+
+    for (const nodeId of args.nodeIds) {
+      const node = await ctx.db.get(nodeId);
+      if (!node) {
+        throw new Error("Node not found.");
+      }
+
+      const descendants = await setNodeTreeArchivedState(
+        ctx.db,
+        nodeId,
+        args.archived,
+        getTimestamp(),
+      );
+
+      touchedPageIds.add(node.pageId);
+
+      if (!args.archived) {
+        for (const descendant of descendants) {
+          await syncLinksForNode(ctx.db, {
+            ...descendant,
+            archived: false,
+          });
+          await enqueueNodeAiWork(ctx, descendant._id);
+        }
+      }
+    }
+
+    for (const pageId of touchedPageIds) {
+      await enqueuePageRootEmbeddingRefresh(ctx, pageId);
+    }
+
+    return null;
+  },
+});
+
 export const deleteNode = mutation({
   args: {
     ownerKey: v.string(),
