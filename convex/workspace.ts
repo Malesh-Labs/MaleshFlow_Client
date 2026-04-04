@@ -35,6 +35,7 @@ import {
   listEligiblePlannerSourceTasks,
 } from "./lib/planner";
 import { replaceLiteralOccurrences } from "../lib/domain/findReplace";
+import { shouldGenerateEmbeddingForNodeText } from "../lib/domain/embeddings";
 import { rewriteMatchingPageWikiLinks } from "../lib/domain/links";
 import { extractTagMatches } from "../lib/domain/tags";
 
@@ -597,13 +598,39 @@ export const rebuildEmbeddings = mutation({
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
 
-    const nodes = (await ctx.db.query("nodes").collect()).filter(
+    const activeNodes = (await ctx.db.query("nodes").collect()).filter(
       (node) => !node.archived,
     );
+    const eligibleNodes = activeNodes.filter((node) =>
+      shouldGenerateEmbeddingForNodeText(node.text),
+    );
+    const ineligibleNodeIds = new Set(
+      activeNodes
+        .filter((node) => !shouldGenerateEmbeddingForNodeText(node.text))
+        .map((node) => node._id),
+    );
     const existingJobs = await ctx.db.query("embeddingJobs").collect();
+    const existingEmbeddings = await ctx.db.query("nodeEmbeddings").collect();
     const jobsByNodeId = new Map(existingJobs.map((job) => [job.nodeId, job]));
     const now = getTimestamp();
-    const uniqueNodeIds = [...new Set(nodes.map((node) => node._id))];
+    const uniqueNodeIds = [...new Set(eligibleNodes.map((node) => node._id))];
+    let purgedCount = 0;
+
+    for (const job of existingJobs) {
+      if (!ineligibleNodeIds.has(job.nodeId)) {
+        continue;
+      }
+      await ctx.db.delete(job._id);
+      purgedCount += 1;
+    }
+
+    for (const embedding of existingEmbeddings) {
+      if (!ineligibleNodeIds.has(embedding.nodeId)) {
+        continue;
+      }
+      await ctx.db.delete(embedding._id);
+      purgedCount += 1;
+    }
 
     for (const nodeId of uniqueNodeIds) {
       const existingJob = jobsByNodeId.get(nodeId);
@@ -630,6 +657,7 @@ export const rebuildEmbeddings = mutation({
 
     return {
       queuedCount: uniqueNodeIds.length,
+      purgedCount,
     };
   },
 });
@@ -641,10 +669,10 @@ export const getEmbeddingRebuildStatus = query({
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
 
-    const activeNodes = (await ctx.db.query("nodes").collect()).filter(
-      (node) => !node.archived,
+    const eligibleActiveNodes = (await ctx.db.query("nodes").collect()).filter(
+      (node) => !node.archived && shouldGenerateEmbeddingForNodeText(node.text),
     );
-    const activeNodeIds = new Set(activeNodes.map((node) => node._id));
+    const activeNodeIds = new Set(eligibleActiveNodes.map((node) => node._id));
     const jobs = (await ctx.db.query("embeddingJobs").collect()).filter((job) =>
       activeNodeIds.has(job.nodeId),
     );
@@ -656,7 +684,7 @@ export const getEmbeddingRebuildStatus = query({
     let error = 0;
     let pending = 0;
 
-    for (const node of activeNodes) {
+    for (const node of eligibleActiveNodes) {
       const job = jobsByNodeId.get(node._id);
       if (!job) {
         pending += 1;
@@ -674,7 +702,7 @@ export const getEmbeddingRebuildStatus = query({
       }
     }
 
-    const total = activeNodes.length;
+    const total = eligibleActiveNodes.length;
 
     return {
       total,

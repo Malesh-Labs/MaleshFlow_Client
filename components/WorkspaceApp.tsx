@@ -3644,11 +3644,19 @@ function ConfiguredWorkspace({
         ownerKey,
       })) as {
         queuedCount: number;
+        purgedCount?: number;
       };
 
+      const messageParts: string[] = [];
+      if (result.queuedCount > 0) {
+        messageParts.push(`Queued ${result.queuedCount} node embeddings for refresh.`);
+      }
+      if ((result.purgedCount ?? 0) > 0) {
+        messageParts.push(`Purged ${result.purgedCount} stale embedding records for skipped nodes.`);
+      }
       setEmbeddingRebuildStatus(
-        result.queuedCount > 0
-          ? `Queued ${result.queuedCount} node embeddings for refresh.`
+        messageParts.length > 0
+          ? messageParts.join(" ")
           : "No active nodes needed an embedding rebuild.",
       );
     } catch (error) {
