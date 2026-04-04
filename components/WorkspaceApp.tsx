@@ -247,8 +247,7 @@ type SidebarTagResult = {
 type DraggedNodePayload = {
   nodeId: string;
   pageId: string;
-  parentNodeId: string | null;
-  previousSiblingId: string | null;
+  rootNodeIds: string[];
 };
 type OutlineClipboardNode = {
   text: string;
@@ -287,6 +286,14 @@ type ReplaceNodeAndInsertSiblingsMutation = ReturnType<
 type SetNodeTreeArchivedMutation = ReturnType<
   typeof useMutation<typeof api.workspace.setNodeTreeArchived>
 >;
+type BuildDraggedNodePayloadFn = (args: {
+  nodeId: string;
+  pageId: Id<"pages">;
+}) => DraggedNodePayload;
+type DropDraggedNodesFn = (
+  payload: DraggedNodePayload,
+  dropTarget: NodeDropTarget,
+) => Promise<void>;
 type InsertOutlineClipboardNodesFn = (args: {
   nodes: OutlineClipboardNode[];
   pageId: Id<"pages">;
@@ -1559,6 +1566,14 @@ function getSelectedRootNodeIds(
 
     return true;
   });
+}
+
+function arePlacementsEqual(left: NodePlacement, right: NodePlacement) {
+  return (
+    left.pageId === right.pageId &&
+    left.parentNodeId === right.parentNodeId &&
+    left.afterNodeId === right.afterNodeId
+  );
 }
 
 function serializeTreeNodeForClipboard(node: TreeNode): OutlineClipboardNode {
@@ -3597,6 +3612,153 @@ function ConfiguredWorkspace({
     setDragSelection(null);
   }, [visibleNodeOrder]);
 
+  const setExplicitSelectedNodeIds = useCallback((nodeIds: string[]) => {
+    setSelectedNodeIds(new Set(nodeIds));
+    setDragSelection(null);
+  }, []);
+
+  const buildDraggedNodePayload = useCallback<BuildDraggedNodePayloadFn>(
+    ({ nodeId, pageId }) => {
+      const selectedRootNodeIds = getSelectedRootNodeIds(
+        selectedNodeIds,
+        visibleNodeOrder,
+        workspaceNodeMap,
+      ).filter((selectedRootNodeId) => {
+        const selectedNode = workspaceNodeMap.get(selectedRootNodeId);
+        if (!selectedNode || selectedNode.pageId !== pageId) {
+          return false;
+        }
+
+        if (getNodeMeta(selectedNode).locked === true) {
+          return false;
+        }
+
+        const selectedPage = pagesById.get(selectedNode.pageId as string);
+        return !selectedPage?.archived;
+      });
+
+      const rootNodeIds =
+        selectedNodeIds.has(nodeId) && selectedRootNodeIds.includes(nodeId)
+          ? selectedRootNodeIds
+          : [nodeId];
+
+      return {
+        nodeId,
+        pageId,
+        rootNodeIds: [...new Set(rootNodeIds)],
+      };
+    },
+    [pagesById, selectedNodeIds, visibleNodeOrder, workspaceNodeMap],
+  );
+
+  const dropDraggedNodes = useCallback<DropDraggedNodesFn>(
+    async (payload, dropTarget) => {
+      const requestedRootNodeIds =
+        payload.rootNodeIds.length > 0 ? payload.rootNodeIds : [payload.nodeId];
+      const rootNodeContexts = [...new Set(requestedRootNodeIds)]
+        .map((nodeId) => findNodeContext(sidebarNodes, tree, nodeId))
+        .filter(
+          (
+            context,
+          ): context is NonNullable<ReturnType<typeof findNodeContext>> => context !== null,
+        )
+        .filter((context) => {
+          if (context.pageId !== payload.pageId) {
+            return false;
+          }
+
+          if (getNodeMeta(context.node).locked === true) {
+            return false;
+          }
+
+          const page = pagesById.get(context.node.pageId as string);
+          return !page?.archived;
+        });
+
+      if (rootNodeContexts.length === 0) {
+        return;
+      }
+
+      const targetPageId = payload.pageId as Id<"pages">;
+      const targetParentNodeId = dropTarget.parentNodeId;
+      const targetAfterNodeId = dropTarget.afterNodeId;
+      const rootNodeIds = rootNodeContexts.map((context) => context.node._id as string);
+      const historyEntries: Array<Extract<HistoryEntry, { type: "move_node" }>> = [];
+
+      const desiredPlacements = rootNodeContexts.map((context, index) =>
+        buildNodePlacement(
+          targetPageId,
+          targetParentNodeId,
+          index === 0
+            ? targetAfterNodeId
+            : (rootNodeContexts[index - 1]!.node._id as Id<"nodes">),
+        ),
+      );
+
+      const isNoOp = rootNodeContexts.every((context, index) =>
+        arePlacementsEqual(
+          buildNodePlacement(
+            context.pageId,
+            context.parentNodeId,
+            (context.previousSibling?._id as Id<"nodes"> | undefined) ?? null,
+          ),
+          desiredPlacements[index]!,
+        ),
+      );
+      if (isNoOp) {
+        return;
+      }
+
+      for (const [index, context] of rootNodeContexts.entries()) {
+        const beforePlacement = buildNodePlacement(
+          context.pageId,
+          context.parentNodeId,
+          (context.previousSibling?._id as Id<"nodes"> | undefined) ?? null,
+        );
+        const afterPlacement = desiredPlacements[index]!;
+
+        await moveNode({
+          ownerKey,
+          nodeId: context.node._id as Id<"nodes">,
+          pageId: afterPlacement.pageId,
+          parentNodeId: afterPlacement.parentNodeId,
+          afterNodeId: afterPlacement.afterNodeId,
+        });
+
+        historyEntries.push({
+          type: "move_node",
+          pageId: context.pageId,
+          nodeId: context.node._id as Id<"nodes">,
+          beforePlacement,
+          afterPlacement,
+          focusEditorId: getNodeEditorId(context.node._id as Id<"nodes">),
+        });
+      }
+
+      if (historyEntries.length === 1) {
+        history.pushUndoEntry(historyEntries[0]!);
+        selectSingleNode(rootNodeIds[0]!);
+        window.setTimeout(() => {
+          const target = document.querySelector<HTMLElement>(
+            `[data-node-id="${rootNodeIds[0]!}"] textarea`,
+          );
+          focusElementAtEnd(target as HTMLTextAreaElement | null);
+        }, 0);
+        return;
+      }
+
+      history.pushUndoEntry({
+        type: "compound",
+        pageId: historyEntries[0]!.pageId,
+        entries: historyEntries,
+        focusAfterUndoId: historyEntries[0]!.focusEditorId,
+        focusAfterRedoId: historyEntries[historyEntries.length - 1]!.focusEditorId,
+      });
+      setExplicitSelectedNodeIds(rootNodeIds);
+    },
+    [history, moveNode, ownerKey, pagesById, selectSingleNode, setExplicitSelectedNodeIds, sidebarNodes, tree],
+  );
+
   const focusLastVisiblePageNode = useCallback(() => {
     if (!selectedPage || isPageArchived) {
       return;
@@ -5281,6 +5443,9 @@ function ConfiguredWorkspace({
                       activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
                       onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                      onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                      buildDraggedNodePayload={buildDraggedNodePayload}
+                      onDropDraggedNodes={dropDraggedNodes}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       availableTags={sortedTags}
@@ -5743,6 +5908,9 @@ function ConfiguredWorkspace({
                         activeDraggedNodePayload={activeDraggedNodePayload}
                         onSetActiveDraggedNodeId={setActiveDraggedNodeId}
                         onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                        onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                        buildDraggedNodePayload={buildDraggedNodePayload}
+                        onDropDraggedNodes={dropDraggedNodes}
                         onSelectionStart={beginNodeSelection}
                         onSelectionExtend={extendNodeSelection}
                         availableTags={sortedTags}
@@ -5785,6 +5953,9 @@ function ConfiguredWorkspace({
                           activeDraggedNodePayload={activeDraggedNodePayload}
                           onSetActiveDraggedNodeId={setActiveDraggedNodeId}
                           onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                          onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                          buildDraggedNodePayload={buildDraggedNodePayload}
+                          onDropDraggedNodes={dropDraggedNodes}
                           onSelectionStart={beginNodeSelection}
                           onSelectionExtend={extendNodeSelection}
                           availableTags={sortedTags}
@@ -5836,6 +6007,9 @@ function ConfiguredWorkspace({
                       activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
                       onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                      onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                      buildDraggedNodePayload={buildDraggedNodePayload}
+                      onDropDraggedNodes={dropDraggedNodes}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       availableTags={sortedTags}
@@ -5913,6 +6087,9 @@ function ConfiguredWorkspace({
                       activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
                       onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                      onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                      buildDraggedNodePayload={buildDraggedNodePayload}
+                      onDropDraggedNodes={dropDraggedNodes}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       availableTags={sortedTags}
@@ -5958,6 +6135,9 @@ function ConfiguredWorkspace({
                       activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
                       onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                      onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                      buildDraggedNodePayload={buildDraggedNodePayload}
+                      onDropDraggedNodes={dropDraggedNodes}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       availableTags={sortedTags}
@@ -6000,6 +6180,9 @@ function ConfiguredWorkspace({
                       activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
                       onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                      onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                      buildDraggedNodePayload={buildDraggedNodePayload}
+                      onDropDraggedNodes={dropDraggedNodes}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       availableTags={sortedTags}
@@ -6080,6 +6263,9 @@ function ConfiguredWorkspace({
                         activeDraggedNodePayload={activeDraggedNodePayload}
                         onSetActiveDraggedNodeId={setActiveDraggedNodeId}
                         onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                        onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                        buildDraggedNodePayload={buildDraggedNodePayload}
+                        onDropDraggedNodes={dropDraggedNodes}
                         onSelectionStart={beginNodeSelection}
                         onSelectionExtend={extendNodeSelection}
                         availableTags={sortedTags}
@@ -6122,6 +6308,9 @@ function ConfiguredWorkspace({
                         activeDraggedNodePayload={activeDraggedNodePayload}
                         onSetActiveDraggedNodeId={setActiveDraggedNodeId}
                         onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                        onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                        buildDraggedNodePayload={buildDraggedNodePayload}
+                        onDropDraggedNodes={dropDraggedNodes}
                         onSelectionStart={beginNodeSelection}
                         onSelectionExtend={extendNodeSelection}
                         availableTags={sortedTags}
@@ -6165,6 +6354,9 @@ function ConfiguredWorkspace({
                       activeDraggedNodePayload={activeDraggedNodePayload}
                       onSetActiveDraggedNodeId={setActiveDraggedNodeId}
                       onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                      onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                      buildDraggedNodePayload={buildDraggedNodePayload}
+                      onDropDraggedNodes={dropDraggedNodes}
                       onSelectionStart={beginNodeSelection}
                       onSelectionExtend={extendNodeSelection}
                       availableTags={sortedTags}
@@ -6753,6 +6945,9 @@ function PageSection({
   activeDraggedNodePayload,
   onSetActiveDraggedNodeId,
   onSetActiveDraggedNodePayload,
+  onSetSelectedNodeIds,
+  buildDraggedNodePayload,
+  onDropDraggedNodes,
   onSelectionStart,
   onSelectionExtend,
   availableTags,
@@ -6802,6 +6997,9 @@ function PageSection({
   activeDraggedNodePayload: DraggedNodePayload | null;
   onSetActiveDraggedNodeId: (nodeId: string | null) => void;
   onSetActiveDraggedNodePayload: (payload: DraggedNodePayload | null) => void;
+  onSetSelectedNodeIds: (nodeIds: string[]) => void;
+  buildDraggedNodePayload: BuildDraggedNodePayloadFn;
+  onDropDraggedNodes: DropDraggedNodesFn;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
   availableTags: SidebarTagResult[];
@@ -6883,6 +7081,9 @@ function PageSection({
           activeDraggedNodePayload={activeDraggedNodePayload}
           onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
           onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
+          onSetSelectedNodeIds={onSetSelectedNodeIds}
+          buildDraggedNodePayload={buildDraggedNodePayload}
+          onDropDraggedNodes={onDropDraggedNodes}
           onSelectionStart={onSelectionStart}
           onSelectionExtend={onSelectionExtend}
           availableTags={availableTags}
@@ -6929,6 +7130,9 @@ function OutlineNodeList({
   activeDraggedNodePayload,
   onSetActiveDraggedNodeId,
   onSetActiveDraggedNodePayload,
+  onSetSelectedNodeIds,
+  buildDraggedNodePayload,
+  onDropDraggedNodes,
   onSelectionStart,
   onSelectionExtend,
   availableTags,
@@ -6973,6 +7177,9 @@ function OutlineNodeList({
   activeDraggedNodePayload: DraggedNodePayload | null;
   onSetActiveDraggedNodeId: (nodeId: string | null) => void;
   onSetActiveDraggedNodePayload: (payload: DraggedNodePayload | null) => void;
+  onSetSelectedNodeIds: (nodeIds: string[]) => void;
+  buildDraggedNodePayload: BuildDraggedNodePayloadFn;
+  onDropDraggedNodes: DropDraggedNodesFn;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
   availableTags: SidebarTagResult[];
@@ -7054,6 +7261,9 @@ function OutlineNodeList({
         activeDraggedNodePayload={activeDraggedNodePayload}
           onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
           onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
+          onSetSelectedNodeIds={onSetSelectedNodeIds}
+          buildDraggedNodePayload={buildDraggedNodePayload}
+          onDropDraggedNodes={onDropDraggedNodes}
           onSelectionStart={onSelectionStart}
           onSelectionExtend={onSelectionExtend}
           availableTags={availableTags}
@@ -7896,6 +8106,9 @@ function OutlineNodeEditor({
   activeDraggedNodePayload,
   onSetActiveDraggedNodeId,
   onSetActiveDraggedNodePayload,
+  onSetSelectedNodeIds,
+  buildDraggedNodePayload,
+  onDropDraggedNodes,
   onSelectionStart,
   onSelectionExtend,
   availableTags,
@@ -7945,6 +8158,9 @@ function OutlineNodeEditor({
   activeDraggedNodePayload: DraggedNodePayload | null;
   onSetActiveDraggedNodeId: (nodeId: string | null) => void;
   onSetActiveDraggedNodePayload: (payload: DraggedNodePayload | null) => void;
+  onSetSelectedNodeIds: (nodeIds: string[]) => void;
+  buildDraggedNodePayload: BuildDraggedNodePayloadFn;
+  onDropDraggedNodes: DropDraggedNodesFn;
   onSelectionStart: (nodeId: string) => void;
   onSelectionExtend: (nodeId: string) => void;
   availableTags: SidebarTagResult[];
@@ -8325,10 +8541,14 @@ function OutlineNodeEditor({
     event: ReactDragEvent<HTMLElement>,
     payload: DraggedNodePayload,
   ): NodeDropTarget | null => {
+    const draggedRootNodeIds =
+      payload.rootNodeIds.length > 0 ? payload.rootNodeIds : [payload.nodeId];
     if (
-      payload.nodeId === node._id ||
       payload.pageId !== pageId ||
-      isDescendantOfNode(node._id, payload.nodeId)
+      draggedRootNodeIds.some(
+        (draggedRootNodeId) =>
+          draggedRootNodeId === node._id || isDescendantOfNode(node._id, draggedRootNodeId),
+      )
     ) {
       return null;
     }
@@ -8376,19 +8596,21 @@ function OutlineNodeEditor({
     clearMarkerHold();
     markerLongPressTriggeredRef.current = false;
 
-    const payload: DraggedNodePayload = {
+    const payload = buildDraggedNodePayload({
       nodeId: node._id,
       pageId,
-      parentNodeId,
-      previousSiblingId: previousSibling?._id ?? null,
-    };
+    });
 
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData(NODE_DRAG_MIME_TYPE, JSON.stringify(payload));
     event.dataTransfer.setData("text/plain", JSON.stringify(payload));
     onSetActiveDraggedNodeId(node._id);
     onSetActiveDraggedNodePayload(payload);
-    onSelectSingleNode(node._id);
+    if (payload.rootNodeIds.length > 1) {
+      onSetSelectedNodeIds(payload.rootNodeIds);
+    } else {
+      onSelectSingleNode(node._id);
+    }
   };
 
   const clearMarkerHold = () => {
@@ -8486,49 +8708,7 @@ function OutlineNodeEditor({
     }
 
     event.preventDefault();
-    const beforePlacement = buildNodePlacement(
-      payload.pageId as Id<"pages">,
-      (payload.parentNodeId as Id<"nodes"> | null) ?? null,
-      (payload.previousSiblingId as Id<"nodes"> | null) ?? null,
-    );
-    const afterPlacement = buildNodePlacement(
-      pageId,
-      nextDropTarget.parentNodeId,
-      nextDropTarget.afterNodeId,
-    );
-
-    if (
-      beforePlacement.pageId === afterPlacement.pageId &&
-      beforePlacement.parentNodeId === afterPlacement.parentNodeId &&
-      beforePlacement.afterNodeId === afterPlacement.afterNodeId
-    ) {
-      return;
-    }
-
-    await moveNode({
-      ownerKey,
-      nodeId: payload.nodeId as Id<"nodes">,
-      pageId,
-      parentNodeId: nextDropTarget.parentNodeId,
-      afterNodeId: nextDropTarget.afterNodeId,
-    });
-
-    history.pushUndoEntry({
-      type: "move_node",
-      pageId,
-      nodeId: payload.nodeId as Id<"nodes">,
-      beforePlacement,
-      afterPlacement,
-      focusEditorId: getNodeEditorId(payload.nodeId as Id<"nodes">),
-    });
-
-    onSelectSingleNode(payload.nodeId);
-    window.setTimeout(() => {
-      const target = document.querySelector<HTMLElement>(
-        `[data-node-id="${payload.nodeId}"] textarea`,
-      );
-      focusElementAtEnd(target as HTMLTextAreaElement | null);
-    }, 0);
+    await onDropDraggedNodes(payload, nextDropTarget);
   };
 
   const buildUpdateEntry = (
@@ -9865,6 +10045,9 @@ function OutlineNodeEditor({
               activeDraggedNodePayload={activeDraggedNodePayload}
               onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
               onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
+              onSetSelectedNodeIds={onSetSelectedNodeIds}
+              buildDraggedNodePayload={buildDraggedNodePayload}
+              onDropDraggedNodes={onDropDraggedNodes}
               onSelectionStart={onSelectionStart}
               onSelectionExtend={onSelectionExtend}
               availableTags={availableTags}
