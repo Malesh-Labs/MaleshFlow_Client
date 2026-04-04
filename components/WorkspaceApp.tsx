@@ -9388,6 +9388,8 @@ function OutlineNodeEditor({
   const isPlannerTemplateWeekdayRoot =
     typeof nodeMeta.plannerTemplateWeekday === "string" &&
     node.parentNodeId !== null;
+  const isPlannerDayRoot =
+    nodeMeta.plannerKind === "plannerDay" && node.parentNodeId === null;
   const isDisabled = isLocked || isPageReadOnly;
   const editorId = getNodeEditorId(node._id as Id<"nodes">);
   const editorTarget = useMemo(
@@ -11249,6 +11251,9 @@ function OutlineNodeEditor({
             </button>
           </div>
         </div>
+        {isPlannerDayRoot ? (
+          <div className="ml-[1.375rem] mt-1 border-t border-[var(--workspace-border)]/80" />
+        ) : null}
       </div>
       {hasChildren && (shouldRenderChildren || !isCollapsed) ? (
         <div
