@@ -289,6 +289,7 @@ export function withHeadingPrefix(text: string, headingLevel: number) {
 }
 
 const IMPORT_SEPARATOR_PATTERN = /^[\s\-—–―_─]{3,}$/;
+const IMPORT_DURATION_PATTERN = /\s*\((?:\d+\s*(?:min|mins|minute|minutes|hr|hrs|hour|hours))\)\s*/gi;
 const IMPORT_TAG_ALIAS_RULES = [
   {
     sourceTags: ["#work-misc-5", "#work-tech-7"],
@@ -305,6 +306,10 @@ const IMPORT_TAG_ALIAS_RULES = [
   {
     sourceTags: ["#work-tech", "#work-job-4"],
     replacementTag: "#work/job",
+  },
+  {
+    sourceTags: ["#personal-hobby-misc"],
+    replacementTag: "#hobby",
   },
 ] as const;
 
@@ -338,11 +343,13 @@ export function normalizeImportedOutlineText(text: string) {
     .replace(/\r\n/g, "\n")
     .split("\n")
     .map((line) => {
-      const trimmed = line.trim();
+      const lineWithoutDuration = line.replace(IMPORT_DURATION_PATTERN, " ").replace(/\s{2,}/g, " ").trimEnd();
+      const lineToNormalize = lineWithoutDuration;
+      const trimmed = lineToNormalize.trim();
       if (IMPORT_SEPARATOR_PATTERN.test(trimmed)) {
-        return line.replace(trimmed, "---");
+        return lineToNormalize.replace(trimmed, "---");
       }
-      return normalizeImportedTagAliases(line);
+      return normalizeImportedTagAliases(lineToNormalize);
     })
     .join("\n")
     .trim();

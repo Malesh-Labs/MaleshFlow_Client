@@ -752,6 +752,27 @@ test("normalizeImportedOutlineText rewrites imported work tag aliases", () => {
     ),
     "#work/job review launch",
   );
+  assert.equal(
+    normalizeImportedOutlineText(
+      "#personal-hobby-misc make more music",
+    ),
+    "#hobby make more music",
+  );
+});
+
+test("normalizeImportedOutlineText removes imported duration markers", () => {
+  assert.equal(
+    normalizeImportedOutlineText(
+      "call dentist (20 min)",
+    ),
+    "call dentist",
+  );
+  assert.equal(
+    normalizeImportedOutlineText(
+      "#hobby sketch (30 min) tonight",
+    ),
+    "#hobby sketch tonight",
+  );
 });
 
 test("buildDefaultMigrationLessonsDoc seeds dynalist-specific guidance", () => {
