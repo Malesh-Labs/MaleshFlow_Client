@@ -6,7 +6,7 @@ export type ExtractedTagMatch = {
   normalizedValue: string;
 };
 
-const TAG_PATTERN = /(^|[^A-Za-z0-9_])#([A-Za-z0-9]+(?:[/-][A-Za-z0-9]+)*)/g;
+const TAG_PATTERN = /(^|[^A-Za-z0-9_]|__)#([A-Za-z0-9]+(?:[/-][A-Za-z0-9]+)*)/g;
 
 export function extractTagMatches(text: string) {
   const matches: ExtractedTagMatch[] = [];

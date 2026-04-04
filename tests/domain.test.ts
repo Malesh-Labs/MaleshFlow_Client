@@ -199,6 +199,33 @@ test("extractTagMatches preserves ranges for inline rendering", () => {
   );
 });
 
+test("extractTagMatches recognizes tags inside italic markers", () => {
+  const matches = extractTagMatches("__#work/job__ and __#malesh/labs/fanswap");
+
+  assert.deepEqual(
+    matches.map((match) => ({
+      start: match.start,
+      end: match.end,
+      label: match.label,
+      value: match.value,
+    })),
+    [
+      {
+        start: 2,
+        end: 11,
+        label: "#work/job",
+        value: "work/job",
+      },
+      {
+        start: 20,
+        end: 40,
+        label: "#malesh/labs/fanswap",
+        value: "malesh/labs/fanswap",
+      },
+    ],
+  );
+});
+
 test("parseHeadingSyntax recognizes markdown-style heading prefixes", () => {
   assert.deepEqual(parseHeadingSyntax("# Big heading"), {
     level: 1,
