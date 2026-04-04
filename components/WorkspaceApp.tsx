@@ -96,6 +96,7 @@ const SIDEBAR_COLLAPSE_STORAGE_KEY = "maleshflow-sidebar-collapsed";
 const COLLAPSED_NODES_STORAGE_KEY = "maleshflow-collapsed-node-ids";
 const UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY =
   "maleshflow-uncategorized-section-collapsed";
+const JOURNAL_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-journal-section-collapsed";
 const TAGS_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-tags-section-collapsed";
 const ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-archive-section-collapsed";
 const RECURRING_TASK_COMPLETION_MODE_STORAGE_KEY =
@@ -2174,6 +2175,7 @@ function ConfiguredWorkspace({
     useState<RecurringCompletionMode>("dueDate");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isUncategorizedSectionCollapsed, setIsUncategorizedSectionCollapsed] = useState(false);
+  const [isJournalSectionCollapsed, setIsJournalSectionCollapsed] = useState(false);
   const [isTagsSectionCollapsed, setIsTagsSectionCollapsed] = useState(false);
   const [isArchiveSectionCollapsed, setIsArchiveSectionCollapsed] = useState(false);
   const [showSidebarDiagnostics, setShowSidebarDiagnostics] = useState(false);
@@ -2537,6 +2539,7 @@ function ConfiguredWorkspace({
   const archivedPages = (pages ?? []).filter((page) => page.archived);
   const showUncategorizedSectionContent =
     uncategorizedPages.length > 0 && !isUncategorizedSectionCollapsed;
+  const showJournalSectionContent = !isJournalSectionCollapsed;
   const showTagsSectionContent = !isTagsSectionCollapsed;
   const showArchiveSectionContent = !isArchiveSectionCollapsed;
   const sortedTags: SidebarTagResult[] = tags ?? [];
@@ -2890,6 +2893,9 @@ function ConfiguredWorkspace({
     setIsUncategorizedSectionCollapsed(
       readStoredBoolean(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY, true),
     );
+    setIsJournalSectionCollapsed(
+      readStoredBoolean(JOURNAL_SECTION_COLLAPSE_STORAGE_KEY, true),
+    );
     setIsTagsSectionCollapsed(
       readStoredBoolean(TAGS_SECTION_COLLAPSE_STORAGE_KEY, true),
     );
@@ -2938,6 +2944,17 @@ function ConfiguredWorkspace({
       isUncategorizedSectionCollapsed ? "true" : "false",
     );
   }, [isUncategorizedSectionCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      JOURNAL_SECTION_COLLAPSE_STORAGE_KEY,
+      isJournalSectionCollapsed ? "true" : "false",
+    );
+  }, [isJournalSectionCollapsed]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -5434,34 +5451,54 @@ function ConfiguredWorkspace({
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                       Journal
                     </p>
+                    <button
+                      type="button"
+                      onClick={() => setIsJournalSectionCollapsed((current) => !current)}
+                      className="flex h-8 w-8 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold leading-none text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                      aria-label={showJournalSectionContent ? "Collapse journal pages" : "Expand journal pages"}
+                    >
+                      {showJournalSectionContent ? "−" : "+"}
+                    </button>
                   </div>
-                  <div className="mt-3">
-                    {journalPages.length === 0 ? (
-                      <p className="text-sm text-[var(--workspace-text-faint)]">
-                        No journal pages.
-                      </p>
-                    ) : (
-                      <div className="space-y-1">
-                        {journalPages.map((page) => (
-                          <button
-                            key={page._id}
-                            type="button"
-                            onClick={() => handleSelectPage(page._id)}
-                            className={clsx(
-                              "block w-full px-2 py-1.5 text-left text-sm transition",
-                              selectedPageId === page._id
-                                ? "bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
-                                : "text-[var(--workspace-text-strong)] hover:bg-[var(--workspace-surface-accent)]",
-                            )}
-                          >
-                            <span>{page.title}</span>
-                            <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none text-[var(--workspace-text-faint)]">
-                              {getPageTypeEmoji(page)}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
+                  <div
+                    className={clsx(
+                      "grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out motion-reduce:transition-none",
+                      showJournalSectionContent
+                        ? "mt-3 grid-rows-[1fr] opacity-100"
+                        : "pointer-events-none mt-0 grid-rows-[0fr] opacity-0",
                     )}
+                  >
+                    <div
+                      aria-hidden={!showJournalSectionContent}
+                      className="min-h-0 overflow-hidden"
+                    >
+                      {journalPages.length === 0 ? (
+                        <p className="text-sm text-[var(--workspace-text-faint)]">
+                          No journal pages.
+                        </p>
+                      ) : (
+                        <div className="space-y-1">
+                          {journalPages.map((page) => (
+                            <button
+                              key={page._id}
+                              type="button"
+                              onClick={() => handleSelectPage(page._id)}
+                              className={clsx(
+                                "block w-full px-2 py-1.5 text-left text-sm transition",
+                                selectedPageId === page._id
+                                  ? "bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
+                                  : "text-[var(--workspace-text-strong)] hover:bg-[var(--workspace-surface-accent)]",
+                              )}
+                            >
+                              <span>{page.title}</span>
+                              <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none text-[var(--workspace-text-faint)]">
+                                {getPageTypeEmoji(page)}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
 
