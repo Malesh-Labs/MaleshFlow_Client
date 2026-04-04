@@ -7889,37 +7889,39 @@ function ConfiguredWorkspace({
                     No matching actions.
                   </p>
                 ) : (
-                  actionResults.map((result, index) => (
-                    <button
-                      key={result.key}
-                      type="button"
-                      data-palette-item-index={index}
-                      disabled={result.disabled}
-                      onMouseEnter={() => setPaletteHighlightIndex(index)}
-                      onClick={() => {
-                        void result.onSelect();
-                      }}
-                      className={clsx(
-                        "flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition",
-                        result.disabled ? "cursor-wait opacity-70" : "",
-                        index === paletteHighlightIndex
-                          ? "bg-[var(--workspace-sidebar-bg)]"
-                          : "hover:bg-[var(--workspace-surface-hover)]",
-                      )}
-                    >
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
-                          {result.title}
+                  <div className="grid min-h-full auto-rows-[minmax(6rem,1fr)]">
+                    {actionResults.map((result, index) => (
+                      <button
+                        key={result.key}
+                        type="button"
+                        data-palette-item-index={index}
+                        disabled={result.disabled}
+                        onMouseEnter={() => setPaletteHighlightIndex(index)}
+                        onClick={() => {
+                          void result.onSelect();
+                        }}
+                        className={clsx(
+                          "flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition",
+                          result.disabled ? "cursor-wait opacity-70" : "",
+                          index === paletteHighlightIndex
+                            ? "bg-[var(--workspace-sidebar-bg)]"
+                            : "hover:bg-[var(--workspace-surface-hover)]",
+                        )}
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
+                            {result.title}
+                          </span>
+                          <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                            {result.subtitle}
+                          </span>
                         </span>
-                        <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                          {result.subtitle}
+                        <span className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                          {result.actionLabel}
                         </span>
-                      </span>
-                      <span className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
-                        {result.actionLabel}
-                      </span>
-                    </button>
-                  ))
+                      </button>
+                    ))}
+                  </div>
                 )
               ) : paletteMode === "chat" ? (
                 <WorkspaceAiChatPanel
