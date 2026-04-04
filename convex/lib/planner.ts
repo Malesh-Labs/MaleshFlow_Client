@@ -1,7 +1,6 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { DatabaseReader, MutationCtx } from "../_generated/server";
 import {
-  buildUniquePageSlug,
   collectNodeTree,
   computeNodePosition,
   enqueueNodeAiWork,
@@ -24,6 +23,7 @@ import {
 } from "../../lib/domain/recurrence";
 
 export const PLANNER_SIDEBAR_SLOT = "plannerSidebar";
+export const PLANNER_RUNNING_ARCHIVE_SLOT = "plannerRunningArchive";
 export const PLANNER_TEMPLATE_SLOT = "plannerTemplate";
 export const PLANNER_DAY_META_KIND = "plannerDay";
 export const PLANNER_LINKED_TASK_META_KIND = "plannerLinkedTask";
@@ -83,7 +83,10 @@ export function isPlannerScanExcludedPage(
 
 export function findPlannerSectionNode(
   nodes: Doc<"nodes">[],
-  slot: typeof PLANNER_SIDEBAR_SLOT | typeof PLANNER_TEMPLATE_SLOT,
+  slot:
+    | typeof PLANNER_SIDEBAR_SLOT
+    | typeof PLANNER_RUNNING_ARCHIVE_SLOT
+    | typeof PLANNER_TEMPLATE_SLOT,
 ) {
   return (
     nodes.find((node) => getNodeSourceMeta(node).sectionSlot === slot) ?? null
@@ -265,6 +268,7 @@ export async function ensurePlannerSections(
   const nodes = await listPageNodes(ctx.db, page._id);
   const now = Date.now();
   let sidebarSection = findPlannerSectionNode(nodes, PLANNER_SIDEBAR_SLOT);
+  let runningArchiveSection = findPlannerSectionNode(nodes, PLANNER_RUNNING_ARCHIVE_SLOT);
   let templateSection = findPlannerSectionNode(nodes, PLANNER_TEMPLATE_SLOT);
 
   const rootNodes = nodes.filter((node) => node.parentNodeId === null);
@@ -319,7 +323,30 @@ export async function ensurePlannerSections(
     templateSection = await ctx.db.get(nodeId);
   }
 
-  if (!templateSection) {
+  if (!runningArchiveSection) {
+    const nodeId = await ctx.db.insert("nodes", {
+      pageId: page._id,
+      parentNodeId: null,
+      position: await computeNodePosition(ctx.db, page._id, null, sidebarSection?._id ?? null),
+      text: "Running Archive",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      dueEndAt: null,
+      archived: false,
+      sourceMeta: {
+        sourceType: "system",
+        sectionSlot: PLANNER_RUNNING_ARCHIVE_SLOT,
+        locked: true,
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+    runningArchiveSection = await ctx.db.get(nodeId);
+  }
+
+  if (!templateSection || !runningArchiveSection) {
     throw new Error("Could not initialize planner template section.");
   }
 
@@ -379,41 +406,9 @@ export async function ensurePlannerSections(
 
   return {
     sidebarSectionId: sidebarSection?._id ?? null,
+    archiveSectionId: runningArchiveSection._id,
     templateSectionId: templateSection._id,
   };
-}
-
-async function ensurePastWeeksPage(ctx: MutationCtx) {
-  const archivedPages = await ctx.db
-    .query("pages")
-    .withIndex("by_archived_position", (query) => query.eq("archived", true))
-    .take(200);
-  const existing = archivedPages.find((page) => page.title === "Past Weeks") ?? null;
-  if (existing) {
-    return existing;
-  }
-
-  const slug = await buildUniquePageSlug(ctx.db, "Past Weeks");
-  const pageId = await ctx.db.insert("pages", {
-    title: "Past Weeks",
-    slug,
-    icon: null,
-    archived: true,
-    position: Date.now(),
-    sourceMeta: {
-      sourceType: "system",
-      pageType: "note",
-      archivedPurpose: "plannerHistory",
-    },
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  });
-
-  const page = await ctx.db.get(pageId);
-  if (!page) {
-    throw new Error("Could not create Past Weeks.");
-  }
-  return page;
 }
 
 export async function appendPlannerLinkedTaskCopy(
@@ -604,27 +599,31 @@ export async function completePlannerLinkedTask(
     }
   }
 
-  const pastWeeksPage = await ensurePastWeeksPage(ctx);
+  const plannerPage = await ctx.db.get(plannerNode.pageId);
+  if (!plannerPage) {
+    throw new Error("Planner page not found.");
+  }
+  const plannerSections = await ensurePlannerSections(ctx, plannerPage);
   const plannerSubtree = await collectNodeTree(ctx.db, plannerNode._id);
-  const existingPastWeeksRoots = (await listPageNodes(ctx.db, pastWeeksPage._id)).filter(
-    (node) => node.parentNodeId === null,
-  );
+  const plannerPageNodes = await listPageNodes(ctx.db, plannerNode.pageId);
+  const existingArchiveChildren = plannerPageNodes
+    .filter((node) => node.parentNodeId === plannerSections.archiveSectionId)
+    .sort((left, right) => left.position - right.position);
   const afterNodeId =
-    existingPastWeeksRoots.sort((left, right) => left.position - right.position)[
-      existingPastWeeksRoots.length - 1
-    ]?._id ?? null;
+    existingArchiveChildren[existingArchiveChildren.length - 1]?._id ?? null;
 
   await clonePlannerSubtree(ctx, {
     sourceNodes: plannerSubtree,
     rootNodeId: plannerNode._id,
-    targetPageId: pastWeeksPage._id,
-    targetParentNodeId: null,
+    targetPageId: plannerNode.pageId,
+    targetParentNodeId: plannerSections.archiveSectionId,
     targetAfterNodeId: afterNodeId,
     transformSourceMeta: (sourceNode, sourceMeta) => ({
       ...sourceMeta,
       sourceType: "plannerArchive",
       archivedFromPlannerNodeId: plannerNode._id,
       archivedAt: now,
+      runningArchiveAt: now,
     }),
     transformNode: (sourceNode, depth) =>
       depth === 0 && sourceNode.kind === "task"
@@ -636,7 +635,6 @@ export async function completePlannerLinkedTask(
 
   await setNodeTreeArchivedState(ctx.db, plannerNode._id, true, now);
   await enqueuePageRootEmbeddingRefresh(ctx, plannerNode.pageId);
-  await enqueuePageRootEmbeddingRefresh(ctx, pastWeeksPage._id);
 }
 
 export function buildPlannerChatPromptContext(args: {
