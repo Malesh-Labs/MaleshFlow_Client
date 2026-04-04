@@ -700,6 +700,33 @@ test("normalizeImportedOutlineText collapses long separator glyphs", () => {
   );
 });
 
+test("normalizeImportedOutlineText rewrites imported work tag aliases", () => {
+  assert.equal(
+    normalizeImportedOutlineText(
+      "#work-misc-5 #work-tech-7 renew customer flow",
+    ),
+    "#malesh/labs/fanswap renew customer flow",
+  );
+  assert.equal(
+    normalizeImportedOutlineText(
+      "#work-misc-2 #work-tech-5 improve importer",
+    ),
+    "#malesh/labs/flow improve importer",
+  );
+  assert.equal(
+    normalizeImportedOutlineText(
+      "#work-tech #work-job ship release",
+    ),
+    "#work/job ship release",
+  );
+  assert.equal(
+    normalizeImportedOutlineText(
+      "#work-tech #work-job-4 review launch",
+    ),
+    "#work/job review launch",
+  );
+});
+
 test("buildDefaultMigrationLessonsDoc seeds dynalist-specific guidance", () => {
   const doc = buildDefaultMigrationLessonsDoc("dynalist");
   assert.match(doc, /Dynalist Migration Lessons/);

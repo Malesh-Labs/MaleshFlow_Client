@@ -289,6 +289,49 @@ export function withHeadingPrefix(text: string, headingLevel: number) {
 }
 
 const IMPORT_SEPARATOR_PATTERN = /^[\s\-—–―_─]{3,}$/;
+const IMPORT_TAG_ALIAS_RULES = [
+  {
+    sourceTags: ["#work-misc-5", "#work-tech-7"],
+    replacementTag: "#malesh/labs/fanswap",
+  },
+  {
+    sourceTags: ["#work-misc-2", "#work-tech-5"],
+    replacementTag: "#malesh/labs/flow",
+  },
+  {
+    sourceTags: ["#work-tech", "#work-job"],
+    replacementTag: "#work/job",
+  },
+  {
+    sourceTags: ["#work-tech", "#work-job-4"],
+    replacementTag: "#work/job",
+  },
+] as const;
+
+function normalizeImportedTagAliases(line: string) {
+  const leadingWhitespace = line.match(/^\s*/)?.[0] ?? "";
+  const body = line.slice(leadingWhitespace.length);
+  const tokens = body.split(/\s+/).filter((token) => token.length > 0);
+  if (tokens.length === 0) {
+    return line;
+  }
+
+  let nextTokens = [...tokens];
+  for (const rule of IMPORT_TAG_ALIAS_RULES) {
+    const matchIndexes = rule.sourceTags.map((tag) => nextTokens.indexOf(tag));
+    if (matchIndexes.some((index) => index === -1)) {
+      continue;
+    }
+
+    const insertIndex = Math.min(...matchIndexes);
+    nextTokens = nextTokens.filter((token) => !rule.sourceTags.includes(token as never));
+    if (!nextTokens.includes(rule.replacementTag)) {
+      nextTokens.splice(Math.min(insertIndex, nextTokens.length), 0, rule.replacementTag);
+    }
+  }
+
+  return `${leadingWhitespace}${nextTokens.join(" ")}`;
+}
 
 export function normalizeImportedOutlineText(text: string) {
   return text
@@ -299,7 +342,7 @@ export function normalizeImportedOutlineText(text: string) {
       if (IMPORT_SEPARATOR_PATTERN.test(trimmed)) {
         return line.replace(trimmed, "---");
       }
-      return line;
+      return normalizeImportedTagAliases(line);
     })
     .join("\n")
     .trim();
