@@ -298,7 +298,7 @@ test("parseImportedTextToOutlineNodes preserves full-line strikethrough as text 
 
 test("splitTextForInlineFormatting applies strike, italic, and bold markers", () => {
   const { segments, nextState } = splitTextForInlineFormatting(
-    "Before ~~gone~~ __soft__ **strong** after",
+    "Before ~~gone~~ __soft__ **strong** `code` after",
   );
 
   assert.deepEqual(
@@ -307,6 +307,7 @@ test("splitTextForInlineFormatting applies strike, italic, and bold markers", ()
       strike: segment.strike,
       italic: segment.italic,
       bold: segment.bold,
+      code: segment.code,
     })),
     [
       {
@@ -314,42 +315,63 @@ test("splitTextForInlineFormatting applies strike, italic, and bold markers", ()
         strike: false,
         italic: false,
         bold: false,
+        code: false,
       },
       {
         text: "gone",
         strike: true,
         italic: false,
         bold: false,
+        code: false,
       },
       {
         text: " ",
         strike: false,
         italic: false,
         bold: false,
+        code: false,
       },
       {
         text: "soft",
         strike: false,
         italic: true,
         bold: false,
+        code: false,
       },
       {
         text: " ",
         strike: false,
         italic: false,
         bold: false,
+        code: false,
       },
       {
         text: "strong",
         strike: false,
         italic: false,
         bold: true,
+        code: false,
+      },
+      {
+        text: " ",
+        strike: false,
+        italic: false,
+        bold: false,
+        code: false,
+      },
+      {
+        text: "code",
+        strike: false,
+        italic: false,
+        bold: false,
+        code: true,
       },
       {
         text: " after",
         strike: false,
         italic: false,
         bold: false,
+        code: false,
       },
     ],
   );
@@ -358,6 +380,7 @@ test("splitTextForInlineFormatting applies strike, italic, and bold markers", ()
     strike: false,
     italic: false,
     bold: false,
+    code: false,
   });
 });
 
@@ -384,6 +407,7 @@ test("hasRenderableInlineFormatting detects plain inline emphasis without requir
   assert.equal(hasRenderableInlineFormatting("__soft__ text"), true);
   assert.equal(hasRenderableInlineFormatting("**strong** text"), true);
   assert.equal(hasRenderableInlineFormatting("~~gone~~ text"), true);
+  assert.equal(hasRenderableInlineFormatting("`code` text"), true);
   assert.equal(hasRenderableInlineFormatting("__"), false);
 });
 

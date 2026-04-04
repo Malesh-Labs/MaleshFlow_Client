@@ -2,6 +2,7 @@ export type InlineFormattingState = {
   strike: boolean;
   italic: boolean;
   bold: boolean;
+  code: boolean;
 };
 
 export type InlineTextSegment = {
@@ -10,6 +11,7 @@ export type InlineTextSegment = {
   strike: boolean;
   italic: boolean;
   bold: boolean;
+  code: boolean;
 };
 
 export type InlineFormattingShortcutMarker = "~~" | "__" | "**";
@@ -18,6 +20,7 @@ const DEFAULT_STATE: InlineFormattingState = {
   strike: false,
   italic: false,
   bold: false,
+  code: false,
 };
 
 const FORMAT_MARKERS = [
@@ -32,6 +35,10 @@ const FORMAT_MARKERS = [
   {
     token: "**",
     field: "bold",
+  },
+  {
+    token: "`",
+    field: "code",
   },
 ] as const;
 
@@ -102,7 +109,9 @@ export function splitTextForInlineFormatting(
 
 export function hasRenderableInlineFormatting(text: string) {
   const { segments } = splitTextForInlineFormatting(text);
-  return segments.some((segment) => segment.strike || segment.italic || segment.bold);
+  return segments.some(
+    (segment) => segment.strike || segment.italic || segment.bold || segment.code,
+  );
 }
 
 export function applySelectedInlineFormattingShortcut(

@@ -226,6 +226,7 @@ type RenderedPreviewSegment =
       strike: boolean;
       italic: boolean;
       bold: boolean;
+      code: boolean;
     });
 type WorkspaceKnowledgeSourceSnapshot = {
   nodeId: string;
@@ -1945,6 +1946,7 @@ function applyInlineFormattingToPreviewSegments(segments: LinkPreviewSegment[]) 
     strike: false,
     italic: false,
     bold: false,
+    code: false,
   };
 
   for (const segment of segments) {
@@ -1965,6 +1967,7 @@ function applyInlineFormattingToPreviewSegments(segments: LinkPreviewSegment[]) 
         strike: textSegment.strike,
         italic: textSegment.italic,
         bold: textSegment.bold,
+        code: textSegment.code,
       });
     }
     formattingState = splitResult.nextState;
@@ -7554,11 +7557,13 @@ function getInlinePreviewStyle({
   strike,
   italic,
   bold,
+  code,
   underline,
 }: {
   strike: boolean;
   italic: boolean;
   bold: boolean;
+  code: boolean;
   underline: boolean;
 }): CSSProperties {
   return {
@@ -7569,6 +7574,15 @@ function getInlinePreviewStyle({
         : undefined,
     fontStyle: italic ? "italic" : undefined,
     fontWeight: bold ? 700 : undefined,
+    fontFamily: code
+      ? "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace"
+      : undefined,
+    fontSize: code ? "0.92em" : undefined,
+    backgroundColor: code
+      ? "color-mix(in srgb, var(--workspace-border-subtle) 55%, transparent)"
+      : undefined,
+    borderRadius: code ? "0.24rem" : undefined,
+    paddingInline: code ? "0.22em" : undefined,
   };
 }
 
@@ -7620,6 +7634,7 @@ function LinkedTextPreview({
               strike: segment.strike || isCompleted,
               italic: segment.italic,
               bold: segment.bold,
+              code: segment.code,
               underline: false,
             })}
           >
@@ -7649,6 +7664,7 @@ function LinkedTextPreview({
               strike: segment.strike || isCompleted,
               italic: segment.italic,
               bold: segment.bold,
+              code: segment.code,
               underline: true,
             })}
           >
@@ -7679,6 +7695,7 @@ function LinkedTextPreview({
                 strike: segment.strike || isCompleted,
                 italic: segment.italic,
                 bold: segment.bold,
+                code: segment.code,
                 underline: true,
               })}
             >
@@ -7718,6 +7735,7 @@ function LinkedTextPreview({
                   strike: segment.strike || isCompleted,
                   italic: segment.italic,
                   bold: segment.bold,
+                  code: segment.code,
                   underline: true,
                 })}
               >
@@ -7751,6 +7769,7 @@ function LinkedTextPreview({
                 strike: segment.strike || isCompleted,
                 italic: segment.italic,
                 bold: segment.bold,
+                code: segment.code,
                 underline: true,
               })}
             >
@@ -7798,6 +7817,7 @@ function PlainTextPreview({
             strike: segment.strike,
             italic: segment.italic,
             bold: segment.bold,
+            code: segment.code,
             underline: false,
           })}
         >
@@ -7838,6 +7858,7 @@ function LinkPreviewMeasure({
               strike: segment.strike || isCompleted,
               italic: segment.italic,
               bold: segment.bold,
+              code: segment.code,
               underline: false,
             })}
           >
@@ -7856,6 +7877,7 @@ function LinkPreviewMeasure({
               strike: segment.strike || isCompleted,
               italic: segment.italic,
               bold: segment.bold,
+              code: segment.code,
               underline: true,
             })}
           >
@@ -7881,6 +7903,7 @@ function LinkPreviewMeasure({
                 strike: segment.strike || isCompleted,
                 italic: segment.italic,
                 bold: segment.bold,
+                code: segment.code,
                 underline: true,
               })}
             >
@@ -7930,6 +7953,7 @@ function PlainTextMeasure({
             strike: segment.strike,
             italic: segment.italic,
             bold: segment.bold,
+            code: segment.code,
             underline: false,
           })}
         >
