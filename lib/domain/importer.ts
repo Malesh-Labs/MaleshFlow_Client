@@ -18,8 +18,11 @@ export type ImportedOutlineNode = {
 
 const DYNALIST_MARKDOWN_LINK_PATTERN =
   /\[([^\]]+)\]\((https?:\/\/dynalist\.io\/[^)\s]+)\)/gi;
-const DUE_MARKER_PATTERN =
-  /\s*!\(\s*(\d{4}-\d{2}-\d{2})(?:\s*-\s*(\d{4}-\d{2}-\d{2}))?(?:\s*\|\s*([^)]+?))?\s*\)\s*$/i;
+const DATE_WITH_OPTIONAL_TIME_PATTERN = String.raw`\d{4}-\d{2}-\d{2}(?:\s+\d{2}:\d{2})?`;
+const DUE_MARKER_PATTERN = new RegExp(
+  String.raw`\s*!\(\s*(${DATE_WITH_OPTIONAL_TIME_PATTERN})(?:\s*-\s*(${DATE_WITH_OPTIONAL_TIME_PATTERN}))?(?:\s*\|\s*([^)]+?))?\s*\)\s*$`,
+  "i",
+);
 const TASK_DONE_PATTERN = /^\[x\]\s*(.*)$/i;
 const TASK_TODO_PATTERN = /^\[\s\]\s*(.*)$/;
 const LEADING_BULLET_PATTERN = /^(?:[-*•]\s+)(.*)$/;
@@ -53,6 +56,10 @@ function restoreFullLineStrike(text: string, wrapped: boolean) {
   }
 
   return `~~${trimmed}~~`;
+}
+
+function stripOptionalImportedTime(value: string | undefined) {
+  return (value ?? "").trim().slice(0, 10);
 }
 
 function parseRecurrenceShorthand(value: string | undefined): RecurrenceFrequency {
@@ -118,8 +125,8 @@ function parseImportedLine(rawLine: string): Omit<ImportedOutlineNode, "children
 
   const dueMatch = workingText.match(DUE_MARKER_PATTERN);
   if (dueMatch) {
-    dueAt = dateInputValueToTimestamp(dueMatch[1] ?? "");
-    dueEndAt = dateInputValueToTimestamp(dueMatch[2] ?? "");
+    dueAt = dateInputValueToTimestamp(stripOptionalImportedTime(dueMatch[1]));
+    dueEndAt = dateInputValueToTimestamp(stripOptionalImportedTime(dueMatch[2]));
     recurrenceFrequency = parseRecurrenceShorthand(dueMatch[3]);
     if (dueAt && dueEndAt && dueEndAt <= dueAt) {
       dueEndAt = null;

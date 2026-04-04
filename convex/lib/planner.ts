@@ -33,6 +33,11 @@ function getRecordMeta(value: unknown) {
     : {};
 }
 
+function sanitizePlannerLinkLabel(value: string, fallback = "Untitled") {
+  const trimmed = value.replace(/\|/g, "/").replace(/\]\]/g, "] ]").trim();
+  return trimmed.length > 0 ? trimmed : fallback;
+}
+
 export function getPageSourceMeta(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
   return getRecordMeta(page?.sourceMeta ?? null);
 }
@@ -58,6 +63,13 @@ export function isPlannerPage(page: Pick<Doc<"pages">, "sourceMeta"> | null | un
 export function isTaskSourcePage(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
   const sourceMeta = getPageSourceMeta(page);
   return sourceMeta.pageType === "task" || sourceMeta.sidebarSection === "Tasks";
+}
+
+export function isPlannerScanExcludedPage(
+  page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined,
+) {
+  const sourceMeta = getPageSourceMeta(page);
+  return sourceMeta.excludeFromPlannerScan === true;
 }
 
 export function findPlannerSectionNode(
@@ -402,6 +414,11 @@ export async function appendPlannerLinkedTaskCopy(
   },
 ) {
   const sourceMeta = getNodeSourceMeta(args.sourceTask);
+  const sourcePage = await ctx.db.get(args.sourceTask.pageId);
+  const pageLinkText =
+    sourcePage && !sourcePage.archived
+      ? ` [[${sanitizePlannerLinkLabel(sourcePage.title, "Source page")}|page:${sourcePage._id}]]`
+      : "";
   const position = await computeNodePosition(
     ctx.db,
     args.plannerPageId,
@@ -412,7 +429,7 @@ export async function appendPlannerLinkedTaskCopy(
     pageId: args.plannerPageId,
     parentNodeId: args.dayNodeId,
     position,
-    text: args.sourceTask.text,
+    text: `[[node:${args.sourceTask._id}]]${pageLinkText}`,
     kind: "task",
     taskStatus: args.sourceTask.taskStatus ?? "todo",
     priority: args.sourceTask.priority,
@@ -465,6 +482,10 @@ export async function listEligiblePlannerSourceTasks(
   return activeTasks.filter((task) => {
     const page = pageMap.get(task.pageId);
     if (!page || page.archived || !isTaskSourcePage(page)) {
+      return false;
+    }
+
+    if (isPlannerScanExcludedPage(page)) {
       return false;
     }
 
@@ -567,6 +588,7 @@ export function buildPlannerChatPromptContext(args: {
   plannerNodes: Doc<"nodes">[];
   sourceTasks: Doc<"nodes">[];
 }) {
+  const sourceTaskMap = new Map(args.sourceTasks.map((task) => [task._id as string, task]));
   const currentDay = getCurrentPlannerDay(args.plannerNodes);
   const currentDayChildren = currentDay
     ? args.plannerNodes
@@ -579,7 +601,14 @@ export function buildPlannerChatPromptContext(args: {
     currentDayId: currentDay?._id ?? null,
     currentDayLines: currentDayChildren.map((node) => ({
       nodeId: node._id as string,
-      text: node.text,
+      text:
+        (() => {
+          const linkedSourceTaskId = getPlannerLinkedSourceTaskId(node);
+          if (!linkedSourceTaskId) {
+            return node.text;
+          }
+          return sourceTaskMap.get(linkedSourceTaskId as string)?.text ?? node.text;
+        })(),
       linkedSourceTaskId: getPlannerLinkedSourceTaskId(node),
       status: node.taskStatus,
     })),

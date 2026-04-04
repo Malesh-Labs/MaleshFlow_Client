@@ -1,6 +1,6 @@
 import { v } from "convex/values";
-import { mutation, query } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import { mutation, query, type MutationCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import { assertOwnerKey } from "./lib/auth";
 import {
   appendPlannerDayCore,
@@ -18,6 +18,29 @@ import {
 } from "./lib/planner";
 import { collectNodeTree, listPageNodes } from "./lib/workspace";
 import { comparePlannerTaskOrder } from "../lib/domain/planner";
+
+async function buildPlannerTaskSelectionSummary(ctx: MutationCtx, plannerNode: Doc<"nodes">) {
+  const linkedSourceTaskId = getPlannerLinkedSourceTaskId(plannerNode);
+  const linkedSourceTask = linkedSourceTaskId ? await ctx.db.get(linkedSourceTaskId) : null;
+  const sourcePageId =
+    linkedSourceTask?.pageId ??
+    (plannerNode.sourceMeta &&
+    typeof plannerNode.sourceMeta === "object" &&
+    typeof (plannerNode.sourceMeta as Record<string, unknown>).sourceTaskPageId === "string"
+      ? ((plannerNode.sourceMeta as Record<string, unknown>).sourceTaskPageId as Id<"pages">)
+      : null);
+  const sourcePage = sourcePageId ? await ctx.db.get(sourcePageId) : null;
+
+  return {
+    plannerNodeId: plannerNode._id,
+    text: linkedSourceTask?.text ?? plannerNode.text,
+    dueAt: linkedSourceTask?.dueAt ?? plannerNode.dueAt ?? null,
+    dueEndAt: linkedSourceTask?.dueEndAt ?? plannerNode.dueEndAt ?? null,
+    sourcePageId: sourcePage?._id ?? null,
+    sourcePageTitle: sourcePage?.title ?? null,
+    linkedSourceTaskId: linkedSourceTask?._id ?? linkedSourceTaskId ?? null,
+  };
+}
 
 export const ensurePlannerPageSections = mutation({
   args: {
@@ -178,9 +201,10 @@ export const resolveNextPlannerTask = mutation({
       .filter((node) => node.kind === "task" && node.taskStatus !== "done" && node.taskStatus !== "cancelled")
       .sort((left, right) => comparePlannerTaskOrder(left, right));
     if (currentDayTasks.length > 0) {
+      const summary = await buildPlannerTaskSelectionSummary(ctx, currentDayTasks[0]!);
       return {
-        plannerNodeId: currentDayTasks[0]!._id,
         created: false,
+        ...summary,
       };
     }
 
@@ -216,10 +240,15 @@ export const resolveNextPlannerTask = mutation({
       sourceTask: nextSourceTask,
       afterNodeId,
     });
+    const insertedPlannerNode = await ctx.db.get(plannerNodeId);
+    if (!insertedPlannerNode) {
+      throw new Error("Could not create the suggested planner task.");
+    }
+    const summary = await buildPlannerTaskSelectionSummary(ctx, insertedPlannerNode);
 
     return {
-      plannerNodeId,
       created: true,
+      ...summary,
     };
   },
 });

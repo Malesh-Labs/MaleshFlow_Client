@@ -304,6 +304,26 @@ test("parseImportedTextToOutlineNodes converts date ranges into real task range 
   ]);
 });
 
+test("parseImportedTextToOutlineNodes ignores imported times in due markers for now", () => {
+  const nodes = parseImportedTextToOutlineNodes(
+    "[[trip]] to [[SD]] !(2026-06-11 13:00)",
+  );
+
+  assert.deepEqual(nodes, [
+    {
+      text: "[[trip]] to [[SD]]",
+      kind: "task",
+      taskStatus: "todo",
+      noteCompleted: false,
+      dueAt: dateInputValueToTimestamp("2026-06-11"),
+      dueEndAt: null,
+      recurrenceFrequency: null,
+      lockKind: true,
+      children: [],
+    },
+  ]);
+});
+
 test("parseImportedTextToOutlineNodes preserves full-line strikethrough as text formatting", () => {
   const nodes = parseImportedTextToOutlineNodes(
     "~~#perm [costco membership](https://dynalist.io/d/gZbxdAfe_LzJ-ZNaczyYnfou#z=H5s8GLBy4E5_PVXp4-V2Vvcb) renews !(2026-05-17)~~",

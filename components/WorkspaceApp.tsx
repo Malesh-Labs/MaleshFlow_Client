@@ -286,6 +286,16 @@ type PendingInsertedComposer = {
   afterNodeId: string;
   focusToken: number;
 };
+type PlannerNextTaskSuggestion = {
+  plannerNodeId: string;
+  text: string;
+  created: boolean;
+  sourcePageId: string | null;
+  sourcePageTitle: string | null;
+  linkedSourceTaskId: string | null;
+  dueAt: number | null;
+  dueEndAt: number | null;
+};
 type NodeDropTarget = {
   placement: "before" | "after" | "nest";
   parentNodeId: Id<"nodes"> | null;
@@ -2269,6 +2279,8 @@ function ConfiguredWorkspace({
   const [plannerChatDraft, setPlannerChatDraft] = useState("");
   const [plannerChatError, setPlannerChatError] = useState("");
   const [isPlannerChatLoading, setIsPlannerChatLoading] = useState(false);
+  const [plannerNextTaskSuggestion, setPlannerNextTaskSuggestion] =
+    useState<PlannerNextTaskSuggestion | null>(null);
   const [lastResolvedPageTree, setLastResolvedPageTree] = useState<PageTreeResult | null>(null);
   const [activeDraggedNodeId, setActiveDraggedNodeId] = useState<string | null>(null);
   const [activeDraggedNodePayload, setActiveDraggedNodePayload] = useState<DraggedNodePayload | null>(null);
@@ -2340,6 +2352,7 @@ function ConfiguredWorkspace({
   const ensurePlannerPageSections = useMutation(api.planner.ensurePlannerPageSections);
   const renamePage = useMutation(api.workspace.renamePage);
   const archivePage = useMutation(api.workspace.archivePage);
+  const setPlannerScanExcluded = useMutation(api.workspace.setPlannerScanExcluded);
   const deletePageForever = useMutation(api.workspace.deletePageForever);
   const rebuildEmbeddings = useMutation(api.workspace.rebuildEmbeddings);
   const refreshSidebarLinks = useMutation(api.workspace.refreshSidebarLinks);
@@ -2471,12 +2484,15 @@ function ConfiguredWorkspace({
   const selectedPage = activePageTree?.page ?? null;
   const pageMeta = getPageMeta(selectedPage);
   const isPageArchived = selectedPage?.archived ?? false;
+  const selectedPageSourceMeta =
+    selectedPage && typeof selectedPage.sourceMeta === "object" && selectedPage.sourceMeta
+      ? (selectedPage.sourceMeta as Record<string, unknown>)
+      : null;
+  const isSelectedPageExcludedFromPlannerScan =
+    selectedPageSourceMeta?.excludeFromPlannerScan === true;
   const plannerStartDate =
-    selectedPage &&
-    selectedPage.sourceMeta &&
-    typeof selectedPage.sourceMeta === "object" &&
-    typeof (selectedPage.sourceMeta as Record<string, unknown>).plannerStartDate === "number"
-      ? ((selectedPage.sourceMeta as Record<string, unknown>).plannerStartDate as number)
+    typeof selectedPageSourceMeta?.plannerStartDate === "number"
+      ? (selectedPageSourceMeta.plannerStartDate as number)
       : null;
   const plannerChatMessages = plannerChatThread?.messages ?? [];
   const pageTitleEditorId = selectedPage ? getPageTitleEditorId(selectedPage._id) : null;
@@ -2869,8 +2885,11 @@ function ConfiguredWorkspace({
       "text/plain",
       buildOutlineClipboardText(payload.nodes),
     );
+    setCopySnackbarMessage(
+      `Copied ${selectedRoots.length} item${selectedRoots.length === 1 ? "" : "s"}`,
+    );
     event.preventDefault();
-  }, [selectedNodeIds, sidebarNodes, tree, visibleNodeOrder, workspaceNodeMap]);
+  }, [selectedNodeIds, setCopySnackbarMessage, sidebarNodes, tree, visibleNodeOrder, workspaceNodeMap]);
   const pasteOutlineClipboardAfterSelection = useCallback(async (payload: OutlineClipboardPayload) => {
     if (selectedNodeIds.size === 0) {
       return;
@@ -2898,10 +2917,19 @@ function ConfiguredWorkspace({
       afterNodeId: anchorNode._id,
     });
 
-    const firstCreatedRootNodeId = result.createdRootNodeIds[0] ?? null;
-    if (firstCreatedRootNodeId) {
+    const createdRootNodeIds = result.createdRootNodeIds.map((nodeId) => nodeId as string);
+    const firstCreatedRootNodeId = createdRootNodeIds[0] ?? null;
+    if (createdRootNodeIds.length > 1) {
+      setSelectedNodeIds(new Set(createdRootNodeIds));
+      setDragSelection(null);
+      setPendingRevealNodeId(firstCreatedRootNodeId);
+    } else if (firstCreatedRootNodeId) {
       selectSingleNode(firstCreatedRootNodeId);
+      setPendingRevealNodeId(firstCreatedRootNodeId);
     }
+    setCopySnackbarMessage(
+      `Pasted ${createdRootNodeIds.length} item${createdRootNodeIds.length === 1 ? "" : "s"}`,
+    );
   }, [insertOutlineClipboardNodes, selectSingleNode, selectedNodeIds, visibleNodeOrder, workspaceNodeMap]);
   const canImportScreenshotWithoutSelection =
     (
@@ -5412,6 +5440,12 @@ function ConfiguredWorkspace({
     history.syncCommittedValue(pageTitleEditorId, selectedPage.title, pageTitleTarget);
   }, [history, pageTitleEditorId, pageTitleTarget, selectedPage]);
 
+  useEffect(() => {
+    if (pageMeta.pageType !== "planner") {
+      setPlannerNextTaskSuggestion(null);
+    }
+  }, [pageMeta.pageType, selectedPageId]);
+
   const handleRenamePage = async () => {
     if (!selectedPage || !pageTitleEditorId || !pageTitleTarget) {
       return;
@@ -5443,6 +5477,39 @@ function ConfiguredWorkspace({
       });
     }
   };
+
+  const handleToggleSelectedTaskPagePlannerScan = useCallback(async () => {
+    if (!selectedPage || pageMeta.pageType !== "task" || isPageArchived) {
+      return;
+    }
+
+    const nextExcluded = !isSelectedPageExcludedFromPlannerScan;
+    try {
+      await setPlannerScanExcluded({
+        ownerKey,
+        pageId: selectedPage._id,
+        excluded: nextExcluded,
+      });
+      setCopySnackbarMessage(
+        nextExcluded
+          ? "Excluded this task page from planner scans"
+          : "Included this task page in planner scans",
+      );
+    } catch (error) {
+      setCopySnackbarMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not update planner scan settings.",
+      );
+    }
+  }, [
+    isPageArchived,
+    isSelectedPageExcludedFromPlannerScan,
+    ownerKey,
+    pageMeta.pageType,
+    selectedPage,
+    setPlannerScanExcluded,
+  ]);
 
   const handleSelectPage = useCallback((pageId: Id<"pages">) => {
     const page = pagesById.get(pageId as string);
@@ -5755,12 +5822,24 @@ function ConfiguredWorkspace({
         pageId: selectedPageId,
       });
       if (result?.plannerNodeId) {
-        focusPlannerNode(result.plannerNodeId as string);
+        setPlannerNextTaskSuggestion({
+          plannerNodeId: result.plannerNodeId as string,
+          text: typeof result.text === "string" ? result.text : "Untitled task",
+          created: result.created === true,
+          sourcePageId:
+            typeof result.sourcePageId === "string" ? result.sourcePageId : null,
+          sourcePageTitle:
+            typeof result.sourcePageTitle === "string" ? result.sourcePageTitle : null,
+          linkedSourceTaskId:
+            typeof result.linkedSourceTaskId === "string" ? result.linkedSourceTaskId : null,
+          dueAt: typeof result.dueAt === "number" ? result.dueAt : null,
+          dueEndAt: typeof result.dueEndAt === "number" ? result.dueEndAt : null,
+        });
       }
       setPlannerStatus(
         result?.created
-          ? "Pulled a new task into today and focused it."
-          : "Focused the next task for today.",
+          ? "Suggested a new task for today."
+          : "Suggested the next task for today.",
       );
     } catch (error) {
       setPlannerStatus(
@@ -5769,7 +5848,7 @@ function ConfiguredWorkspace({
     } finally {
       setIsPlannerResolvingNextTask(false);
     }
-  }, [focusPlannerNode, isPageArchived, ownerKey, pageMeta.pageType, resolveNextPlannerTask, selectedPageId]);
+  }, [isPageArchived, ownerKey, pageMeta.pageType, resolveNextPlannerTask, selectedPageId]);
 
   const handleSubmitPlannerChat = useCallback(async () => {
     if (
@@ -6455,6 +6534,23 @@ function ConfiguredWorkspace({
                       </div>
                     ) : null}
                   </div>
+                  {pageMeta.pageType === "task" ? (
+                    <button
+                      type="button"
+                      onClick={() => void handleToggleSelectedTaskPagePlannerScan()}
+                      disabled={isPageArchived}
+                      className={clsx(
+                        "shrink-0 border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition disabled:cursor-not-allowed disabled:opacity-60",
+                        isSelectedPageExcludedFromPlannerScan
+                          ? "border-[var(--workspace-brand)] text-[var(--workspace-brand)] hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
+                          : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                      )}
+                      >
+                      {isSelectedPageExcludedFromPlannerScan
+                        ? "Include In Planner"
+                        : "Exclude From Planner"}
+                    </button>
+                  ) : null}
                 </div>
                 <div className="mt-6 h-px bg-[var(--workspace-border-subtle)]" />
               </div>
@@ -6610,6 +6706,71 @@ function ConfiguredWorkspace({
                     </div>
                     {plannerStatus ? (
                       <p className="text-sm text-[var(--workspace-text-subtle)]">{plannerStatus}</p>
+                    ) : null}
+                    {plannerNextTaskSuggestion ? (
+                      <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4">
+                        <div className="w-full max-w-lg border border-[var(--workspace-border)] bg-[var(--workspace-surface)] p-5 shadow-2xl">
+                          <div className="flex items-start justify-between gap-4">
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--workspace-accent)]">
+                                Next Suggested Task
+                              </p>
+                              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[var(--workspace-text)]">
+                                {plannerNextTaskSuggestion.text}
+                              </h3>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setPlannerNextTaskSuggestion(null)}
+                              className="text-sm uppercase tracking-[0.18em] text-[var(--workspace-text-faint)] transition hover:text-[var(--workspace-text)]"
+                            >
+                              Close
+                            </button>
+                          </div>
+                          <div className="mt-4 flex flex-wrap gap-2 text-xs uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                            <span>
+                              {plannerNextTaskSuggestion.created ? "Pulled into today" : "Already in today"}
+                            </span>
+                            {plannerNextTaskSuggestion.sourcePageTitle ? (
+                              <span>From {plannerNextTaskSuggestion.sourcePageTitle}</span>
+                            ) : null}
+                            {plannerNextTaskSuggestion.dueAt ? (
+                              <span>
+                                {formatDueDateRange(
+                                  plannerNextTaskSuggestion.dueAt,
+                                  plannerNextTaskSuggestion.dueEndAt ?? null,
+                                )}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="mt-6 flex flex-wrap gap-3">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                focusPlannerNode(plannerNextTaskSuggestion.plannerNodeId);
+                                setPlannerNextTaskSuggestion(null);
+                              }}
+                              className="border border-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
+                            >
+                              Focus Task
+                            </button>
+                            {plannerNextTaskSuggestion.sourcePageId ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleSelectPage(
+                                    plannerNextTaskSuggestion.sourcePageId as Id<"pages">,
+                                  );
+                                  setPlannerNextTaskSuggestion(null);
+                                }}
+                                className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                              >
+                                Open Source Page
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
                     ) : null}
                     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start">
                       <div className="min-w-0 space-y-1">

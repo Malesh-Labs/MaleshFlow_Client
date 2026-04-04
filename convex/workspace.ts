@@ -31,6 +31,7 @@ import {
   getPlannerLinkedSourceTaskId,
   getPlannerStartDate,
   isPlannerPage,
+  isTaskSourcePage,
   listEligiblePlannerSourceTasks,
 } from "./lib/planner";
 import { replaceLiteralOccurrences } from "../lib/domain/findReplace";
@@ -1640,6 +1641,33 @@ export const ensurePlannerPageSections = mutation({
   },
 });
 
+export const setPlannerScanExcluded = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+    excluded: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived || !isTaskSourcePage(page)) {
+      throw new Error("Only active task pages can be toggled for planner scans.");
+    }
+
+    const nextSourceMeta = {
+      ...getPageSourceMeta(page),
+      excludeFromPlannerScan: args.excluded,
+    };
+    await ctx.db.patch(args.pageId, {
+      sourceMeta: nextSourceMeta,
+      updatedAt: getTimestamp(),
+    });
+
+    return args.excluded;
+  },
+});
+
 export const renamePage = mutation({
   args: {
     ownerKey: v.string(),
@@ -2388,6 +2416,13 @@ export const getPlannerPageContext = internalQuery({
       linkedSourceTaskIds.map((nodeId) => ctx.db.get(nodeId)),
     );
     const openSourceTasks = await listEligiblePlannerSourceTasks(ctx.db, {});
+    const contextSourceTasks = [
+      ...new Map(
+        [...linkedSourceTasks, ...openSourceTasks]
+          .filter((task): task is Doc<"nodes"> => task !== null && !task.archived)
+          .map((task) => [task._id as string, task]),
+      ).values(),
+    ];
 
     return {
       page,
@@ -2402,7 +2437,7 @@ export const getPlannerPageContext = internalQuery({
       ...buildPlannerChatPromptContext({
         page,
         plannerNodes: nodes,
-        sourceTasks: openSourceTasks,
+        sourceTasks: contextSourceTasks,
       }),
     };
   },
