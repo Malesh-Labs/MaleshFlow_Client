@@ -364,6 +364,7 @@ type WorkspaceErrorBoundaryState = {
 type SectionSlot =
   | "taskSidebar"
   | "plannerSidebar"
+  | "plannerRunningArchive"
   | "plannerTemplate"
   | "model"
   | "recentExamples"
@@ -2543,6 +2544,7 @@ function ConfiguredWorkspace({
   const recentExamplesSection = findSectionNode(tree, "recentExamples");
   const taskSidebarSection = findSectionNode(tree, "taskSidebar");
   const plannerSidebarSection = findSectionNode(tree, "plannerSidebar");
+  const plannerLegacyArchiveSection = findSectionNode(tree, "plannerRunningArchive");
   const plannerTemplateSection = findSectionNode(tree, "plannerTemplate");
   const journalThoughtsSection = findSectionNode(tree, "journalThoughts");
   const journalFeedbackSection = findSectionNode(tree, "journalFeedback");
@@ -2609,7 +2611,11 @@ function ConfiguredWorkspace({
       ? collectChildren(
           tree,
           new Set(
-            [plannerSidebarSection?._id, plannerTemplateSection?._id].filter(Boolean) as string[],
+            [
+              plannerSidebarSection?._id,
+              plannerLegacyArchiveSection?._id,
+              plannerTemplateSection?._id,
+            ].filter(Boolean) as string[],
           ),
         )
       : pageMeta.pageType === "model"
