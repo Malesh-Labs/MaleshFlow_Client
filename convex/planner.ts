@@ -151,6 +151,7 @@ export const addRandomPlannerTask = mutation({
 
     const candidates = await listEligiblePlannerSourceTasks(ctx.db, {
       excludeSourceTaskIds: existingSourceIds,
+      dueByDate: plannerDate,
     });
     if (candidates.length === 0) {
       throw new Error("No remaining open tasks are available for today.");

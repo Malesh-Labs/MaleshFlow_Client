@@ -463,6 +463,7 @@ export async function listEligiblePlannerSourceTasks(
   args: {
     excludeSourceTaskIds?: Set<string>;
     plannerDate?: number | null;
+    dueByDate?: number | null;
   } = {},
 ) {
   const tasks = await db
@@ -499,6 +500,14 @@ export async function listEligiblePlannerSourceTasks(
         dueAt: task.dueAt,
         dueEndAt: task.dueEndAt ?? null,
       });
+    }
+
+    if (args.dueByDate) {
+      if (!task.dueAt) {
+        return true;
+      }
+
+      return task.dueAt <= args.dueByDate;
     }
 
     return true;
