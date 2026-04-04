@@ -15,10 +15,12 @@ import type * as chatData from "../chatData.js";
 import type * as importExport from "../importExport.js";
 import type * as importExportData from "../importExportData.js";
 import type * as lib_auth from "../lib/auth.js";
+import type * as lib_planner from "../lib/planner.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as lib_workspace from "../lib/workspace.js";
 import type * as migration from "../migration.js";
 import type * as migrationData from "../migrationData.js";
+import type * as planner from "../planner.js";
 import type * as workspace from "../workspace.js";
 
 import type {
@@ -35,10 +37,12 @@ declare const fullApi: ApiFromModules<{
   importExport: typeof importExport;
   importExportData: typeof importExportData;
   "lib/auth": typeof lib_auth;
+  "lib/planner": typeof lib_planner;
   "lib/validators": typeof lib_validators;
   "lib/workspace": typeof lib_workspace;
   migration: typeof migration;
   migrationData: typeof migrationData;
+  planner: typeof planner;
   workspace: typeof workspace;
 }>;
 

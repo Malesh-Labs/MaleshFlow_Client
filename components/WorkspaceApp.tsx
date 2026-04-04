@@ -45,6 +45,7 @@ import {
   getRecurrenceLabel,
   isOverdueDueDateRange,
   parseRecurrenceFrequency,
+  timestampToDateInputValue,
   type RecurrenceFrequency,
   type RecurringCompletionMode,
 } from "@/lib/domain/recurrence";
@@ -60,6 +61,10 @@ import {
   buildNodeSelectionIds,
   filterPagesForCommandPalette,
 } from "@/lib/domain/workspaceUi";
+import {
+  formatPlannerStartDateLabel,
+  plannerChatPlanSchema,
+} from "@/lib/domain/planner";
 import {
   WorkspaceHistoryProvider,
   focusElementAtEnd,
@@ -109,7 +114,14 @@ const WORKSPACE_AI_CHAT_TEXTAREA_ID = "workspace-ai-chat-textarea";
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
-type PageType = "default" | "note" | "task" | "model" | "journal" | "scratchpad";
+type PageType =
+  | "default"
+  | "note"
+  | "task"
+  | "planner"
+  | "model"
+  | "journal"
+  | "scratchpad";
 type PageDoc = Doc<"pages">;
 type PageTreeResult = {
   page: PageDoc;
@@ -340,6 +352,8 @@ type WorkspaceErrorBoundaryState = {
 
 type SectionSlot =
   | "taskSidebar"
+  | "plannerSidebar"
+  | "plannerTemplate"
   | "model"
   | "recentExamples"
   | "journalThoughts"
@@ -578,6 +592,8 @@ function getPageMeta(page: Doc<"pages"> | null | undefined) {
   const pageType: PageType =
     isSidebarPage
       ? "note"
+      : sourceMeta.pageType === "planner"
+      ? "planner"
       : sourceMeta.pageType === "model"
       ? "model"
       : sourceMeta.pageType === "journal"
@@ -595,6 +611,8 @@ function getPageMeta(page: Doc<"pages"> | null | undefined) {
       ? "Notes"
       : pageType === "model"
       ? "Models"
+      : pageType === "planner"
+      ? "Tasks"
       : pageType === "journal"
         ? "Journal"
         : pageType === "scratchpad"
@@ -616,7 +634,12 @@ function isSidebarSpecialPage(page: Doc<"pages"> | null | undefined) {
 }
 
 function getPageTypeLabel(page: Doc<"pages"> | null | undefined) {
-  return getPageTypeLabelForSection(getPageMeta(page).sidebarSection);
+  const meta = getPageMeta(page);
+  if (meta.pageType === "planner") {
+    return "Planner";
+  }
+
+  return getPageTypeLabelForSection(meta.sidebarSection);
 }
 
 function getPageTypeLabelForSection(sidebarSection: SidebarSection) {
@@ -657,6 +680,8 @@ function getPageTypeEmoji(page: Doc<"pages"> | null | undefined) {
       return "🧠";
     case "task":
       return "☑️";
+    case "planner":
+      return "🗓️";
     case "note":
       return "📝";
     case "journal":
@@ -699,12 +724,27 @@ function flattenTreeNodes(nodes: TreeNode[], collapsedNodeIds?: Set<string>): Tr
   ]);
 }
 
-function getNodeMeta(node: Doc<"nodes"> | TreeNode | null | undefined) {
+function getNodeMeta(node: { sourceMeta?: unknown } | null | undefined) {
   if (!node || typeof node.sourceMeta !== "object" || !node.sourceMeta) {
     return {};
   }
 
   return node.sourceMeta as Record<string, unknown>;
+}
+
+function isPlannerLinkedTask(
+  node:
+    | Pick<Doc<"nodes">, "sourceMeta" | "kind">
+    | Pick<TreeNode, "sourceMeta" | "kind">
+    | null
+    | undefined,
+) {
+  if (!node || node.kind !== "task") {
+    return false;
+  }
+
+  const meta = getNodeMeta(node);
+  return meta.plannerKind === "plannerLinkedTask" && typeof meta.sourceTaskNodeId === "string";
 }
 
 function isNodeNoteCompleted(
@@ -2199,6 +2239,7 @@ function ConfiguredWorkspace({
   const [pageTitleDraft, setPageTitleDraft] = useState("");
   const [chatStatus, setChatStatus] = useState("");
   const [journalFeedbackStatus, setJournalFeedbackStatus] = useState("");
+  const [plannerStatus, setPlannerStatus] = useState("");
   const [modelPromptNote, setModelPromptNote] = useState("");
   const [journalFeedbackPromptNote, setJournalFeedbackPromptNote] = useState("");
   const [activeAiPromptEditor, setActiveAiPromptEditor] = useState<
@@ -2206,10 +2247,14 @@ function ConfiguredWorkspace({
   >(null);
   const [embeddingRebuildStatus, setEmbeddingRebuildStatus] = useState("");
   const [isCreatingPage, setIsCreatingPage] = useState<SidebarSection | null>(null);
+  const [isCreatingPlannerPage, setIsCreatingPlannerPage] = useState(false);
   const [isSendingChat, setIsSendingChat] = useState(false);
   const [isGeneratingJournalFeedback, setIsGeneratingJournalFeedback] = useState(false);
   const [isRebuildingEmbeddings, setIsRebuildingEmbeddings] = useState(false);
   const [isRefreshingSidebarLinks, setIsRefreshingSidebarLinks] = useState(false);
+  const [isPlannerAppendingDay, setIsPlannerAppendingDay] = useState(false);
+  const [isPlannerAddingRandomTask, setIsPlannerAddingRandomTask] = useState(false);
+  const [isPlannerResolvingNextTask, setIsPlannerResolvingNextTask] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("pages");
   const [paletteQuery, setPaletteQuery] = useState("");
@@ -2221,6 +2266,9 @@ function ConfiguredWorkspace({
   const [workspaceChatDraft, setWorkspaceChatDraft] = useState("");
   const [workspaceChatError, setWorkspaceChatError] = useState("");
   const [isWorkspaceChatLoading, setIsWorkspaceChatLoading] = useState(false);
+  const [plannerChatDraft, setPlannerChatDraft] = useState("");
+  const [plannerChatError, setPlannerChatError] = useState("");
+  const [isPlannerChatLoading, setIsPlannerChatLoading] = useState(false);
   const [lastResolvedPageTree, setLastResolvedPageTree] = useState<PageTreeResult | null>(null);
   const [activeDraggedNodeId, setActiveDraggedNodeId] = useState<string | null>(null);
   const [activeDraggedNodePayload, setActiveDraggedNodePayload] = useState<DraggedNodePayload | null>(null);
@@ -2267,6 +2315,12 @@ function ConfiguredWorkspace({
     api.chatData.getWorkspaceKnowledgeThread,
     ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
   );
+  const plannerChatThread = useQuery(
+    api.chatData.getChatThread,
+    ownerKey && isOwnerKeyValid && selectedPageId
+      ? { ownerKey, pageId: selectedPageId }
+      : SKIP,
+  );
   const pageTree = useQuery(
     api.workspace.getPageTree,
     ownerKey && isOwnerKeyValid && selectedPageId
@@ -2283,6 +2337,7 @@ function ConfiguredWorkspace({
   const ensureTaskPageSidebarSection = useMutation(
     api.workspace.ensureTaskPageSidebarSection,
   );
+  const ensurePlannerPageSections = useMutation(api.planner.ensurePlannerPageSections);
   const renamePage = useMutation(api.workspace.renamePage);
   const archivePage = useMutation(api.workspace.archivePage);
   const deletePageForever = useMutation(api.workspace.deletePageForever);
@@ -2298,6 +2353,13 @@ function ConfiguredWorkspace({
   const setNodeTreeArchived = useMutation(api.workspace.setNodeTreeArchived);
   const rewriteModelSection = useAction(api.chat.rewriteModelSection);
   const generateJournalFeedback = useAction(api.chat.generateJournalFeedback);
+  const runPlannerChat = useAction(api.chat.runPlannerChat);
+  const applyApprovedPlannerPlan = useMutation(api.chatData.applyApprovedPlannerPlan);
+  const setPlannerStartDate = useMutation(api.planner.setPlannerStartDate);
+  const appendPlannerDay = useMutation(api.planner.appendPlannerDay);
+  const addRandomPlannerTask = useMutation(api.planner.addRandomPlannerTask);
+  const resolveNextPlannerTask = useMutation(api.planner.resolveNextPlannerTask);
+  const completePlannerTask = useMutation(api.planner.completePlannerTask);
   const findNodesText = useAction(api.ai.findNodesText);
   const searchNodes = useAction(api.ai.searchNodes);
   const chatWithWorkspace = useAction(api.ai.chatWithWorkspace);
@@ -2309,6 +2371,7 @@ function ConfiguredWorkspace({
   const hasResolvedInitialPageSelection = useRef(false);
   const hasRequestedSidebarPage = useRef(false);
   const hasRequestedTaskSidebarSection = useRef(new Set<string>());
+  const hasRequestedPlannerSections = useRef(new Set<string>());
   const textSelectionGestureRef = useRef<{
     anchorNodeId: string;
     lastNodeId: string;
@@ -2408,6 +2471,14 @@ function ConfiguredWorkspace({
   const selectedPage = activePageTree?.page ?? null;
   const pageMeta = getPageMeta(selectedPage);
   const isPageArchived = selectedPage?.archived ?? false;
+  const plannerStartDate =
+    selectedPage &&
+    selectedPage.sourceMeta &&
+    typeof selectedPage.sourceMeta === "object" &&
+    typeof (selectedPage.sourceMeta as Record<string, unknown>).plannerStartDate === "number"
+      ? ((selectedPage.sourceMeta as Record<string, unknown>).plannerStartDate as number)
+      : null;
+  const plannerChatMessages = plannerChatThread?.messages ?? [];
   const pageTitleEditorId = selectedPage ? getPageTitleEditorId(selectedPage._id) : null;
   const pageTitleTarget = useMemo(
     () =>
@@ -2452,6 +2523,8 @@ function ConfiguredWorkspace({
   const modelSection = findSectionNode(tree, "model");
   const recentExamplesSection = findSectionNode(tree, "recentExamples");
   const taskSidebarSection = findSectionNode(tree, "taskSidebar");
+  const plannerSidebarSection = findSectionNode(tree, "plannerSidebar");
+  const plannerTemplateSection = findSectionNode(tree, "plannerTemplate");
   const journalThoughtsSection = findSectionNode(tree, "journalThoughts");
   const journalFeedbackSection = findSectionNode(tree, "journalFeedback");
   const scratchpadLiveSection = findSectionNode(tree, "scratchpadLive");
@@ -2502,6 +2575,9 @@ function ConfiguredWorkspace({
     setActiveAiPromptEditor(null);
     setModelPromptNote("");
     setJournalFeedbackPromptNote("");
+    setPlannerStatus("");
+    setPlannerChatDraft("");
+    setPlannerChatError("");
   }, [selectedPageId]);
 
   const genericRoots =
@@ -2509,6 +2585,13 @@ function ConfiguredWorkspace({
       ? collectChildren(
           tree,
           new Set([taskSidebarSection?._id].filter(Boolean) as string[]),
+        )
+      : pageMeta.pageType === "planner"
+      ? collectChildren(
+          tree,
+          new Set(
+            [plannerSidebarSection?._id, plannerTemplateSection?._id].filter(Boolean) as string[],
+          ),
         )
       : pageMeta.pageType === "model"
       ? collectChildren(
@@ -2534,6 +2617,9 @@ function ConfiguredWorkspace({
   const taskVisibleRoots = [taskSidebarSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
+  const plannerVisibleRoots = [plannerTemplateSection].filter(
+    (node): node is TreeNode => Boolean(node),
+  );
   const modelVisibleRoots = [modelSection, recentExamplesSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
@@ -2546,6 +2632,8 @@ function ConfiguredWorkspace({
   const pageVisibleRows =
     pageMeta.pageType === "task"
       ? flattenTreeNodes([...genericRoots, ...taskVisibleRoots], collapsedNodeIds)
+      : pageMeta.pageType === "planner"
+      ? flattenTreeNodes([...genericRoots, ...plannerVisibleRoots], collapsedNodeIds)
       : pageMeta.pageType === "model"
       ? flattenTreeNodes([...modelVisibleRoots, ...genericRoots], collapsedNodeIds)
       : pageMeta.pageType === "journal"
@@ -2816,7 +2904,12 @@ function ConfiguredWorkspace({
     }
   }, [insertOutlineClipboardNodes, selectSingleNode, selectedNodeIds, visibleNodeOrder, workspaceNodeMap]);
   const canImportScreenshotWithoutSelection =
-    (pageMeta.pageType === "default" || pageMeta.pageType === "note" || pageMeta.pageType === "task") &&
+    (
+      pageMeta.pageType === "default" ||
+      pageMeta.pageType === "note" ||
+      pageMeta.pageType === "task" ||
+      pageMeta.pageType === "planner"
+    ) &&
     selectedPageId !== null;
   const handleImportScreenshotNodes = useCallback(async (nodes: ScreenshotImportNode[]) => {
     const outlineNodes: OutlineClipboardNode[] = nodes.map((node) => ({
@@ -3215,6 +3308,38 @@ function ConfiguredWorkspace({
   ]);
 
   useEffect(() => {
+    if (!ownerKey || !isOwnerKeyValid || !selectedPage || pageMeta.pageType !== "planner") {
+      return;
+    }
+
+    if (plannerSidebarSection && plannerTemplateSection) {
+      hasRequestedPlannerSections.current.delete(selectedPage._id as string);
+      return;
+    }
+
+    const pageId = selectedPage._id as string;
+    if (hasRequestedPlannerSections.current.has(pageId)) {
+      return;
+    }
+
+    hasRequestedPlannerSections.current.add(pageId);
+    void ensurePlannerPageSections({
+      ownerKey,
+      pageId: selectedPage._id,
+    }).catch(() => {
+      hasRequestedPlannerSections.current.delete(pageId);
+    });
+  }, [
+    ensurePlannerPageSections,
+    isOwnerKeyValid,
+    ownerKey,
+    pageMeta.pageType,
+    plannerSidebarSection,
+    plannerTemplateSection,
+    selectedPage,
+  ]);
+
+  useEffect(() => {
     if (!isSidebarQueryLoading) {
       setShowSidebarDiagnostics(false);
       return;
@@ -3457,6 +3582,32 @@ function ConfiguredWorkspace({
     }
   }, [clearNodeSelection, createPage, ownerKey]);
 
+  const handleCreatePlannerPage = useCallback(async () => {
+    setIsCreatingPlannerPage(true);
+    try {
+      const title = "Untitled Planner";
+      const pageId = await createPage({
+        ownerKey,
+        title,
+        sidebarSection: "Tasks",
+        pageType: "planner",
+      });
+      setSelectedPageId(pageId);
+      setLocationPageId(pageId);
+      writePageIdToHistory(pageId, "push", title);
+      setPendingRevealNodeId(null);
+      setPaletteOpen(false);
+      setPaletteQuery("");
+      setPaletteHighlightIndex(0);
+      setPaletteMode("pages");
+      setTextSearchResults([]);
+      setNodeSearchResults([]);
+      clearNodeSelection();
+    } finally {
+      setIsCreatingPlannerPage(false);
+    }
+  }, [clearNodeSelection, createPage, ownerKey]);
+
   const handleSaveTaskSchedule = useCallback(async ({
     dueAt,
     dueEndAt,
@@ -3538,6 +3689,15 @@ function ConfiguredWorkspace({
           onSelect: () => void handleCreatePage(section),
         } satisfies ActionPaletteResult;
       }),
+      {
+        key: "new-planner",
+        title: "New Planner",
+        subtitle: "Create a new planner page with a sidebar and weekly template.",
+        keywords: ["new", "create", "planner", "plan", "page"],
+        actionLabel: isCreatingPlannerPage ? "Creating…" : "Create",
+        disabled: isCreatingPlannerPage,
+        onSelect: () => void handleCreatePlannerPage(),
+      },
       {
         key: "find-replace",
         title: "Find & Replace",
@@ -3663,9 +3823,11 @@ function ConfiguredWorkspace({
     embeddingProgressLabel,
     embeddingRebuildStatus,
     handleCreatePage,
+    handleCreatePlannerPage,
     handleRebuildEmbeddings,
     handleResetLocalState,
     isCreatingPage,
+    isCreatingPlannerPage,
     isRebuildingEmbeddings,
     canImportScreenshot,
     openTaskSchedulePalette,
@@ -4287,6 +4449,7 @@ function ConfiguredWorkspace({
     }
 
     const historyEntries: Array<Extract<HistoryEntry, { type: "update_node" }>> = [];
+    let completedPlannerLinkedTask = false;
 
     for (const nodeId of orderedSelectedNodeIds) {
       const node = workspaceNodeMap.get(nodeId);
@@ -4296,6 +4459,16 @@ function ConfiguredWorkspace({
 
       const page = pagesById.get(node.pageId as string);
       if (page?.archived) {
+        continue;
+      }
+
+      if (isPlannerLinkedTask(node)) {
+        await completePlannerTask({
+          ownerKey,
+          plannerNodeId: node._id as Id<"nodes">,
+          completionMode: recurringCompletionMode,
+        });
+        completedPlannerLinkedTask = true;
         continue;
       }
 
@@ -4345,6 +4518,9 @@ function ConfiguredWorkspace({
     }
 
     if (historyEntries.length === 0) {
+      if (completedPlannerLinkedTask) {
+        clearNodeSelection();
+      }
       return;
     }
 
@@ -4360,7 +4536,7 @@ function ConfiguredWorkspace({
       focusAfterUndoId: historyEntries[0]!.focusEditorId,
       focusAfterRedoId: historyEntries[historyEntries.length - 1]!.focusEditorId,
     });
-  }, [history, ownerKey, pagesById, selectedNodeIds, updateNode, visibleNodeOrder, workspaceNodeMap]);
+  }, [clearNodeSelection, completePlannerTask, history, ownerKey, pagesById, recurringCompletionMode, selectedNodeIds, updateNode, visibleNodeOrder, workspaceNodeMap]);
 
   const toggleHighlightedNodeCompletion = useCallback(async () => {
     if (selectedNodeIds.size === 0) {
@@ -4384,6 +4560,16 @@ function ConfiguredWorkspace({
 
       const page = pagesById.get(node.pageId as string);
       if (page?.archived) {
+        continue;
+      }
+
+      if (isPlannerLinkedTask(node)) {
+        await completePlannerTask({
+          ownerKey,
+          plannerNodeId: node._id as Id<"nodes">,
+          completionMode: recurringCompletionMode,
+        });
+        clearNodeSelection();
         continue;
       }
 
@@ -4450,7 +4636,7 @@ function ConfiguredWorkspace({
       focusAfterUndoId: historyEntries[0]!.focusEditorId,
       focusAfterRedoId: historyEntries[historyEntries.length - 1]!.focusEditorId,
     });
-  }, [history, ownerKey, pagesById, recurringCompletionMode, selectSingleNode, selectedNodeIds, updateNode, visibleNodeOrder, workspaceNodeMap]);
+  }, [clearNodeSelection, completePlannerTask, history, ownerKey, pagesById, recurringCompletionMode, selectSingleNode, selectedNodeIds, updateNode, visibleNodeOrder, workspaceNodeMap]);
 
   const deleteHighlightedNodes = useCallback(async () => {
     if (selectedNodeIds.size === 0) {
@@ -4504,6 +4690,15 @@ function ConfiguredWorkspace({
     const historyEntries: Array<Extract<HistoryEntry, { type: "archive_node_tree" }>> = [];
 
     for (const node of deletableNodes) {
+      if (isPlannerLinkedTask(node)) {
+        await completePlannerTask({
+          ownerKey,
+          plannerNodeId: node._id as Id<"nodes">,
+          completionMode: recurringCompletionMode,
+        });
+        continue;
+      }
+
       const context = findNodeContext(sidebarNodes, tree, node._id as string);
       const focusAfterRedoId =
         context?.previousSibling?._id
@@ -4530,6 +4725,10 @@ function ConfiguredWorkspace({
 
     clearNodeSelection();
 
+    if (historyEntries.length === 0) {
+      return;
+    }
+
     if (historyEntries.length === 1) {
       history.pushUndoEntry(historyEntries[0]!);
       return;
@@ -4553,6 +4752,8 @@ function ConfiguredWorkspace({
     tree,
     visibleNodeOrder,
     workspaceNodeMap,
+    completePlannerTask,
+    recurringCompletionMode,
   ]);
 
   const openInsertedComposer = useCallback(
@@ -5435,6 +5636,193 @@ function ConfiguredWorkspace({
     }
   };
 
+  const focusPlannerNode = useCallback((nodeId: string) => {
+    setPendingRevealNodeId(nodeId);
+    setSelectedNodeIds(new Set([nodeId]));
+  }, []);
+
+  const promptForPlannerStartDate = useCallback(async () => {
+    if (!selectedPageId || pageMeta.pageType !== "planner" || isPageArchived) {
+      return null;
+    }
+
+    const defaultValue =
+      plannerStartDate !== null
+        ? timestampToDateInputValue(plannerStartDate)
+        : timestampToDateInputValue(Date.now());
+    const value = window.prompt("Planner start date (YYYY-MM-DD)", defaultValue);
+    if (value === null) {
+      return null;
+    }
+
+    const trimmedValue = value.trim();
+    const [yearText, monthText, dayText] = trimmedValue.split("-");
+    const year = Number(yearText);
+    const month = Number(monthText);
+    const day = Number(dayText);
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+      setPlannerStatus("Enter a valid date like 2026-04-03.");
+      return null;
+    }
+
+    const nextTimestamp = new Date(year, month - 1, day, 12, 0, 0, 0).getTime();
+    await setPlannerStartDate({
+      ownerKey,
+      pageId: selectedPageId,
+      startDate: nextTimestamp,
+    });
+    setPlannerStatus(`Planner now starts on ${formatPlannerStartDateLabel(nextTimestamp).replace("Starts ", "")}.`);
+    return nextTimestamp;
+  }, [isPageArchived, ownerKey, pageMeta.pageType, plannerStartDate, selectedPageId, setPlannerStartDate]);
+
+  const handleAppendPlannerDay = useCallback(async () => {
+    if (!selectedPageId || pageMeta.pageType !== "planner" || isPageArchived) {
+      return;
+    }
+
+    setIsPlannerAppendingDay(true);
+    setPlannerStatus("");
+    try {
+      if (plannerStartDate === null) {
+        const createdStartDate = await promptForPlannerStartDate();
+        if (createdStartDate === null) {
+          return;
+        }
+      }
+
+      const result = await appendPlannerDay({
+        ownerKey,
+        pageId: selectedPageId,
+      });
+      if (result?.dayNodeId) {
+        focusPlannerNode(result.dayNodeId as string);
+      }
+      setPlannerStatus("Added the next planner day.");
+    } catch (error) {
+      setPlannerStatus(
+        error instanceof Error ? error.message : "Could not add the next planner day.",
+      );
+    } finally {
+      setIsPlannerAppendingDay(false);
+    }
+  }, [
+    appendPlannerDay,
+    focusPlannerNode,
+    isPageArchived,
+    ownerKey,
+    pageMeta.pageType,
+    plannerStartDate,
+    promptForPlannerStartDate,
+    selectedPageId,
+  ]);
+
+  const handleAddRandomPlannerTask = useCallback(async () => {
+    if (!selectedPageId || pageMeta.pageType !== "planner" || isPageArchived) {
+      return;
+    }
+
+    setIsPlannerAddingRandomTask(true);
+    setPlannerStatus("");
+    try {
+      const result = await addRandomPlannerTask({
+        ownerKey,
+        pageId: selectedPageId,
+        seed: Date.now(),
+      });
+      if (result?.plannerNodeId) {
+        focusPlannerNode(result.plannerNodeId as string);
+      }
+      setPlannerStatus("Added a random open task to the current day.");
+    } catch (error) {
+      setPlannerStatus(
+        error instanceof Error ? error.message : "Could not add a random task right now.",
+      );
+    } finally {
+      setIsPlannerAddingRandomTask(false);
+    }
+  }, [addRandomPlannerTask, focusPlannerNode, isPageArchived, ownerKey, pageMeta.pageType, selectedPageId]);
+
+  const handleResolveNextPlannerTask = useCallback(async () => {
+    if (!selectedPageId || pageMeta.pageType !== "planner" || isPageArchived) {
+      return;
+    }
+
+    setIsPlannerResolvingNextTask(true);
+    setPlannerStatus("");
+    try {
+      const result = await resolveNextPlannerTask({
+        ownerKey,
+        pageId: selectedPageId,
+      });
+      if (result?.plannerNodeId) {
+        focusPlannerNode(result.plannerNodeId as string);
+      }
+      setPlannerStatus(
+        result?.created
+          ? "Pulled a new task into today and focused it."
+          : "Focused the next task for today.",
+      );
+    } catch (error) {
+      setPlannerStatus(
+        error instanceof Error ? error.message : "Could not choose the next task right now.",
+      );
+    } finally {
+      setIsPlannerResolvingNextTask(false);
+    }
+  }, [focusPlannerNode, isPageArchived, ownerKey, pageMeta.pageType, resolveNextPlannerTask, selectedPageId]);
+
+  const handleSubmitPlannerChat = useCallback(async () => {
+    if (
+      !selectedPageId ||
+      pageMeta.pageType !== "planner" ||
+      isPageArchived ||
+      plannerChatDraft.trim().length === 0
+    ) {
+      return;
+    }
+
+    setIsPlannerChatLoading(true);
+    setPlannerChatError("");
+    try {
+      await runPlannerChat({
+        ownerKey,
+        pageId: selectedPageId,
+        prompt: plannerChatDraft.trim(),
+        threadId: plannerChatThread?.thread?._id,
+      });
+      setPlannerChatDraft("");
+    } catch (error) {
+      setPlannerChatError(
+        error instanceof Error ? error.message : "Planner AI could not respond right now.",
+      );
+    } finally {
+      setIsPlannerChatLoading(false);
+    }
+  }, [
+    isPageArchived,
+    ownerKey,
+    pageMeta.pageType,
+    plannerChatDraft,
+    plannerChatThread?.thread?._id,
+    runPlannerChat,
+    selectedPageId,
+  ]);
+
+  const handleApplyPlannerPlan = useCallback(async (messageId: Id<"chatMessages">) => {
+    try {
+      await applyApprovedPlannerPlan({
+        ownerKey,
+        messageId,
+        completionMode: recurringCompletionMode,
+      });
+      setPlannerChatError("");
+    } catch (error) {
+      setPlannerChatError(
+        error instanceof Error ? error.message : "Could not apply the planner changes.",
+      );
+    }
+  }, [applyApprovedPlannerPlan, ownerKey, recurringCompletionMode]);
+
   const handlePaletteKeyDown = (event: TextareaKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
@@ -6183,6 +6571,196 @@ function ConfiguredWorkspace({
                         </div>
                       )}
                     </aside>
+                  </div>
+                ) : pageMeta.pageType === "planner" ? (
+                  <div className="space-y-8">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void promptForPlannerStartDate()}
+                        disabled={isPageArchived}
+                        className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {formatPlannerStartDateLabel(plannerStartDate)}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleAppendPlannerDay()}
+                        disabled={isPlannerAppendingDay || isPageArchived}
+                        className="border border-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isPlannerAppendingDay ? "Adding…" : "Add Day"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleAddRandomPlannerTask()}
+                        disabled={isPlannerAddingRandomTask || isPageArchived}
+                        className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isPlannerAddingRandomTask ? "Picking…" : "Add Random Task"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleResolveNextPlannerTask()}
+                        disabled={isPlannerResolvingNextTask || isPageArchived}
+                        className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isPlannerResolvingNextTask ? "Finding…" : "Next Task"}
+                      </button>
+                    </div>
+                    {plannerStatus ? (
+                      <p className="text-sm text-[var(--workspace-text-subtle)]">{plannerStatus}</p>
+                    ) : null}
+                    <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start">
+                      <div className="min-w-0 space-y-1">
+                        <OutlineNodeList
+                          nodes={genericRoots}
+                          ownerKey={ownerKey}
+                          pageId={selectedPage._id}
+                          nodeBacklinkCounts={pageNodeBacklinkCounts}
+                          nodeMap={nodeMap}
+                          createNodesBatch={createNodesBatch}
+                          insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+                          updateNode={updateNode}
+                          moveNode={moveNode}
+                          splitNode={splitNode}
+                          replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                          setNodeTreeArchived={setNodeTreeArchived}
+                          isPageReadOnly={isPageArchived}
+                          collapsedNodeIds={collapsedNodeIds}
+                          selectedNodeIds={selectedNodeIds}
+                          onToggleNodeCollapsed={toggleNodeCollapsed}
+                          onSelectSingleNode={selectSingleNode}
+                          onSelectNodeRange={selectNodeRange}
+                          pendingInsertedComposer={pendingInsertedComposer}
+                          onOpenInsertedComposer={openInsertedComposer}
+                          onClearInsertedComposer={clearInsertedComposer}
+                          onBeginTextEditing={clearNodeSelection}
+                          activeDraggedNodeId={activeDraggedNodeId}
+                          activeDraggedNodePayload={activeDraggedNodePayload}
+                          onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                          onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                          onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                          buildDraggedNodePayload={buildDraggedNodePayload}
+                          onDropDraggedNodes={dropDraggedNodes}
+                          onSelectionStart={beginNodeSelection}
+                          onSelectionExtend={extendNodeSelection}
+                          availableTags={sortedTags}
+                          pagesByTitle={pagesByTitle}
+                          pagesById={pagesById}
+                          onOpenPage={handleSelectPage}
+                          onOpenNode={handleOpenLinkedNode}
+                          onOpenTag={openFindPaletteForQuery}
+                          onOpenFindQuery={openFindPaletteForQuery}
+                          recurringCompletionMode={recurringCompletionMode}
+                        />
+                      </div>
+                      <aside className="min-w-0 border-t border-[var(--workspace-border-subtle)] pt-6 lg:sticky lg:top-6 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+                        {plannerSidebarSection ? (
+                          <PageSection
+                            title="Sidebar"
+                            sectionNode={plannerSidebarSection}
+                            ownerKey={ownerKey}
+                            pageId={selectedPage._id}
+                            nodeBacklinkCounts={pageNodeBacklinkCounts}
+                            nodeMap={nodeMap}
+                            createNodesBatch={createNodesBatch}
+                            insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+                            updateNode={updateNode}
+                            moveNode={moveNode}
+                            splitNode={splitNode}
+                            replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                            setNodeTreeArchived={setNodeTreeArchived}
+                            isPageReadOnly={isPageArchived}
+                            collapsedNodeIds={collapsedNodeIds}
+                            selectedNodeIds={selectedNodeIds}
+                            onToggleNodeCollapsed={toggleNodeCollapsed}
+                            onSelectSingleNode={selectSingleNode}
+                            onSelectNodeRange={selectNodeRange}
+                            pendingInsertedComposer={pendingInsertedComposer}
+                            onOpenInsertedComposer={openInsertedComposer}
+                            onClearInsertedComposer={clearInsertedComposer}
+                            onBeginTextEditing={clearNodeSelection}
+                            activeDraggedNodeId={activeDraggedNodeId}
+                            activeDraggedNodePayload={activeDraggedNodePayload}
+                            onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                            onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                            onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                            buildDraggedNodePayload={buildDraggedNodePayload}
+                            onDropDraggedNodes={dropDraggedNodes}
+                            onSelectionStart={beginNodeSelection}
+                            onSelectionExtend={extendNodeSelection}
+                            availableTags={sortedTags}
+                            pagesByTitle={pagesByTitle}
+                            pagesById={pagesById}
+                            onOpenPage={handleSelectPage}
+                            onOpenNode={handleOpenLinkedNode}
+                            onOpenTag={openFindPaletteForQuery}
+                            onOpenFindQuery={openFindPaletteForQuery}
+                            recurringCompletionMode={recurringCompletionMode}
+                            compact
+                            showHeader={false}
+                          />
+                        ) : (
+                          <div className="text-xs uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
+                            Preparing planner sidebar…
+                          </div>
+                        )}
+                      </aside>
+                    </div>
+                    <PageSection
+                      title="Template"
+                      sectionNode={plannerTemplateSection}
+                      ownerKey={ownerKey}
+                      pageId={selectedPage._id}
+                      nodeBacklinkCounts={pageNodeBacklinkCounts}
+                      nodeMap={nodeMap}
+                      createNodesBatch={createNodesBatch}
+                      insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+                      updateNode={updateNode}
+                      moveNode={moveNode}
+                      splitNode={splitNode}
+                      replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                      setNodeTreeArchived={setNodeTreeArchived}
+                      isPageReadOnly={isPageArchived}
+                      collapsedNodeIds={collapsedNodeIds}
+                      selectedNodeIds={selectedNodeIds}
+                      onToggleNodeCollapsed={toggleNodeCollapsed}
+                      onSelectSingleNode={selectSingleNode}
+                      onSelectNodeRange={selectNodeRange}
+                      pendingInsertedComposer={pendingInsertedComposer}
+                      onOpenInsertedComposer={openInsertedComposer}
+                      onClearInsertedComposer={clearInsertedComposer}
+                      onBeginTextEditing={clearNodeSelection}
+                      activeDraggedNodeId={activeDraggedNodeId}
+                      activeDraggedNodePayload={activeDraggedNodePayload}
+                      onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                      onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                      onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                      buildDraggedNodePayload={buildDraggedNodePayload}
+                      onDropDraggedNodes={dropDraggedNodes}
+                      onSelectionStart={beginNodeSelection}
+                      onSelectionExtend={extendNodeSelection}
+                      availableTags={sortedTags}
+                      pagesByTitle={pagesByTitle}
+                      pagesById={pagesById}
+                      onOpenPage={handleSelectPage}
+                      onOpenNode={handleOpenLinkedNode}
+                      onOpenTag={openFindPaletteForQuery}
+                      onOpenFindQuery={openFindPaletteForQuery}
+                      recurringCompletionMode={recurringCompletionMode}
+                      depthOffset={sectionDepthOffset}
+                    />
+                    <PlannerAiChatPanel
+                      draft={plannerChatDraft}
+                      onDraftChange={setPlannerChatDraft}
+                      onSubmit={() => void handleSubmitPlannerChat()}
+                      messages={plannerChatMessages}
+                      isLoading={isPlannerChatLoading}
+                      error={plannerChatError}
+                      onClearError={() => setPlannerChatError("")}
+                      onApplyPlan={(messageId) => void handleApplyPlannerPlan(messageId)}
+                    />
                   </div>
                 ) : pageMeta.pageType === "model" ? (
                   <div className="divide-y divide-[var(--workspace-border-subtle)]">
@@ -8332,6 +8910,180 @@ function WorkspaceAiChatPanel({
   );
 }
 
+function PlannerAiChatPanel({
+  draft,
+  onDraftChange,
+  onSubmit,
+  messages,
+  isLoading,
+  error,
+  onClearError,
+  onApplyPlan,
+}: {
+  draft: string;
+  onDraftChange: (value: string) => void;
+  onSubmit: () => void;
+  messages: Doc<"chatMessages">[];
+  isLoading: boolean;
+  error: string;
+  onClearError: () => void;
+  onApplyPlan: (messageId: Id<"chatMessages">) => void;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const historyRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    autoResizeTextarea(textareaRef.current);
+  }, [draft]);
+
+  useEffect(() => {
+    const container = historyRef.current;
+    if (!container) {
+      return;
+    }
+
+    container.scrollTop = container.scrollHeight;
+  }, [messages, error, isLoading]);
+
+  return (
+    <div className="border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)]">
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--workspace-border-subtle)] px-5 py-3">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+            Planner AI
+          </p>
+          <p className="text-[11px] text-[var(--workspace-text-faint)]">
+            Preview planner changes before applying them.
+          </p>
+        </div>
+      </div>
+      <div
+        ref={historyRef}
+        className="max-h-[22rem] min-h-[10rem] overflow-y-auto border-b border-[var(--workspace-border-subtle)] px-5 py-4"
+      >
+        <div className="space-y-4">
+          {messages.length === 0 ? (
+            <p className="text-sm text-[var(--workspace-text-subtle)]">
+              Ask the planner AI to adjust today’s plan, finish a task, or clean up planner-only items.
+            </p>
+          ) : null}
+          {messages.map((message) => {
+            const isUser = message.role === "user";
+            const parsedPlan =
+              !isUser && message.proposedPlan
+                ? plannerChatPlanSchema.safeParse(message.proposedPlan)
+                : null;
+            return (
+              <div
+                key={message._id}
+                className={clsx("flex", isUser ? "justify-end" : "justify-start")}
+              >
+                <div
+                  className={clsx(
+                    "max-w-3xl border px-4 py-3",
+                    isUser
+                      ? "border-[var(--workspace-brand)] bg-[color-mix(in_srgb,var(--workspace-brand)_14%,transparent)]"
+                      : "border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface)]",
+                  )}
+                >
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                    {isUser ? "You" : "Planner AI"}
+                  </p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--workspace-text)]">
+                    {message.text}
+                  </p>
+                  {!isUser && parsedPlan?.success ? (
+                    <div className="mt-3 space-y-2 border-t border-[var(--workspace-border-subtle)] pt-3">
+                      {parsedPlan.data.preview.map((line, index) => (
+                        <p
+                          key={`${message._id}:preview:${index}`}
+                          className="text-sm text-[var(--workspace-text-subtle)]"
+                        >
+                          {line}
+                        </p>
+                      ))}
+                      {message.status === "pending_approval" ? (
+                        <div className="pt-1">
+                          <button
+                            type="button"
+                            onClick={() => onApplyPlan(message._id)}
+                            className="border border-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
+                          >
+                            Apply Changes
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                          {message.status === "applied" ? "Applied" : "Ready"}
+                        </p>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            );
+          })}
+          {isLoading ? (
+            <div className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface)] px-4 py-3 text-sm text-[var(--workspace-text-subtle)]">
+              Planner AI is thinking…
+            </div>
+          ) : null}
+          {error ? (
+            <div className="border border-[var(--workspace-danger)]/40 bg-[color-mix(in_srgb,var(--workspace-danger)_10%,transparent)] px-4 py-3 text-sm text-[var(--workspace-text)]">
+              <div className="flex items-start justify-between gap-3">
+                <p className="whitespace-pre-wrap leading-6">{error}</p>
+                <button
+                  type="button"
+                  onClick={onClearError}
+                  className="border border-[var(--workspace-border-control)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <div className="flex items-end gap-3 px-5 py-4">
+        <textarea
+          ref={textareaRef}
+          value={draft}
+          onChange={(event) => {
+            if (error) {
+              onClearError();
+            }
+            onDraftChange(event.target.value);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              onSubmit();
+            }
+          }}
+          rows={1}
+          placeholder="Plan with AI…"
+          className="min-h-[2.75rem] flex-1 resize-none overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface)] px-3 py-2 text-[15px] leading-6 outline-none"
+        />
+        <button
+          type="button"
+          onClick={onSubmit}
+          disabled={isLoading || draft.trim().length === 0}
+          className={clsx(
+            "border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition",
+            isLoading
+              ? "cursor-wait opacity-60"
+              : draft.trim().length === 0
+                ? "cursor-not-allowed opacity-60"
+                : "hover:bg-[var(--workspace-brand-hover)]",
+          )}
+        >
+          {isLoading ? "Thinking…" : "Plan with AI"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function OutlineNodeEditor({
   node,
   siblings,
@@ -8434,6 +9186,7 @@ function OutlineNodeEditor({
   mobileIndentStep?: number;
 }) {
   const history = useWorkspaceHistory();
+  const completePlannerTaskMutation = useMutation(api.planner.completePlannerTask);
   const [draft, setDraft] = useState(node.text);
   const [isFocused, setIsFocused] = useState(false);
   const [caretPosition, setCaretPosition] = useState<number | null>(null);
@@ -9051,6 +9804,20 @@ function OutlineNodeEditor({
       taskStatus: (node.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
     });
     if (parsed.shouldDelete) {
+      if (isPlannerLinkedTask(node)) {
+        await completePlannerTaskMutation({
+          ownerKey,
+          plannerNodeId: node._id as Id<"nodes">,
+          completionMode: recurringCompletionMode,
+        });
+        history.resetTrackedValue(editorId, editorTarget);
+        return {
+          deleted: true,
+          updateEntry: null,
+          parsed: null,
+        };
+      }
+
       await setNodeTreeArchived({
         ownerKey,
         nodeId: node._id as Id<"nodes">,
@@ -9127,6 +9894,16 @@ function OutlineNodeEditor({
 
     const saveResult = await commitNodeText(draft);
     if (saveResult.deleted || !saveResult.parsed) {
+      return;
+    }
+
+    if (isPlannerLinkedTask(node)) {
+      await completePlannerTaskMutation({
+        ownerKey,
+        plannerNodeId: node._id as Id<"nodes">,
+        completionMode: recurringCompletionMode,
+      });
+      history.resetTrackedValue(editorId, editorTarget);
       return;
     }
 
@@ -9721,6 +10498,15 @@ function OutlineNodeEditor({
 
     if (event.key === "Backspace" && draft.length === 0 && !isDisabled) {
       event.preventDefault();
+      if (isPlannerLinkedTask(node)) {
+        await completePlannerTaskMutation({
+          ownerKey,
+          plannerNodeId: node._id as Id<"nodes">,
+          completionMode: recurringCompletionMode,
+        });
+        history.resetTrackedValue(editorId, editorTarget);
+        return;
+      }
       await setNodeTreeArchived({
         ownerKey,
         nodeId: node._id as Id<"nodes">,

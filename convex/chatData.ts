@@ -10,6 +10,11 @@ import {
   syncLinksForNode,
 } from "./lib/workspace";
 import { chatPlanSchema, type ChatOperation } from "../lib/domain/chat";
+import {
+  plannerChatPlanSchema,
+  type PlannerChatOperation,
+} from "../lib/domain/planner";
+import { completePlannerLinkedTask } from "./lib/planner";
 
 const WORKSPACE_KNOWLEDGE_SCOPE = "workspaceKnowledge";
 
@@ -488,6 +493,62 @@ async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
   }
 }
 
+async function applyPlannerOperation(
+  ctx: MutationCtx,
+  operation: PlannerChatOperation,
+  completionMode: "dueDate" | "today",
+) {
+  switch (operation.type) {
+    case "complete_planner_task": {
+      await completePlannerLinkedTask(ctx, {
+        plannerNodeId: operation.nodeId as Id<"nodes">,
+        completionMode,
+      });
+      return;
+    }
+    case "delete_planner_node": {
+      await deleteNodeTree(ctx.db, operation.nodeId as Id<"nodes">);
+      return;
+    }
+    case "update_planner_node": {
+      await ctx.db.patch(operation.nodeId as Id<"nodes">, {
+        text: operation.text ?? undefined,
+        updatedAt: Date.now(),
+      });
+      const updated = await ctx.db.get(operation.nodeId as Id<"nodes">);
+      if (updated) {
+        await syncLinksForNode(ctx.db, updated);
+        await enqueueNodeAiWork(ctx, updated._id);
+      }
+      return;
+    }
+    case "move_planner_node": {
+      const node = await ctx.db.get(operation.nodeId as Id<"nodes">);
+      if (!node) {
+        return;
+      }
+
+      const parentNodeId =
+        operation.parentNodeId === undefined
+          ? node.parentNodeId
+          : ((operation.parentNodeId as Id<"nodes"> | null) ?? null);
+      const afterNodeId = (operation.afterNodeId as Id<"nodes"> | null | undefined) ?? null;
+      const position = await computeNodePosition(
+        ctx.db,
+        node.pageId,
+        parentNodeId,
+        afterNodeId,
+      );
+      await ctx.db.patch(node._id, {
+        parentNodeId,
+        position,
+        updatedAt: Date.now(),
+      });
+      return;
+    }
+  }
+}
+
 export const applyApprovedChatPlan = mutation({
   args: {
     ownerKey: v.string(),
@@ -507,6 +568,40 @@ export const applyApprovedChatPlan = mutation({
 
     for (const operation of parsedPlan.data.operations) {
       await applyOperation(ctx, operation);
+    }
+
+    await ctx.db.patch(args.messageId, {
+      status: "applied",
+      appliedAt: Date.now(),
+    });
+    await ctx.db.patch(message.threadId, {
+      updatedAt: Date.now(),
+    });
+
+    return parsedPlan.data;
+  },
+});
+
+export const applyApprovedPlannerPlan = mutation({
+  args: {
+    ownerKey: v.string(),
+    messageId: v.id("chatMessages"),
+    completionMode: v.union(v.literal("dueDate"), v.literal("today")),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const message = await ctx.db.get(args.messageId);
+    if (!message || message.role !== "assistant" || !message.proposedPlan) {
+      throw new Error("No proposed planner plan found.");
+    }
+
+    const parsedPlan = plannerChatPlanSchema.safeParse(message.proposedPlan);
+    if (!parsedPlan.success) {
+      throw new Error("Stored planner plan is invalid.");
+    }
+
+    for (const operation of parsedPlan.data.operations) {
+      await applyPlannerOperation(ctx, operation, args.completionMode);
     }
 
     await ctx.db.patch(args.messageId, {

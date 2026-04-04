@@ -15,6 +15,7 @@ import {
   MODEL_REWRITE_SYSTEM_PROMPT,
 } from "../lib/domain/aiPrompts";
 import { chatPlanSchema, type ChatPlan } from "../lib/domain/chat";
+import { plannerChatPlanSchema, type PlannerChatPlan } from "../lib/domain/planner";
 
 type PlannerWorkspace = {
   pages: Array<{ _id: string; title: string }>;
@@ -68,6 +69,8 @@ const getWorkspaceContextRef = internal.workspace.getWorkspaceContext as any;
 const getModelPageContextRef = internal.workspace.getModelPageContext as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const getJournalPageContextRef = internal.workspace.getJournalPageContext as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const getPlannerPageContextRef = internal.workspace.getPlannerPageContext as any;
 const getResolvedLinkedTargetsForNodesRef =
   internal.workspace.getResolvedLinkedTargetsForNodes as any; // eslint-disable-line @typescript-eslint/no-explicit-any
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -277,6 +280,141 @@ export const runChatPlanner = action({
         }
       } catch {
         // Fall back to the heuristic no-op planner.
+      }
+    }
+
+    const messageId: Id<"chatMessages"> = await ctx.runMutation(storeAssistantPlanRef, {
+      threadId,
+      text: plan.rationale,
+      preview: plan.preview,
+      proposedPlan: plan,
+    });
+
+    return {
+      threadId,
+      messageId,
+      plan,
+    };
+  },
+});
+
+export const runPlannerChat = action({
+  args: {
+    ownerKey: v.string(),
+    prompt: v.string(),
+    pageId: v.id("pages"),
+    threadId: v.optional(v.id("chatThreads")),
+  },
+  handler: async (ctx, args): Promise<{
+    threadId: Id<"chatThreads">;
+    messageId: Id<"chatMessages">;
+    plan: PlannerChatPlan;
+  }> => {
+    assertOwnerKey(args.ownerKey);
+
+    const threadId: Id<"chatThreads"> =
+      args.threadId ??
+      (await ctx.runMutation(ensureChatThreadRef, {
+        ownerKey: args.ownerKey,
+        pageId: args.pageId,
+      }));
+
+    await ctx.runMutation(storeUserMessageRef, {
+      threadId,
+      text: args.prompt,
+    });
+
+    const plannerContext = await ctx.runQuery(getPlannerPageContextRef, {
+      pageId: args.pageId,
+    });
+    if (!plannerContext) {
+      throw new Error("Planner page context could not be loaded.");
+    }
+
+    const priorMessages = await ctx.runQuery(getThreadMessagesRef, {
+      threadId,
+    });
+
+    const fallbackPlan: PlannerChatPlan = {
+      summary: "No planner changes proposed.",
+      rationale:
+        "The request was too ambiguous to map to a specific planner item safely, so no edits were proposed.",
+      preview: [
+        "Review the planner page and linked tasks.",
+        "No changes will be made until a concrete planner task is identified.",
+      ],
+      operations: [],
+    };
+
+    let plan = fallbackPlan;
+    const client = getOpenAIClient();
+    if (client) {
+      try {
+        const response = await client.responses.parse({
+          model: process.env.OPENAI_CHAT_MODEL ?? "gpt-5-mini",
+          input: [
+            {
+              role: "system",
+              content:
+                "You plan safe edits for a personal daily planner. Only return operations using real planner node ids that appear in the provided context. Prefer complete_planner_task when the user clearly finished a linked planner task. Use delete_planner_node only for planner-local items. If the request is ambiguous, return zero operations and explain why. All changes require later human approval.",
+            },
+            {
+              role: "user",
+              content: [
+                `Prompt: ${args.prompt}`,
+                "",
+                `Planner page: ${plannerContext.page.title}`,
+                `Current day: ${plannerContext.currentDayTitle ?? "(none)"}`,
+                `Current day node id: ${plannerContext.currentDayId ?? "(none)"}`,
+                "",
+                "Current day lines:",
+                plannerContext.currentDayLines.length > 0
+                  ? plannerContext.currentDayLines
+                      .map(
+                        (line: {
+                          nodeId: string;
+                          text: string;
+                          linkedSourceTaskId: string | null;
+                          status: string | null;
+                        }) =>
+                          `- ${line.nodeId}: ${line.text} [${line.status ?? "n/a"}]${line.linkedSourceTaskId ? ` -> ${line.linkedSourceTaskId}` : ""}`,
+                      )
+                      .join("\n")
+                  : "- none",
+                "",
+                "Open source tasks:",
+                plannerContext.openSourceTasks.length > 0
+                  ? plannerContext.openSourceTasks
+                      .map(
+                        (task: {
+                          nodeId: string;
+                          text: string;
+                          dueAt: number | null;
+                          dueEndAt: number | null;
+                        }) =>
+                          `- ${task.nodeId}: ${task.text} [${task.dueAt ?? "no due"}${task.dueEndAt ? ` -> ${task.dueEndAt}` : ""}]`,
+                      )
+                      .join("\n")
+                  : "- none",
+                "",
+                "Recent conversation:",
+                priorMessages
+                  .slice(-6)
+                  .map((message: { role: string; text: string }) => `${message.role}: ${message.text}`)
+                  .join("\n"),
+              ].join("\n"),
+            },
+          ],
+          text: {
+            format: zodTextFormat(plannerChatPlanSchema, "planner_chat_plan"),
+          },
+        });
+
+        if (response.output_parsed) {
+          plan = response.output_parsed;
+        }
+      } catch {
+        // Fall back to the safe no-op plan.
       }
     }
 

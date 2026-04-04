@@ -93,6 +93,33 @@ test("filterPagesForCommandPalette matches note page type search terms", () => {
   );
 });
 
+test("filterPagesForCommandPalette matches planner page type search terms", () => {
+  const results = filterPagesForCommandPalette(
+    [
+      {
+        _id: "1",
+        title: "Week One",
+        archived: false,
+        position: 1024,
+        searchTerms: ["Planner", "Planners"],
+      },
+      {
+        _id: "2",
+        title: "Daily Journal",
+        archived: false,
+        position: 2048,
+        searchTerms: ["Journal"],
+      },
+    ],
+    "plan",
+  );
+
+  assert.deepEqual(
+    results.map((page) => page._id),
+    ["1"],
+  );
+});
+
 test("filterPagesForCommandPalette prefers most recently updated or created pages", () => {
   const results = filterPagesForCommandPalette(
     [

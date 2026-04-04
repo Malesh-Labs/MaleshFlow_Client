@@ -24,6 +24,15 @@ import {
   syncLinksForNode,
 } from "./lib/workspace";
 import { nodeKindValidator, nullableNodeIdValidator, priorityValidator, recurrenceFrequencyValidator, taskStatusValidator } from "./lib/validators";
+import {
+  buildPlannerChatPromptContext,
+  ensurePlannerSections,
+  getPlannerDayRoots,
+  getPlannerLinkedSourceTaskId,
+  getPlannerStartDate,
+  isPlannerPage,
+  listEligiblePlannerSourceTasks,
+} from "./lib/planner";
 import { replaceLiteralOccurrences } from "../lib/domain/findReplace";
 import { rewriteMatchingPageWikiLinks } from "../lib/domain/links";
 import { extractTagMatches } from "../lib/domain/tags";
@@ -1352,6 +1361,7 @@ export const createPage = mutation({
         v.literal("default"),
         v.literal("note"),
         v.literal("task"),
+        v.literal("planner"),
         v.literal("model"),
         v.literal("journal"),
         v.literal("scratchpad"),
@@ -1458,6 +1468,13 @@ export const createPage = mutation({
         createdAt: now,
         updatedAt: now,
       });
+    }
+
+    if (args.pageType === "planner") {
+      const plannerPage = await ctx.db.get(pageId);
+      if (plannerPage) {
+        await ensurePlannerSections(ctx, plannerPage);
+      }
     }
 
     if (args.pageType === "journal") {
@@ -1603,6 +1620,23 @@ export const ensureTaskPageSidebarSection = mutation({
 
     await enqueuePageRootEmbeddingRefresh(ctx, args.pageId);
     return nodeId;
+  },
+});
+
+export const ensurePlannerPageSections = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived || !isPlannerPage(page)) {
+      throw new Error("Only planner pages can have planner sections.");
+    }
+
+    return await ensurePlannerSections(ctx, page);
   },
 });
 
@@ -2306,6 +2340,70 @@ export const getModelPageContext = internalQuery({
       recentExamplesSection,
       modelLines: getSectionChildren(modelSection?._id ?? null),
       recentExampleLines: getSectionChildren(recentExamplesSection?._id ?? null),
+    };
+  },
+});
+
+export const getPlannerPageContext = internalQuery({
+  args: {
+    pageId: v.id("pages"),
+  },
+  handler: async (ctx, args) => {
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived || !isPlannerPage(page)) {
+      return null;
+    }
+
+    const nodes = await listPageNodes(ctx.db, args.pageId);
+    const rootNodes = [...nodes]
+      .filter((node) => node.parentNodeId === null)
+      .sort((left, right) => left.position - right.position);
+
+    const plannerSidebarSection =
+      rootNodes.find((node) => {
+        const sourceMeta =
+          node.sourceMeta && typeof node.sourceMeta === "object"
+            ? (node.sourceMeta as Record<string, unknown>)
+            : null;
+        return sourceMeta?.sectionSlot === "plannerSidebar";
+      }) ?? null;
+    const plannerTemplateSection =
+      rootNodes.find((node) => {
+        const sourceMeta =
+          node.sourceMeta && typeof node.sourceMeta === "object"
+            ? (node.sourceMeta as Record<string, unknown>)
+            : null;
+        return sourceMeta?.sectionSlot === "plannerTemplate";
+      }) ?? null;
+
+    const plannerDays = getPlannerDayRoots(nodes);
+    const linkedSourceTaskIds = [
+      ...new Set(
+        nodes
+          .map((node) => getPlannerLinkedSourceTaskId(node))
+          .filter((value): value is Id<"nodes"> => value !== null),
+      ),
+    ];
+    const linkedSourceTasks = await Promise.all(
+      linkedSourceTaskIds.map((nodeId) => ctx.db.get(nodeId)),
+    );
+    const openSourceTasks = await listEligiblePlannerSourceTasks(ctx.db, {});
+
+    return {
+      page,
+      plannerStartDate: getPlannerStartDate(page),
+      plannerSidebarSection,
+      plannerTemplateSection,
+      plannerDays,
+      nodes,
+      linkedSourceTasks: linkedSourceTasks.filter(
+        (task): task is Doc<"nodes"> => task !== null && !task.archived,
+      ),
+      ...buildPlannerChatPromptContext({
+        page,
+        plannerNodes: nodes,
+        sourceTasks: openSourceTasks,
+      }),
     };
   },
 });
