@@ -10988,41 +10988,108 @@ function OutlineNodeEditor({
           }
         : parseSplitSegmentDraft(headDraft, segmentFallback);
       const normalizedTail = parseSplitSegmentDraft(tailDraft, segmentFallback);
-      const result = (await splitNode({
-        ownerKey,
-        nodeId: node._id as Id<"nodes">,
-        headText: normalizedHead.text,
-        headKind: normalizedHead.kind,
-        headTaskStatus: normalizedHead.taskStatus ?? undefined,
-        tailText: normalizedTail.text,
-        tailKind: normalizedTail.kind,
-        tailTaskStatus: normalizedTail.taskStatus ?? undefined,
-      })) as {
-        updatedNode: Doc<"nodes"> | null;
-        createdNode: Doc<"nodes"> | null;
-      };
-      const beforeValue = history.commitTrackedValue(
-        editorId,
-        editorTarget,
-        normalizedHead.text,
-      );
-      setDraft(normalizedHead.text);
-      const updateEntry = buildUpdateEntry(beforeValue, toNodeValueSnapshot(normalizedHead));
-      const createEntry =
-        result.createdNode
-          ? ({
-              type: "create_nodes",
-              pageId,
-              nodes: [
-                toCreatedNodeSnapshot(
-                  result.createdNode,
-                  node._id as Id<"nodes">,
-                ),
-              ],
-              focusAfterUndoId: editorId,
-              focusAfterRedoId: getNodeEditorId(result.createdNode._id),
-            } satisfies HistoryEntry)
-          : null;
+      let updateEntry: HistoryEntry | null = null;
+      let createEntry: HistoryEntry | null = null;
+
+      if (isStartOfLineSplit) {
+        const createdNodes = (await createNodesBatch({
+          ownerKey,
+          pageId,
+          nodes: [
+            {
+              parentNodeId,
+              afterNodeId: previousSibling?._id ? (previousSibling._id as Id<"nodes">) : null,
+              text: normalizedHead.text,
+              kind: normalizedHead.kind,
+              taskStatus: normalizedHead.taskStatus ?? undefined,
+            },
+          ],
+        })) as Doc<"nodes">[];
+        const createdNode = createdNodes[0] ?? null;
+
+        await updateNode({
+          ownerKey,
+          nodeId: node._id as Id<"nodes">,
+          text: normalizedTail.text,
+          kind: normalizedTail.kind,
+          taskStatus: normalizedTail.taskStatus ?? undefined,
+          noteCompleted: normalizedTail.kind === "note" ? isNoteCompleted : false,
+          dueAt: normalizedTail.kind === "task" ? (node.dueAt ?? null) : null,
+          dueEndAt: normalizedTail.kind === "task" ? (node.dueEndAt ?? null) : null,
+          recurrenceFrequency: normalizedTail.kind === "task" ? recurrenceFrequency : null,
+        });
+
+        const beforeValue = history.commitTrackedValue(
+          editorId,
+          editorTarget,
+          normalizedTail.text,
+        );
+        setDraft(normalizedTail.text);
+        updateEntry = buildUpdateEntry(
+          beforeValue,
+          withNodeScheduleSnapshot(
+            {
+              ...toNodeValueSnapshot(normalizedTail),
+              noteCompleted:
+                normalizedTail.kind === "note"
+                  ? isNoteCompleted
+                  : false,
+            },
+            node,
+          ),
+        );
+        createEntry =
+          createdNode
+            ? ({
+                type: "create_nodes",
+                pageId,
+                nodes: [
+                  toCreatedNodeSnapshot(
+                    createdNode,
+                    previousSibling?._id ? (previousSibling._id as Id<"nodes">) : null,
+                  ),
+                ],
+                focusAfterUndoId: editorId,
+                focusAfterRedoId: getNodeEditorId(createdNode._id),
+              } satisfies HistoryEntry)
+            : null;
+      } else {
+        const result = (await splitNode({
+          ownerKey,
+          nodeId: node._id as Id<"nodes">,
+          headText: normalizedHead.text,
+          headKind: normalizedHead.kind,
+          headTaskStatus: normalizedHead.taskStatus ?? undefined,
+          tailText: normalizedTail.text,
+          tailKind: normalizedTail.kind,
+          tailTaskStatus: normalizedTail.taskStatus ?? undefined,
+        })) as {
+          updatedNode: Doc<"nodes"> | null;
+          createdNode: Doc<"nodes"> | null;
+        };
+        const beforeValue = history.commitTrackedValue(
+          editorId,
+          editorTarget,
+          normalizedHead.text,
+        );
+        setDraft(normalizedHead.text);
+        updateEntry = buildUpdateEntry(beforeValue, toNodeValueSnapshot(normalizedHead));
+        createEntry =
+          result.createdNode
+            ? ({
+                type: "create_nodes",
+                pageId,
+                nodes: [
+                  toCreatedNodeSnapshot(
+                    result.createdNode,
+                    node._id as Id<"nodes">,
+                  ),
+                ],
+                focusAfterUndoId: editorId,
+                focusAfterRedoId: getNodeEditorId(result.createdNode._id),
+              } satisfies HistoryEntry)
+            : null;
+      }
 
       if (updateEntry && createEntry) {
         history.pushUndoEntry({
