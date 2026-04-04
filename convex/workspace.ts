@@ -53,6 +53,7 @@ const PAGE_DELETE_LINK_BATCH_SIZE = 200;
 const PAGE_DELETE_MESSAGE_BATCH_SIZE = 200;
 const FIND_REPLACE_PREVIEW_LIMIT = 40;
 const FIND_REPLACE_BATCH_SIZE = 50;
+const EMBEDDING_REBUILD_BATCH_SIZE = 200;
 
 function collectCappedSubtreeNodes(
   rootNodeId: Id<"nodes">,
@@ -597,43 +598,47 @@ export const rebuildEmbeddings = mutation({
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
+    await ctx.scheduler.runAfter(0, internal.workspace.rebuildEmbeddingsBatch, {
+      cursor: null,
+      batchSize: EMBEDDING_REBUILD_BATCH_SIZE,
+    });
 
-    const activeNodes = (await ctx.db.query("nodes").collect()).filter(
-      (node) => !node.archived,
+    return {
+      started: true,
+      batchSize: EMBEDDING_REBUILD_BATCH_SIZE,
+    };
+  },
+});
+
+export const rebuildEmbeddingsBatch = internalMutation({
+  args: {
+    cursor: v.union(v.string(), v.null()),
+    batchSize: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const batchSize = Math.max(
+      1,
+      Math.min(args.batchSize ?? EMBEDDING_REBUILD_BATCH_SIZE, EMBEDDING_REBUILD_BATCH_SIZE),
     );
-    const eligibleNodes = activeNodes.filter((node) =>
-      shouldGenerateEmbeddingForNodeText(node.text),
-    );
-    const ineligibleNodeIds = new Set(
-      activeNodes
-        .filter((node) => !shouldGenerateEmbeddingForNodeText(node.text))
-        .map((node) => node._id),
-    );
-    const existingJobs = await ctx.db.query("embeddingJobs").collect();
-    const existingEmbeddings = await ctx.db.query("nodeEmbeddings").collect();
-    const jobsByNodeId = new Map(existingJobs.map((job) => [job.nodeId, job]));
+    const result = await ctx.db.query("nodes").paginate({
+      cursor: args.cursor,
+      numItems: batchSize,
+    });
     const now = getTimestamp();
-    const uniqueNodeIds = [...new Set(eligibleNodes.map((node) => node._id))];
-    let purgedCount = 0;
 
-    for (const job of existingJobs) {
-      if (!ineligibleNodeIds.has(job.nodeId)) {
+    for (const node of result.page) {
+      if (node.archived || !shouldGenerateEmbeddingForNodeText(node.text)) {
+        await ctx.runMutation(internal.aiData.clearNodeEmbedding, {
+          nodeId: node._id,
+        });
         continue;
       }
-      await ctx.db.delete(job._id);
-      purgedCount += 1;
-    }
 
-    for (const embedding of existingEmbeddings) {
-      if (!ineligibleNodeIds.has(embedding.nodeId)) {
-        continue;
-      }
-      await ctx.db.delete(embedding._id);
-      purgedCount += 1;
-    }
+      const existingJob = await ctx.db
+        .query("embeddingJobs")
+        .withIndex("by_node", (query) => query.eq("nodeId", node._id))
+        .first();
 
-    for (const nodeId of uniqueNodeIds) {
-      const existingJob = jobsByNodeId.get(nodeId);
       if (existingJob) {
         await ctx.db.patch(existingJob._id, {
           status: "queued",
@@ -642,7 +647,7 @@ export const rebuildEmbeddings = mutation({
         });
       } else {
         await ctx.db.insert("embeddingJobs", {
-          nodeId,
+          nodeId: node._id,
           status: "queued",
           attempts: 0,
           lastQueuedAt: now,
@@ -651,14 +656,16 @@ export const rebuildEmbeddings = mutation({
       }
 
       await ctx.scheduler.runAfter(0, internal.ai.generateEmbeddingForNode, {
-        nodeId,
+        nodeId: node._id,
       });
     }
 
-    return {
-      queuedCount: uniqueNodeIds.length,
-      purgedCount,
-    };
+    if (!result.isDone) {
+      await ctx.scheduler.runAfter(0, internal.workspace.rebuildEmbeddingsBatch, {
+        cursor: result.continueCursor,
+        batchSize,
+      });
+    }
   },
 });
 

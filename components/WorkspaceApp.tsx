@@ -3660,27 +3660,21 @@ function ConfiguredWorkspace({
       const result = (await rebuildEmbeddings({
         ownerKey,
       })) as {
-        queuedCount: number;
-        purgedCount?: number;
+        started?: boolean;
+        batchSize?: number;
       };
-
-      const messageParts: string[] = [];
-      if (result.queuedCount > 0) {
-        messageParts.push(`Queued ${result.queuedCount} node embeddings for refresh.`);
-      }
-      if ((result.purgedCount ?? 0) > 0) {
-        messageParts.push(`Purged ${result.purgedCount} stale embedding records for skipped nodes.`);
-      }
       setEmbeddingRebuildStatus(
-        messageParts.length > 0
-          ? messageParts.join(" ")
-          : "No active nodes needed an embedding rebuild.",
+        result.started
+          ? `Started rebuilding embeddings in background batches${result.batchSize ? ` of ${result.batchSize}` : ""}. Skipped nodes like --- and . will be cleaned up as the rebuild runs.`
+          : "Started rebuilding embeddings in the background.",
       );
     } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Could not start an embedding rebuild right now.";
       setEmbeddingRebuildStatus(
-        error instanceof Error
-          ? error.message
-          : "Could not queue an embedding rebuild right now.",
+        message.includes("Server Error")
+          ? "Could not start the embedding rebuild because the backend hit an internal limit. The rebuild now runs in batches, so try again once after refreshing. If it still fails, send me the request id shown in the error."
+          : message,
       );
     } finally {
       setIsRebuildingEmbeddings(false);
