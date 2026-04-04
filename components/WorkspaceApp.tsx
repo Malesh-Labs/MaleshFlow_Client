@@ -7669,7 +7669,7 @@ function ConfiguredWorkspace({
             <div
               ref={paletteResultsRef}
               className={clsx(
-                "min-h-0",
+                "min-h-0 flex-1",
               paletteMode === "chat" ||
               paletteMode === "replace" ||
               paletteMode === "archive" ||
@@ -8881,6 +8881,7 @@ function WorkspaceAiChatPanel({
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
+  const historyEndRef = useRef<HTMLDivElement>(null);
   const [caretPosition, setCaretPosition] = useState<number | null>(null);
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
@@ -8922,7 +8923,14 @@ function WorkspaceAiChatPanel({
       return;
     }
 
-    container.scrollTop = container.scrollHeight;
+    const frame = window.requestAnimationFrame(() => {
+      container.scrollTop = container.scrollHeight;
+      historyEndRef.current?.scrollIntoView({ block: "end" });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
   }, [error, isLoading, messages]);
 
   const applyLinkSuggestion = (suggestion: LinkSuggestion) => {
@@ -8992,7 +9000,10 @@ function WorkspaceAiChatPanel({
   };
 
   return (
-    <div data-workspace-ai-chat-panel="true" className="flex h-full min-h-0 flex-col">
+    <div
+      data-workspace-ai-chat-panel="true"
+      className="flex h-full min-h-0 flex-col overflow-hidden"
+    >
       <div className="flex items-center justify-between gap-3 border-b border-[var(--workspace-border-subtle)] px-5 py-3">
         <div className="min-w-0">
           <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
@@ -9100,6 +9111,7 @@ function WorkspaceAiChatPanel({
                 </div>
               </div>
             ) : null}
+            <div ref={historyEndRef} aria-hidden="true" className="h-px w-full" />
           </div>
         </div>
       ) : (
@@ -9107,7 +9119,14 @@ function WorkspaceAiChatPanel({
           Start a persistent workspace conversation.
         </div>
       )}
-      <div className="relative flex items-end gap-3 px-5 py-4">
+      <div className="relative shrink-0 border-t border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-5 py-4">
+        {isLoading ? (
+          <div className="mb-3 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+            <span>AI is responding…</span>
+            <span className="text-[var(--workspace-accent)]">Grounding context</span>
+          </div>
+        ) : null}
+        <div className="flex items-end gap-3">
         <div className="min-w-0 flex-1">
           <textarea
             id={WORKSPACE_AI_CHAT_TEXTAREA_ID}
@@ -9164,6 +9183,7 @@ function WorkspaceAiChatPanel({
             }
           />
         ) : null}
+        </div>
       </div>
     </div>
   );
