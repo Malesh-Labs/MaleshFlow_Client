@@ -39,11 +39,11 @@ import {
 } from "@/lib/domain/inlineFormatting";
 import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
 import {
-  advanceRecurringDueDate,
+  advanceRecurringDueDateRange,
   areRecurrenceFrequenciesEqual,
-  formatDueDate,
+  formatDueDateRange,
   getRecurrenceLabel,
-  isOverdueDueDate,
+  isOverdueDueDateRange,
   parseRecurrenceFrequency,
   type RecurrenceFrequency,
   type RecurringCompletionMode,
@@ -259,6 +259,7 @@ type OutlineClipboardNode = {
   taskStatus: NodeValueSnapshot["taskStatus"];
   noteCompleted: boolean;
   dueAt?: number | null;
+  dueEndAt?: number | null;
   recurrenceFrequency?: RecurrenceFrequency;
   lockKind: boolean;
   children: OutlineClipboardNode[];
@@ -320,6 +321,7 @@ type OutlineClipboardBatchEntry = {
   taskStatus?: NodeValueSnapshot["taskStatus"];
   noteCompleted?: boolean;
   dueAt?: number | null;
+  dueEndAt?: number | null;
   recurrenceFrequency?: RecurrenceFrequency;
   lockKind?: boolean;
 };
@@ -356,6 +358,7 @@ type TreeNode = OutlineTreeNode<{
   taskStatus: string | null;
   priority: string | null;
   dueAt: number | null;
+  dueEndAt?: number | null;
   archived: boolean;
   sourceMeta?: Record<string, unknown> | null;
 }>;
@@ -760,6 +763,7 @@ function getRecurringCompletionTransition(
     kind: string;
     taskStatus: string | null;
     dueAt: number | null;
+    dueEndAt?: number | null;
     sourceMeta?: Record<string, unknown> | null;
   },
   completionMode: RecurringCompletionMode,
@@ -776,20 +780,25 @@ function getRecurringCompletionTransition(
       taskStatus: "todo",
       noteCompleted: false,
       dueAt: node.dueAt,
+      dueEndAt: node.dueEndAt ?? null,
       recurrenceFrequency,
     };
   }
+
+  const nextRange = advanceRecurringDueDateRange({
+    dueAt: node.dueAt,
+    dueEndAt: node.dueEndAt ?? null,
+    frequency: recurrenceFrequency,
+    mode: completionMode,
+  });
 
   return {
     text: node.text,
     kind: "task",
     taskStatus: "todo",
     noteCompleted: false,
-    dueAt: advanceRecurringDueDate({
-      dueAt: node.dueAt,
-      frequency: recurrenceFrequency,
-      mode: completionMode,
-    }),
+    dueAt: nextRange.dueAt,
+    dueEndAt: nextRange.dueEndAt,
     recurrenceFrequency,
   };
 }
@@ -800,11 +809,13 @@ function withNodeScheduleSnapshot(
     | {
         kind: string;
         dueAt?: number | null;
+        dueEndAt?: number | null;
         sourceMeta?: Record<string, unknown> | null;
       }
     | {
         kind: string;
         dueAt?: number | null;
+        dueEndAt?: number | null;
         recurrenceFrequency?: RecurrenceFrequency;
       },
 ): NodeValueSnapshot {
@@ -813,6 +824,7 @@ function withNodeScheduleSnapshot(
       ...snapshot,
       taskStatus: null,
       dueAt: null,
+      dueEndAt: null,
       recurrenceFrequency: null,
     };
   }
@@ -821,6 +833,8 @@ function withNodeScheduleSnapshot(
     ...snapshot,
     taskStatus: snapshot.taskStatus ?? "todo",
     dueAt: snapshot.dueAt ?? ("dueAt" in source ? (source.dueAt ?? null) : null),
+    dueEndAt:
+      snapshot.dueEndAt ?? ("dueEndAt" in source ? (source.dueEndAt ?? null) : null),
     recurrenceFrequency:
       snapshot.recurrenceFrequency ?? getNodeRecurrenceFrequency(source),
   };
@@ -829,6 +843,7 @@ function withNodeScheduleSnapshot(
 function getTaskScheduleSummary(task: {
   kind: string;
   dueAt: number | null;
+  dueEndAt?: number | null;
   sourceMeta?: Record<string, unknown> | null;
 }) {
   if (task.kind !== "task") {
@@ -837,7 +852,7 @@ function getTaskScheduleSummary(task: {
 
   const parts: string[] = [];
   if (task.dueAt) {
-    parts.push(formatDueDate(task.dueAt));
+    parts.push(formatDueDateRange(task.dueAt, task.dueEndAt ?? null));
   }
 
   const recurrenceFrequency = getNodeRecurrenceFrequency(task);
@@ -1504,6 +1519,9 @@ function isOutlineClipboardNode(value: unknown): value is OutlineClipboardNode {
     isValidClipboardTaskStatus(record.taskStatus) &&
     typeof record.noteCompleted === "boolean" &&
     (record.dueAt === undefined || typeof record.dueAt === "number" || record.dueAt === null) &&
+    (record.dueEndAt === undefined ||
+      typeof record.dueEndAt === "number" ||
+      record.dueEndAt === null) &&
     (record.recurrenceFrequency === undefined ||
       record.recurrenceFrequency === null ||
       parseRecurrenceFrequency(record.recurrenceFrequency) !== null) &&
@@ -1588,6 +1606,7 @@ function serializeTreeNodeForClipboard(node: TreeNode): OutlineClipboardNode {
     taskStatus: (node.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
     noteCompleted: nodeMeta.noteCompleted === true,
     dueAt: node.dueAt ?? null,
+    dueEndAt: node.dueEndAt ?? null,
     recurrenceFrequency: getNodeRecurrenceFrequency(node),
     lockKind: nodeMeta.taskKindLocked === true,
     children: node.children.map((child) => serializeTreeNodeForClipboard(child)),
@@ -1626,6 +1645,7 @@ function importedNodesToClipboardNodes(nodes: ImportedOutlineNode[]): OutlineCli
     taskStatus: node.taskStatus,
     noteCompleted: node.noteCompleted,
     dueAt: node.dueAt,
+    dueEndAt: node.dueEndAt,
     recurrenceFrequency: node.recurrenceFrequency,
     lockKind: node.lockKind,
     children: importedNodesToClipboardNodes(node.children),
@@ -1664,6 +1684,7 @@ function flattenOutlineClipboardNodesForBatch(
       taskStatus: node.taskStatus,
       noteCompleted: node.noteCompleted,
       dueAt: node.dueAt,
+      dueEndAt: node.dueEndAt,
       recurrenceFrequency: node.recurrenceFrequency,
       lockKind: node.lockKind,
     });
@@ -1903,14 +1924,15 @@ function splitPastedLines(text: string) {
 
 function toNodeValueSnapshot(
   value:
-    | Pick<Doc<"nodes">, "text" | "kind" | "taskStatus" | "dueAt">
-    | Pick<Doc<"nodes">, "text" | "kind" | "taskStatus" | "dueAt" | "sourceMeta">
+    | Pick<Doc<"nodes">, "text" | "kind" | "taskStatus" | "dueAt" | "dueEndAt">
+    | Pick<Doc<"nodes">, "text" | "kind" | "taskStatus" | "dueAt" | "dueEndAt" | "sourceMeta">
     | {
         text: string;
         kind: "note" | "task";
         taskStatus: "todo" | "in_progress" | "done" | "cancelled" | null;
         noteCompleted?: boolean;
         dueAt?: number | null;
+        dueEndAt?: number | null;
         recurrenceFrequency?: RecurrenceFrequency;
       },
 ): NodeValueSnapshot {
@@ -1924,6 +1946,7 @@ function toNodeValueSnapshot(
         | Pick<NodeValueSnapshot, "kind" | "noteCompleted">,
     ),
     dueAt: "dueAt" in value ? (value.dueAt ?? null) : null,
+    dueEndAt: "dueEndAt" in value ? (value.dueEndAt ?? null) : null,
     recurrenceFrequency: getNodeRecurrenceFrequency(
       value as
         | Pick<Doc<"nodes">, "kind" | "sourceMeta">
@@ -3436,9 +3459,11 @@ function ConfiguredWorkspace({
 
   const handleSaveTaskSchedule = useCallback(async ({
     dueAt,
+    dueEndAt,
     recurrenceFrequency,
   }: {
     dueAt: number | null;
+    dueEndAt: number | null;
     recurrenceFrequency: RecurrenceFrequency;
   }) => {
     const node = taskScheduleTargetNode;
@@ -3454,6 +3479,7 @@ function ConfiguredWorkspace({
         taskStatus: (node.taskStatus ?? "todo") as NodeValueSnapshot["taskStatus"],
         noteCompleted: false,
         dueAt,
+        dueEndAt,
         recurrenceFrequency,
       },
       node,
@@ -3465,6 +3491,7 @@ function ConfiguredWorkspace({
       beforeSnapshot.taskStatus === afterSnapshot.taskStatus &&
       beforeSnapshot.noteCompleted === afterSnapshot.noteCompleted &&
       beforeSnapshot.dueAt === afterSnapshot.dueAt &&
+      beforeSnapshot.dueEndAt === afterSnapshot.dueEndAt &&
       areRecurrenceFrequenciesEqual(
         beforeSnapshot.recurrenceFrequency ?? null,
         afterSnapshot.recurrenceFrequency ?? null,
@@ -3481,6 +3508,7 @@ function ConfiguredWorkspace({
       taskStatus: afterSnapshot.taskStatus,
       noteCompleted: false,
       dueAt: afterSnapshot.dueAt,
+      dueEndAt: afterSnapshot.dueEndAt,
       recurrenceFrequency: afterSnapshot.recurrenceFrequency,
     });
 
@@ -4280,6 +4308,7 @@ function ConfiguredWorkspace({
               taskStatus: null,
               noteCompleted: false,
               dueAt: null,
+              dueEndAt: null,
               recurrenceFrequency: null,
             }, node)
           : withNodeScheduleSnapshot({
@@ -4288,6 +4317,7 @@ function ConfiguredWorkspace({
               taskStatus: "todo",
               noteCompleted: false,
               dueAt: null,
+              dueEndAt: null,
               recurrenceFrequency: null,
             }, node);
 
@@ -4300,6 +4330,7 @@ function ConfiguredWorkspace({
         taskStatus: afterSnapshot.taskStatus,
         noteCompleted: false,
         dueAt: afterSnapshot.dueAt,
+        dueEndAt: afterSnapshot.dueEndAt,
         recurrenceFrequency: afterSnapshot.recurrenceFrequency,
       });
 
@@ -4366,6 +4397,7 @@ function ConfiguredWorkspace({
               taskStatus: node.taskStatus === "done" ? "todo" : "done",
               noteCompleted: false,
               dueAt: node.dueAt ?? null,
+              dueEndAt: node.dueEndAt ?? null,
               recurrenceFrequency: getNodeRecurrenceFrequency(node),
             }, node))
           : withNodeScheduleSnapshot({
@@ -4374,6 +4406,7 @@ function ConfiguredWorkspace({
               taskStatus: null,
               noteCompleted: !isNodeNoteCompleted(node),
               dueAt: null,
+              dueEndAt: null,
               recurrenceFrequency: null,
             }, node);
 
@@ -4386,6 +4419,7 @@ function ConfiguredWorkspace({
         taskStatus: afterSnapshot.taskStatus,
         noteCompleted: afterSnapshot.noteCompleted,
         dueAt: afterSnapshot.dueAt,
+        dueEndAt: afterSnapshot.dueEndAt,
         recurrenceFrequency: afterSnapshot.recurrenceFrequency,
       });
 
@@ -7028,6 +7062,7 @@ function ConfiguredWorkspace({
                   <TaskSchedulePanel
                     taskTitle={taskScheduleTargetNode.text}
                     dueAt={taskScheduleTargetNode.dueAt ?? null}
+                    dueEndAt={taskScheduleTargetNode.dueEndAt ?? null}
                     recurrenceFrequency={getNodeRecurrenceFrequency(taskScheduleTargetNode)}
                     recurringCompletionMode={recurringCompletionMode}
                     onRecurringCompletionModeChange={setRecurringCompletionMode}
@@ -8530,9 +8565,14 @@ function OutlineNodeEditor({
   const isTaskRow = node.kind === "task";
   const isHeadingRow = isHeadingLine;
   const recurrenceFrequency = getNodeRecurrenceFrequency(node);
-  const dueDateLabel = node.kind === "task" ? formatDueDate(node.dueAt) : "";
+  const dueDateLabel =
+    node.kind === "task"
+      ? formatDueDateRange(node.dueAt, node.dueEndAt ?? null)
+      : "";
   const isOverdueTask =
-    node.kind === "task" && !isCompleted && isOverdueDueDate(node.dueAt);
+    node.kind === "task" &&
+    !isCompleted &&
+    isOverdueDueDateRange(node.dueAt, node.dueEndAt ?? null);
   const headingRowMinHeightClass = getHeadingRowMinHeightClass(headingSyntax.level);
   const headingMarkerOffsetClass = getHeadingMarkerOffsetClass(headingSyntax.level);
   const headingControlOffsetClass = getHeadingControlOffsetClass(headingSyntax.level);
@@ -8964,6 +9004,7 @@ function OutlineNodeEditor({
       beforeSnapshot.taskStatus === afterValue.taskStatus &&
       beforeSnapshot.noteCompleted === afterValue.noteCompleted &&
       beforeSnapshot.dueAt === afterValue.dueAt &&
+      beforeSnapshot.dueEndAt === afterValue.dueEndAt &&
       areRecurrenceFrequenciesEqual(
         beforeSnapshot.recurrenceFrequency ?? null,
         afterValue.recurrenceFrequency ?? null,
@@ -9053,6 +9094,7 @@ function OutlineNodeEditor({
         taskStatus: nextSnapshot.taskStatus,
         noteCompleted: nextSnapshot.noteCompleted,
         dueAt: nextSnapshot.dueAt,
+        dueEndAt: nextSnapshot.dueEndAt,
         recurrenceFrequency: nextSnapshot.recurrenceFrequency,
       });
     }
@@ -9094,6 +9136,7 @@ function OutlineNodeEditor({
       taskStatus: (node.taskStatus ?? "todo") as NodeValueSnapshot["taskStatus"],
       noteCompleted: false,
       dueAt: node.dueAt ?? null,
+      dueEndAt: node.dueEndAt ?? null,
       recurrenceFrequency,
     }, node);
     const afterSnapshot =
@@ -9103,6 +9146,7 @@ function OutlineNodeEditor({
           kind: node.kind,
           taskStatus: node.taskStatus,
           dueAt: node.dueAt,
+          dueEndAt: node.dueEndAt,
           sourceMeta: node.sourceMeta,
         },
         recurringCompletionMode,
@@ -9113,6 +9157,7 @@ function OutlineNodeEditor({
         taskStatus: node.taskStatus === "done" ? "todo" : "done",
         noteCompleted: false,
         dueAt: node.dueAt ?? null,
+        dueEndAt: node.dueEndAt ?? null,
         recurrenceFrequency,
       }, node);
 
@@ -9125,6 +9170,7 @@ function OutlineNodeEditor({
       taskStatus: afterSnapshot.taskStatus,
       noteCompleted: false,
       dueAt: afterSnapshot.dueAt,
+      dueEndAt: afterSnapshot.dueEndAt,
       recurrenceFrequency: afterSnapshot.recurrenceFrequency,
     });
     history.commitTrackedValue(
@@ -9177,6 +9223,7 @@ function OutlineNodeEditor({
       taskStatus: null,
       noteCompleted: isNoteCompleted,
       dueAt: null,
+      dueEndAt: null,
       recurrenceFrequency: null,
     }, node);
     const afterSnapshot = withNodeScheduleSnapshot({
@@ -9185,6 +9232,7 @@ function OutlineNodeEditor({
       taskStatus: null,
       noteCompleted: !isNoteCompleted,
       dueAt: null,
+      dueEndAt: null,
       recurrenceFrequency: null,
     }, node);
 
@@ -9197,6 +9245,7 @@ function OutlineNodeEditor({
       taskStatus: null,
       noteCompleted: afterSnapshot.noteCompleted,
       dueAt: afterSnapshot.dueAt,
+      dueEndAt: afterSnapshot.dueEndAt,
       recurrenceFrequency: afterSnapshot.recurrenceFrequency,
     });
     history.commitTrackedValue(
@@ -9248,6 +9297,7 @@ function OutlineNodeEditor({
             taskStatus: null,
             noteCompleted: false,
             dueAt: null,
+            dueEndAt: null,
             recurrenceFrequency: null,
           }, beforeSnapshot)
         : withNodeScheduleSnapshot({
@@ -9256,6 +9306,7 @@ function OutlineNodeEditor({
             taskStatus: "todo",
             noteCompleted: false,
             dueAt: null,
+            dueEndAt: null,
             recurrenceFrequency: null,
           }, beforeSnapshot);
 
@@ -9267,6 +9318,7 @@ function OutlineNodeEditor({
       lockKind: true,
       taskStatus: afterSnapshot.taskStatus,
       dueAt: afterSnapshot.dueAt,
+      dueEndAt: afterSnapshot.dueEndAt,
       recurrenceFrequency: afterSnapshot.recurrenceFrequency,
     });
     history.commitTrackedValue(

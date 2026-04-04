@@ -289,6 +289,7 @@ const nodeCreateInputValidator = v.object({
   noteCompleted: v.optional(v.boolean()),
   taskStatus: v.optional(taskStatusValidator),
   dueAt: v.optional(v.union(v.number(), v.null())),
+  dueEndAt: v.optional(v.union(v.number(), v.null())),
   recurrenceFrequency: v.optional(recurrenceFrequencyValidator),
 });
 
@@ -1704,6 +1705,7 @@ export const createNode = mutation({
     kind: v.optional(nodeKindValidator),
     taskStatus: v.optional(taskStatusValidator),
     dueAt: v.optional(v.union(v.number(), v.null())),
+    dueEndAt: v.optional(v.union(v.number(), v.null())),
     recurrenceFrequency: v.optional(recurrenceFrequencyValidator),
   },
   handler: async (ctx, args) => {
@@ -1726,6 +1728,7 @@ export const createNode = mutation({
       taskStatus: args.kind === "task" ? (args.taskStatus ?? "todo") : null,
       priority: null,
       dueAt: args.kind === "task" ? (args.dueAt ?? null) : null,
+      dueEndAt: args.kind === "task" ? (args.dueEndAt ?? null) : null,
       archived: false,
       sourceMeta: {
         sourceType: "manual",
@@ -1789,6 +1792,7 @@ export const createNodesBatch = mutation({
         taskStatus: entry.kind === "task" ? (entry.taskStatus ?? "todo") : null,
         priority: null,
         dueAt: entry.kind === "task" ? (entry.dueAt ?? null) : null,
+        dueEndAt: entry.kind === "task" ? (entry.dueEndAt ?? null) : null,
         archived: false,
         sourceMeta: {
           sourceType: "manual",
@@ -1836,6 +1840,7 @@ export const updateNode = mutation({
     noteCompleted: v.optional(v.boolean()),
     priority: v.optional(priorityValidator),
     dueAt: v.optional(v.union(v.number(), v.null())),
+    dueEndAt: v.optional(v.union(v.number(), v.null())),
     recurrenceFrequency: v.optional(recurrenceFrequencyValidator),
   },
   handler: async (ctx, args) => {
@@ -1866,6 +1871,10 @@ export const updateNode = mutation({
 
     if (args.dueAt !== undefined) {
       patch.dueAt = args.dueAt;
+    }
+
+    if (args.dueEndAt !== undefined) {
+      patch.dueEndAt = args.dueEndAt;
     }
 
     if (

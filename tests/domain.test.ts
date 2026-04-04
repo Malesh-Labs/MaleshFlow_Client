@@ -29,11 +29,14 @@ import {
 } from "../lib/domain/findReplace";
 import {
   advanceRecurringDueDate,
+  advanceRecurringDueDateRange,
   areRecurrenceFrequenciesEqual,
   dateInputValueToTimestamp,
   getRecurrenceLabel,
   isOverdueDueDate,
+  isOverdueDueDateRange,
   parseRecurrenceFrequency,
+  formatDueDateRange,
   timestampToDateInputValue,
 } from "../lib/domain/recurrence";
 import {
@@ -227,6 +230,7 @@ test("parseImportedTextToOutlineNodes normalizes Dynalist links and separators",
       taskStatus: null,
       noteCompleted: false,
       dueAt: null,
+      dueEndAt: null,
       recurrenceFrequency: null,
       lockKind: false,
       children: [],
@@ -237,6 +241,7 @@ test("parseImportedTextToOutlineNodes normalizes Dynalist links and separators",
       taskStatus: null,
       noteCompleted: false,
       dueAt: null,
+      dueEndAt: null,
       recurrenceFrequency: null,
       lockKind: false,
       children: [],
@@ -257,6 +262,7 @@ test("parseImportedTextToOutlineNodes converts due markers into real task schedu
       taskStatus: "todo",
       noteCompleted: false,
       dueAt: dateInputValueToTimestamp("2027-02-09"),
+      dueEndAt: null,
       recurrenceFrequency: "yearly",
       lockKind: true,
       children: [],
@@ -267,10 +273,31 @@ test("parseImportedTextToOutlineNodes converts due markers into real task schedu
       taskStatus: "todo",
       noteCompleted: false,
       dueAt: dateInputValueToTimestamp("2026-07-07"),
+      dueEndAt: null,
       recurrenceFrequency: {
         interval: 6,
         unit: "month",
       },
+      lockKind: true,
+      children: [],
+    },
+  ]);
+});
+
+test("parseImportedTextToOutlineNodes converts date ranges into real task range metadata", () => {
+  const nodes = parseImportedTextToOutlineNodes(
+    "[[trip]] to [[SD]] + [[LA]] !(2026-04-08 - 2026-04-21)",
+  );
+
+  assert.deepEqual(nodes, [
+    {
+      text: "[[trip]] to [[SD]] + [[LA]]",
+      kind: "task",
+      taskStatus: "todo",
+      noteCompleted: false,
+      dueAt: dateInputValueToTimestamp("2026-04-08"),
+      dueEndAt: dateInputValueToTimestamp("2026-04-21"),
+      recurrenceFrequency: null,
       lockKind: true,
       children: [],
     },
@@ -289,6 +316,7 @@ test("parseImportedTextToOutlineNodes preserves full-line strikethrough as text 
       taskStatus: "todo",
       noteCompleted: false,
       dueAt: dateInputValueToTimestamp("2026-05-17"),
+      dueEndAt: null,
       recurrenceFrequency: null,
       lockKind: true,
       children: [],
@@ -507,6 +535,41 @@ test("recurring due dates can advance from the original due date or today", () =
       mode: "dueDate",
     }),
     new Date(2026, 3, 11, 12, 0, 0, 0).getTime(),
+  );
+});
+
+test("recurring date ranges advance together and overdue uses the end date", () => {
+  const advanced = advanceRecurringDueDateRange({
+    dueAt: dateInputValueToTimestamp("2026-04-08")!,
+    dueEndAt: dateInputValueToTimestamp("2026-04-21"),
+    frequency: "monthly",
+    mode: "dueDate",
+  });
+
+  assert.equal(
+    timestampToDateInputValue(advanced.dueAt),
+    "2026-05-08",
+  );
+  assert.equal(
+    timestampToDateInputValue(advanced.dueEndAt),
+    "2026-05-21",
+  );
+
+  assert.equal(
+    formatDueDateRange(
+      dateInputValueToTimestamp("2026-04-08"),
+      dateInputValueToTimestamp("2026-04-21"),
+    ).length > 0,
+    true,
+  );
+
+  assert.equal(
+    isOverdueDueDateRange(
+      dateInputValueToTimestamp("2026-04-08"),
+      dateInputValueToTimestamp("2026-04-21"),
+      new Date(2026, 3, 22, 12, 0, 0, 0),
+    ),
+    true,
   );
 });
 

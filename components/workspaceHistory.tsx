@@ -26,6 +26,7 @@ export type NodeValueSnapshot = {
   taskStatus: TaskStatus;
   noteCompleted: boolean;
   dueAt?: number | null;
+  dueEndAt?: number | null;
   recurrenceFrequency?: RecurrenceFrequency;
 };
 
@@ -125,6 +126,7 @@ type UpdateNodeFn = (args: {
   taskStatus?: TaskStatus;
   noteCompleted?: boolean;
   dueAt?: number | null;
+  dueEndAt?: number | null;
   recurrenceFrequency?: RecurrenceFrequency;
 }) => Promise<unknown>;
 
@@ -587,6 +589,7 @@ export function useWorkspaceHistoryController({
             taskStatus: nextSnapshot.taskStatus,
             noteCompleted: nextSnapshot.noteCompleted,
             dueAt: nextSnapshot.dueAt,
+            dueEndAt: nextSnapshot.dueEndAt,
             recurrenceFrequency: nextSnapshot.recurrenceFrequency,
           });
           syncCommittedValue(entry.focusEditorId, nextSnapshot.text, {

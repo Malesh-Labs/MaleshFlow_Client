@@ -19,11 +19,13 @@ import {
 type TaskSchedulePanelProps = {
   taskTitle: string;
   dueAt: number | null;
+  dueEndAt: number | null;
   recurrenceFrequency: RecurrenceFrequency;
   recurringCompletionMode: RecurringCompletionMode;
   onRecurringCompletionModeChange: (mode: RecurringCompletionMode) => void;
   onSave: (args: {
     dueAt: number | null;
+    dueEndAt: number | null;
     recurrenceFrequency: RecurrenceFrequency;
   }) => Promise<void>;
   onSaved: () => void;
@@ -32,6 +34,7 @@ type TaskSchedulePanelProps = {
 export function TaskSchedulePanel({
   taskTitle,
   dueAt,
+  dueEndAt,
   recurrenceFrequency,
   recurringCompletionMode,
   onRecurringCompletionModeChange,
@@ -39,6 +42,7 @@ export function TaskSchedulePanel({
   onSaved,
 }: TaskSchedulePanelProps) {
   const [dueDateDraft, setDueDateDraft] = useState("");
+  const [dueEndDateDraft, setDueEndDateDraft] = useState("");
   const [recurrenceModeDraft, setRecurrenceModeDraft] = useState<RecurrencePreset | "custom" | "">("");
   const [customIntervalDraft, setCustomIntervalDraft] = useState("");
   const [customUnitDraft, setCustomUnitDraft] = useState<RecurrenceUnit>("day");
@@ -47,6 +51,7 @@ export function TaskSchedulePanel({
 
   useEffect(() => {
     setDueDateDraft(timestampToDateInputValue(dueAt));
+    setDueEndDateDraft(timestampToDateInputValue(dueEndAt));
     if (!recurrenceFrequency) {
       setRecurrenceModeDraft("");
       setCustomIntervalDraft("");
@@ -61,7 +66,7 @@ export function TaskSchedulePanel({
       setCustomUnitDraft(recurrenceFrequency.unit);
     }
     setErrorMessage("");
-  }, [dueAt, recurrenceFrequency, taskTitle]);
+  }, [dueAt, dueEndAt, recurrenceFrequency, taskTitle]);
 
   const recurrenceDraft = useMemo<RecurrenceFrequency>(() => {
     if (recurrenceModeDraft === "") {
@@ -86,17 +91,21 @@ export function TaskSchedulePanel({
   const summary = useMemo(() => {
     const parts: string[] = [];
     const draftDueAt = dateInputValueToTimestamp(dueDateDraft);
+    const draftDueEndAt = dateInputValueToTimestamp(dueEndDateDraft);
     if (draftDueAt) {
-      parts.push(`Due ${formatDueDate(draftDueAt)}`);
+      parts.push(
+        `Due ${draftDueEndAt && draftDueEndAt > draftDueAt ? `${formatDueDate(draftDueAt)} - ${formatDueDate(draftDueEndAt)}` : formatDueDate(draftDueAt)}`,
+      );
     }
     if (recurrenceDraft) {
       parts.push(getRecurrenceLabel(recurrenceDraft));
     }
     return parts.join(" • ");
-  }, [dueDateDraft, recurrenceDraft]);
+  }, [dueDateDraft, dueEndDateDraft, recurrenceDraft]);
 
   const handleSave = async () => {
     const nextDueAt = dateInputValueToTimestamp(dueDateDraft);
+    const nextDueEndAt = dateInputValueToTimestamp(dueEndDateDraft);
     if (recurrenceModeDraft === "custom" && recurrenceDraft === null) {
       setErrorMessage("Enter a valid custom cadence like 10 days.");
       return;
@@ -107,11 +116,17 @@ export function TaskSchedulePanel({
       return;
     }
 
+    if (nextDueAt && nextDueEndAt && nextDueEndAt < nextDueAt) {
+      setErrorMessage("The end date should be on or after the start date.");
+      return;
+    }
+
     setIsSaving(true);
     setErrorMessage("");
     try {
       await onSave({
         dueAt: nextDueAt,
+        dueEndAt: nextDueAt && nextDueEndAt && nextDueEndAt > nextDueAt ? nextDueEndAt : null,
         recurrenceFrequency: recurrenceDraft,
       });
       onSaved();
@@ -145,12 +160,24 @@ export function TaskSchedulePanel({
         <div className="space-y-6">
           <label className="block">
             <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-              Due Date
+              Start Date
             </span>
             <input
               type="date"
               value={dueDateDraft}
               onChange={(event) => setDueDateDraft(event.target.value)}
+              className="mt-3 w-full border border-[var(--workspace-border)] bg-transparent px-3 py-2 text-sm outline-none transition focus:border-[var(--workspace-accent)]"
+            />
+          </label>
+
+          <label className="block">
+            <span className="block text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+              End Date
+            </span>
+            <input
+              type="date"
+              value={dueEndDateDraft}
+              onChange={(event) => setDueEndDateDraft(event.target.value)}
               className="mt-3 w-full border border-[var(--workspace-border)] bg-transparent px-3 py-2 text-sm outline-none transition focus:border-[var(--workspace-accent)]"
             />
           </label>

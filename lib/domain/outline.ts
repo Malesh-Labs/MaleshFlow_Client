@@ -10,6 +10,7 @@ export type OutlineNodeLike = {
   taskStatus: string | null;
   priority: string | null;
   dueAt: number | null;
+  dueEndAt?: number | null;
   archived: boolean;
   sourceMeta?: Record<string, unknown> | null;
 };

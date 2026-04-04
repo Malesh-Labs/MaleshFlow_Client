@@ -10,6 +10,7 @@ export type ImportedOutlineNode = {
   taskStatus: ImportedTaskStatus;
   noteCompleted: boolean;
   dueAt: number | null;
+  dueEndAt: number | null;
   recurrenceFrequency: RecurrenceFrequency;
   lockKind: boolean;
   children: ImportedOutlineNode[];
@@ -18,7 +19,7 @@ export type ImportedOutlineNode = {
 const DYNALIST_MARKDOWN_LINK_PATTERN =
   /\[([^\]]+)\]\((https?:\/\/dynalist\.io\/[^)\s]+)\)/gi;
 const DUE_MARKER_PATTERN =
-  /\s*!\(\s*(\d{4}-\d{2}-\d{2})(?:\s*\|\s*([^)]+?))?\s*\)\s*$/i;
+  /\s*!\(\s*(\d{4}-\d{2}-\d{2})(?:\s*-\s*(\d{4}-\d{2}-\d{2}))?(?:\s*\|\s*([^)]+?))?\s*\)\s*$/i;
 const TASK_DONE_PATTERN = /^\[x\]\s*(.*)$/i;
 const TASK_TODO_PATTERN = /^\[\s\]\s*(.*)$/;
 const LEADING_BULLET_PATTERN = /^(?:[-*•]\s+)(.*)$/;
@@ -112,12 +113,17 @@ function parseImportedLine(rawLine: string): Omit<ImportedOutlineNode, "children
 
   let workingText = unwrappedText;
   let dueAt: number | null = null;
+  let dueEndAt: number | null = null;
   let recurrenceFrequency: RecurrenceFrequency = null;
 
   const dueMatch = workingText.match(DUE_MARKER_PATTERN);
   if (dueMatch) {
     dueAt = dateInputValueToTimestamp(dueMatch[1] ?? "");
-    recurrenceFrequency = parseRecurrenceShorthand(dueMatch[2]);
+    dueEndAt = dateInputValueToTimestamp(dueMatch[2] ?? "");
+    recurrenceFrequency = parseRecurrenceShorthand(dueMatch[3]);
+    if (dueAt && dueEndAt && dueEndAt <= dueAt) {
+      dueEndAt = null;
+    }
     workingText = workingText.slice(0, dueMatch.index).trim();
   }
 
@@ -139,6 +145,7 @@ function parseImportedLine(rawLine: string): Omit<ImportedOutlineNode, "children
       taskStatus: "done",
       noteCompleted: false,
       dueAt,
+      dueEndAt,
       recurrenceFrequency,
       lockKind: true,
     };
@@ -157,6 +164,7 @@ function parseImportedLine(rawLine: string): Omit<ImportedOutlineNode, "children
       taskStatus: "todo",
       noteCompleted: false,
       dueAt,
+      dueEndAt,
       recurrenceFrequency,
       lockKind: true,
     };
@@ -174,6 +182,7 @@ function parseImportedLine(rawLine: string): Omit<ImportedOutlineNode, "children
     taskStatus: kind === "task" ? "todo" : null,
     noteCompleted: false,
     dueAt: kind === "task" ? dueAt : null,
+    dueEndAt: kind === "task" ? dueEndAt : null,
     recurrenceFrequency: kind === "task" ? recurrenceFrequency : null,
     lockKind: kind === "task",
   };

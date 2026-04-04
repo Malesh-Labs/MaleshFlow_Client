@@ -142,12 +142,43 @@ export function formatDueDate(timestamp: number | null | undefined) {
   });
 }
 
+export function formatDueDateRange(
+  startTimestamp: number | null | undefined,
+  endTimestamp: number | null | undefined,
+) {
+  if (!startTimestamp && !endTimestamp) {
+    return "";
+  }
+
+  if (!startTimestamp) {
+    return formatDueDate(endTimestamp);
+  }
+
+  if (!endTimestamp || endTimestamp <= startTimestamp) {
+    return formatDueDate(startTimestamp);
+  }
+
+  return `${formatDueDate(startTimestamp)} - ${formatDueDate(endTimestamp)}`;
+}
+
 export function isOverdueDueDate(timestamp: number | null | undefined, now = new Date()) {
   if (!timestamp) {
     return false;
   }
 
   return timestamp < getTodayReferenceDate(now).getTime();
+}
+
+export function isOverdueDueDateRange(
+  startTimestamp: number | null | undefined,
+  endTimestamp: number | null | undefined,
+  now = new Date(),
+) {
+  if (endTimestamp) {
+    return endTimestamp < getTodayReferenceDate(now).getTime();
+  }
+
+  return isOverdueDueDate(startTimestamp, now);
 }
 
 export function getRecurrenceLabel(frequency: RecurrenceFrequency) {
@@ -221,4 +252,31 @@ export function advanceRecurringDueDate(args: {
   }
 
   return toLocalNoon(nextDate).getTime();
+}
+
+export function advanceRecurringDueDateRange(args: {
+  dueAt: number;
+  dueEndAt: number | null;
+  frequency: Exclude<RecurrenceFrequency, null>;
+  mode: RecurringCompletionMode;
+  now?: Date;
+}) {
+  const nextDueAt = advanceRecurringDueDate({
+    dueAt: args.dueAt,
+    frequency: args.frequency,
+    mode: args.mode,
+    now: args.now,
+  });
+
+  if (!args.dueEndAt || args.dueEndAt <= args.dueAt) {
+    return {
+      dueAt: nextDueAt,
+      dueEndAt: null,
+    };
+  }
+
+  return {
+    dueAt: nextDueAt,
+    dueEndAt: nextDueAt + (args.dueEndAt - args.dueAt),
+  };
 }

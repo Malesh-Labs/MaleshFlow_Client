@@ -10,7 +10,7 @@ import {
   type ImportedOutlineNode,
 } from "@/lib/domain/importer";
 import { filterPagesForCommandPalette } from "@/lib/domain/workspaceUi";
-import { getRecurrenceLabel } from "@/lib/domain/recurrence";
+import { formatDueDateRange, getRecurrenceLabel } from "@/lib/domain/recurrence";
 
 const SKIP = "skip" as const;
 
@@ -64,7 +64,7 @@ function ImportPreview({
                 <div className="mt-1 flex flex-wrap gap-2">
                   {node.dueAt ? (
                     <span className="rounded-full border border-[var(--workspace-border)] px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-[var(--workspace-text-faint)]">
-                      {new Date(node.dueAt).toLocaleDateString()}
+                      {formatDueDateRange(node.dueAt, node.dueEndAt)}
                     </span>
                   ) : null}
                   {node.recurrenceFrequency ? (
@@ -185,7 +185,7 @@ export function ImporterPanel({
       <div className="border-b border-[var(--workspace-border-subtle)] px-5 py-4">
         <p className="text-sm text-[var(--workspace-text-subtle)]">
           Paste text, choose a target page, preview the parsed nodes, then import them.
-          Dynalist markdown links become wiki links, long separator lines become <code>---</code>, and <code>!(YYYY-MM-DD | 6m)</code> becomes real task scheduling metadata.
+          Dynalist markdown links become wiki links, long separator lines become <code>---</code>, and date markers like <code>!(YYYY-MM-DD | 6m)</code> or <code>!(YYYY-MM-DD - YYYY-MM-DD)</code> become real task scheduling metadata.
         </p>
       </div>
       <div className="grid min-h-0 flex-1 gap-0 md:grid-cols-[minmax(0,0.92fr)_minmax(0,1.08fr)]">
