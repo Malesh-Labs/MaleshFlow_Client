@@ -527,7 +527,7 @@ export function MigrationPanel({ ownerKey }: MigrationPanelProps) {
                     }
                     className="border border-[var(--workspace-border)] bg-transparent px-2 py-1 text-xs uppercase tracking-[0.18em] text-[var(--workspace-text-muted)]"
                   >
-                    {runs.map((run) => (
+                    {runs.map((run: Doc<"migrationRuns">) => (
                       <option key={run._id} value={run._id}>
                         {run.title}
                       </option>

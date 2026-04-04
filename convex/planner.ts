@@ -318,6 +318,7 @@ export const completePlannerDay = mutation({
   args: {
     ownerKey: v.string(),
     pageId: v.id("pages"),
+    orderedNodeIds: v.optional(v.array(v.id("nodes"))),
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
@@ -376,6 +377,7 @@ export const completePlannerDay = mutation({
     let afterNodeId = nextDayDirectChildren[nextDayDirectChildren.length - 1]?._id ?? null;
     let movedCount = 0;
     let archivedDuplicateCount = 0;
+    const keptCarryChildren: Doc<"nodes">[] = [];
 
     for (const child of topDayChildren) {
       const linkedSourceTaskId = getPlannerLinkedSourceTaskId(child);
@@ -384,24 +386,59 @@ export const completePlannerDay = mutation({
         archivedDuplicateCount += 1;
         continue;
       }
+      keptCarryChildren.push(child);
+      if (linkedSourceTaskId) {
+        existingLinkedSourceIds.add(linkedSourceTaskId as string);
+      }
+    }
 
+    const candidateIds = [
+      ...nextDayDirectChildren.map((node) => node._id as Id<"nodes">),
+      ...keptCarryChildren.map((node) => node._id as Id<"nodes">),
+    ];
+    const candidateIdSet = new Set(candidateIds.map((id) => id as string));
+    let orderedNodeIds = candidateIds;
+    if (args.orderedNodeIds && args.orderedNodeIds.length === candidateIds.length) {
+      const seen = new Set<string>();
+      const isValid =
+        args.orderedNodeIds.every((nodeId) => {
+          const key = nodeId as string;
+          if (!candidateIdSet.has(key) || seen.has(key)) {
+            return false;
+          }
+          seen.add(key);
+          return true;
+        }) && seen.size === candidateIds.length;
+      if (isValid) {
+        orderedNodeIds = [...args.orderedNodeIds];
+      }
+    }
+
+    const carryIdSet = new Set(keptCarryChildren.map((node) => node._id as string));
+    for (const nodeId of orderedNodeIds) {
+      const node = candidateIds.find((candidateId) => candidateId === nodeId)
+        ? (await ctx.db.get(nodeId))
+        : null;
+      if (!node || node.archived) {
+        continue;
+      }
       const nextPosition = await computeNodePosition(
         ctx.db,
         page._id,
         nextDay._id,
         afterNodeId,
       );
-      await ctx.db.patch(child._id, {
+      const isCarryNode = carryIdSet.has(nodeId as string);
+      await ctx.db.patch(node._id, {
         parentNodeId: nextDay._id,
         position: nextPosition,
         updatedAt: now,
       });
-      await updateMovedPlannerSubtreeDate(ctx, child._id, nextDayDate, now);
-      afterNodeId = child._id;
-      movedCount += 1;
-      if (linkedSourceTaskId) {
-        existingLinkedSourceIds.add(linkedSourceTaskId as string);
+      if (isCarryNode) {
+        await updateMovedPlannerSubtreeDate(ctx, node._id, nextDayDate, now);
+        movedCount += 1;
       }
+      afterNodeId = node._id;
     }
 
     await setNodeTreeArchivedState(ctx.db, topDay._id, true, now);

@@ -39,8 +39,14 @@ export const plannerChatPlanSchema = z.object({
   operations: z.array(plannerChatOperationSchema).max(12),
 });
 
+export const plannerDayRollforwardPlanSchema = z.object({
+  rationale: z.string(),
+  orderedNodeIds: z.array(z.string()).max(128),
+});
+
 export type PlannerChatOperation = z.infer<typeof plannerChatOperationSchema>;
 export type PlannerChatPlan = z.infer<typeof plannerChatPlanSchema>;
+export type PlannerDayRollforwardPlan = z.infer<typeof plannerDayRollforwardPlanSchema>;
 
 export type PlannerTaskLike = {
   _id: string;

@@ -2402,7 +2402,7 @@ function ConfiguredWorkspace({
   const applyApprovedPlannerPlan = useMutation(api.chatData.applyApprovedPlannerPlan);
   const setPlannerStartDate = useMutation(api.planner.setPlannerStartDate);
   const appendPlannerDay = useMutation(api.planner.appendPlannerDay);
-  const completePlannerDay = useMutation(api.planner.completePlannerDay);
+  const completePlannerDayWithAi = useAction(api.plannerAi.completePlannerDayWithAi);
   const addRandomPlannerTask = useMutation(api.planner.addRandomPlannerTask);
   const resolveNextPlannerTask = useMutation(api.planner.resolveNextPlannerTask);
   const completePlannerTask = useMutation(api.planner.completePlannerTask);
@@ -5945,7 +5945,7 @@ function ConfiguredWorkspace({
     setIsPlannerCompletingDay(true);
     setPlannerStatus("");
     try {
-      const result = await completePlannerDay({
+      const result = await completePlannerDayWithAi({
         ownerKey,
         pageId: selectedPageId,
       });
@@ -5972,7 +5972,7 @@ function ConfiguredWorkspace({
       setIsPlannerCompletingDay(false);
     }
   }, [
-    completePlannerDay,
+    completePlannerDayWithAi,
     focusPlannerNode,
     isPageArchived,
     ownerKey,
