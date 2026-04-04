@@ -15,8 +15,15 @@ import {
   isPlannerPage,
   listEligiblePlannerSourceTasks,
   completePlannerLinkedTask,
+  getNodeSourceMeta,
 } from "./lib/planner";
-import { collectNodeTree, listPageNodes } from "./lib/workspace";
+import {
+  collectNodeTree,
+  computeNodePosition,
+  enqueuePageRootEmbeddingRefresh,
+  listPageNodes,
+  setNodeTreeArchivedState,
+} from "./lib/workspace";
 import {
   comparePlannerTaskOrder,
   getEffectiveTaskDueDateRange,
@@ -47,6 +54,28 @@ async function buildPlannerTaskSelectionSummary(ctx: MutationCtx, plannerNode: D
 
 function isPlannerPlaceholderTaskText(text: string) {
   return text.trim() === "__small__";
+}
+
+async function updateMovedPlannerSubtreeDate(
+  ctx: MutationCtx,
+  rootNodeId: Id<"nodes">,
+  plannerDate: number,
+  now: number,
+) {
+  const subtree = await collectNodeTree(ctx.db, rootNodeId);
+  for (const node of subtree) {
+    const sourceMeta = getNodeSourceMeta(node);
+    if (typeof sourceMeta.plannerDate !== "number") {
+      continue;
+    }
+    await ctx.db.patch(node._id, {
+      sourceMeta: {
+        ...sourceMeta,
+        plannerDate,
+      },
+      updatedAt: now,
+    });
+  }
 }
 
 export const ensurePlannerPageSections = mutation({
@@ -282,6 +311,109 @@ export const completePlannerTask = mutation({
       plannerNodeId: args.plannerNodeId,
       completionMode: args.completionMode,
     });
+  },
+});
+
+export const completePlannerDay = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived || !isPlannerPage(page)) {
+      throw new Error("Planner page not found.");
+    }
+
+    await ensurePlannerSections(ctx, page);
+    const nodes = await listPageNodes(ctx.db, page._id);
+    const dayRoots = getPlannerDayRoots(nodes);
+    const topDay = dayRoots[0] ?? null;
+    if (!topDay) {
+      throw new Error("Add a planner day before completing one.");
+    }
+
+    const topDayDate = getPlannerDayTimestamp(topDay);
+    if (!topDayDate) {
+      throw new Error("Top planner day is missing its date.");
+    }
+
+    let nextDay: Doc<"nodes"> | null = dayRoots[1] ?? null;
+    if (!nextDay) {
+      const created = await appendPlannerDayCore(ctx, {
+        page,
+        plannerDate: topDayDate + 24 * 60 * 60 * 1000,
+      });
+      nextDay = await ctx.db.get(created.dayNodeId);
+    }
+
+    if (!nextDay) {
+      throw new Error("Could not prepare the next planner day.");
+    }
+
+    const nextDayDate = getPlannerDayTimestamp(nextDay);
+    if (!nextDayDate) {
+      throw new Error("Next planner day is missing its date.");
+    }
+
+    const now = Date.now();
+    const topDayTree = await collectNodeTree(ctx.db, topDay._id);
+    const topDayChildren = topDayTree
+      .filter((node) => node.parentNodeId === topDay._id && !node.archived)
+      .sort((left, right) => left.position - right.position);
+    const nextDayTree = await collectNodeTree(ctx.db, nextDay._id);
+    const existingLinkedSourceIds = new Set(
+      nextDayTree
+        .map((node) => getPlannerLinkedSourceTaskId(node))
+        .filter((value): value is Id<"nodes"> => value !== null)
+        .map((value) => value as string),
+    );
+
+    const nextDayDirectChildren = nextDayTree
+      .filter((node) => node.parentNodeId === nextDay!._id && !node.archived)
+      .sort((left, right) => left.position - right.position);
+    let afterNodeId = nextDayDirectChildren[nextDayDirectChildren.length - 1]?._id ?? null;
+    let movedCount = 0;
+    let archivedDuplicateCount = 0;
+
+    for (const child of topDayChildren) {
+      const linkedSourceTaskId = getPlannerLinkedSourceTaskId(child);
+      if (linkedSourceTaskId && existingLinkedSourceIds.has(linkedSourceTaskId as string)) {
+        await setNodeTreeArchivedState(ctx.db, child._id, true, now);
+        archivedDuplicateCount += 1;
+        continue;
+      }
+
+      const nextPosition = await computeNodePosition(
+        ctx.db,
+        page._id,
+        nextDay._id,
+        afterNodeId,
+      );
+      await ctx.db.patch(child._id, {
+        parentNodeId: nextDay._id,
+        position: nextPosition,
+        updatedAt: now,
+      });
+      await updateMovedPlannerSubtreeDate(ctx, child._id, nextDayDate, now);
+      afterNodeId = child._id;
+      movedCount += 1;
+      if (linkedSourceTaskId) {
+        existingLinkedSourceIds.add(linkedSourceTaskId as string);
+      }
+    }
+
+    await setNodeTreeArchivedState(ctx.db, topDay._id, true, now);
+    await enqueuePageRootEmbeddingRefresh(ctx, page._id);
+
+    return {
+      completedDayNodeId: topDay._id,
+      nextDayNodeId: nextDay._id,
+      movedCount,
+      archivedDuplicateCount,
+      createdNextDay: dayRoots[1] ? false : true,
+    };
   },
 });
 

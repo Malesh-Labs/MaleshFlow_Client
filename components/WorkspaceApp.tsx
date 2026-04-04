@@ -2291,6 +2291,7 @@ function ConfiguredWorkspace({
   const [isRebuildingEmbeddings, setIsRebuildingEmbeddings] = useState(false);
   const [isRefreshingSidebarLinks, setIsRefreshingSidebarLinks] = useState(false);
   const [isPlannerAppendingDay, setIsPlannerAppendingDay] = useState(false);
+  const [isPlannerCompletingDay, setIsPlannerCompletingDay] = useState(false);
   const [isPlannerAddingRandomTask, setIsPlannerAddingRandomTask] = useState(false);
   const [isPlannerResolvingNextTask, setIsPlannerResolvingNextTask] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -2401,6 +2402,7 @@ function ConfiguredWorkspace({
   const applyApprovedPlannerPlan = useMutation(api.chatData.applyApprovedPlannerPlan);
   const setPlannerStartDate = useMutation(api.planner.setPlannerStartDate);
   const appendPlannerDay = useMutation(api.planner.appendPlannerDay);
+  const completePlannerDay = useMutation(api.planner.completePlannerDay);
   const addRandomPlannerTask = useMutation(api.planner.addRandomPlannerTask);
   const resolveNextPlannerTask = useMutation(api.planner.resolveNextPlannerTask);
   const completePlannerTask = useMutation(api.planner.completePlannerTask);
@@ -5935,6 +5937,49 @@ function ConfiguredWorkspace({
     selectedPageId,
   ]);
 
+  const handleCompletePlannerDay = useCallback(async () => {
+    if (!selectedPageId || pageMeta.pageType !== "planner" || isPageArchived) {
+      return;
+    }
+
+    setIsPlannerCompletingDay(true);
+    setPlannerStatus("");
+    try {
+      const result = await completePlannerDay({
+        ownerKey,
+        pageId: selectedPageId,
+      });
+      if (result?.nextDayNodeId) {
+        focusPlannerNode(result.nextDayNodeId as string);
+      }
+      const movedCount = typeof result?.movedCount === "number" ? result.movedCount : 0;
+      const duplicateCount =
+        typeof result?.archivedDuplicateCount === "number"
+          ? result.archivedDuplicateCount
+          : 0;
+      const parts = [`Completed the top day and rolled ${movedCount} item${movedCount === 1 ? "" : "s"} forward.`];
+      if (duplicateCount > 0) {
+        parts.push(
+          `${duplicateCount} linked duplicate${duplicateCount === 1 ? " was" : "s were"} skipped because it already existed in the next day.`,
+        );
+      }
+      setPlannerStatus(parts.join(" "));
+    } catch (error) {
+      setPlannerStatus(
+        error instanceof Error ? error.message : "Could not complete the top planner day.",
+      );
+    } finally {
+      setIsPlannerCompletingDay(false);
+    }
+  }, [
+    completePlannerDay,
+    focusPlannerNode,
+    isPageArchived,
+    ownerKey,
+    pageMeta.pageType,
+    selectedPageId,
+  ]);
+
   const handleAddRandomPlannerTask = useCallback(async () => {
     if (!selectedPageId || pageMeta.pageType !== "planner" || isPageArchived) {
       return;
@@ -6784,6 +6829,14 @@ function ConfiguredWorkspace({
                         className="border border-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)] disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {isPlannerAppendingDay ? "Adding…" : "Add Day"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleCompletePlannerDay()}
+                        disabled={isPlannerCompletingDay || isPageArchived}
+                        className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isPlannerCompletingDay ? "Completing…" : "Complete Day"}
                       </button>
                       <button
                         type="button"
