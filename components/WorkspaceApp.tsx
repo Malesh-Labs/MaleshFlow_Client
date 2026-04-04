@@ -2514,11 +2514,25 @@ function ConfiguredWorkspace({
   const uncategorizedPages = useMemo(
     () =>
       (pages ?? [])
-        .filter((page) => !page.archived && !sidebarLinkedPageIds.has(page._id as string))
+        .filter(
+          (page) =>
+            !page.archived &&
+            getPageMeta(page).pageType !== "journal" &&
+            !sidebarLinkedPageIds.has(page._id as string),
+        )
         .sort((left, right) =>
           left.title.localeCompare(right.title, undefined, { sensitivity: "base" }),
         ),
     [pages, sidebarLinkedPageIds],
+  );
+  const journalPages = useMemo(
+    () =>
+      (pages ?? [])
+        .filter((page) => !page.archived && getPageMeta(page).pageType === "journal")
+        .sort((left, right) =>
+          left.title.localeCompare(right.title, undefined, { sensitivity: "base" }),
+        ),
+    [pages],
   );
   const archivedPages = (pages ?? []).filter((page) => page.archived);
   const showUncategorizedSectionContent =
@@ -5412,6 +5426,42 @@ function ConfiguredWorkspace({
                         ))}
                       </div>
                     </div>
+                  </div>
+                </div>
+
+                <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
+                      Journal
+                    </p>
+                  </div>
+                  <div className="mt-3">
+                    {journalPages.length === 0 ? (
+                      <p className="text-sm text-[var(--workspace-text-faint)]">
+                        No journal pages.
+                      </p>
+                    ) : (
+                      <div className="space-y-1">
+                        {journalPages.map((page) => (
+                          <button
+                            key={page._id}
+                            type="button"
+                            onClick={() => handleSelectPage(page._id)}
+                            className={clsx(
+                              "block w-full px-2 py-1.5 text-left text-sm transition",
+                              selectedPageId === page._id
+                                ? "bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
+                                : "text-[var(--workspace-text-strong)] hover:bg-[var(--workspace-surface-accent)]",
+                            )}
+                          >
+                            <span>{page.title}</span>
+                            <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none text-[var(--workspace-text-faint)]">
+                              {getPageTypeEmoji(page)}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
 
