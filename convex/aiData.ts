@@ -192,6 +192,30 @@ export const saveNodeEmbedding = internalMutation({
   },
 });
 
+export const clearNodeEmbedding = internalMutation({
+  args: {
+    nodeId: v.id("nodes"),
+  },
+  handler: async (ctx, args) => {
+    const embeddingJobs = await ctx.db
+      .query("embeddingJobs")
+      .withIndex("by_node", (query) => query.eq("nodeId", args.nodeId))
+      .collect();
+    const embeddings = await ctx.db
+      .query("nodeEmbeddings")
+      .withIndex("by_node", (query) => query.eq("nodeId", args.nodeId))
+      .collect();
+
+    for (const job of embeddingJobs) {
+      await ctx.db.delete(job._id);
+    }
+
+    for (const embedding of embeddings) {
+      await ctx.db.delete(embedding._id);
+    }
+  },
+});
+
 export const applyTaskMetadata = internalMutation({
   args: {
     nodeId: v.id("nodes"),

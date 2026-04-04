@@ -1,5 +1,14 @@
 import { EMBEDDING_DIMENSIONS } from "./constants";
 
+export function shouldGenerateEmbeddingForNodeText(text: string) {
+  const normalized = text.trim();
+  if (normalized.length === 0) {
+    return false;
+  }
+
+  return normalized !== "---" && normalized !== ".";
+}
+
 export function buildEmbeddingInput(args: {
   pageTitle: string;
   ancestors: string[];

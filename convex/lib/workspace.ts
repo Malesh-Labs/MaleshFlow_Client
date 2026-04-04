@@ -4,6 +4,9 @@ import type { DatabaseReader, DatabaseWriter, MutationCtx } from "../_generated/
 import type { Doc, Id } from "../_generated/dataModel";
 import { extractLinks } from "../../lib/domain/links";
 import {
+  shouldGenerateEmbeddingForNodeText,
+} from "../../lib/domain/embeddings";
+import {
   buildRenormalizedPositions,
   getAppendPosition,
   getPositionBetween,
@@ -194,14 +197,24 @@ export async function enqueueNodeAiWork(
   ctx: MutationCtx,
   nodeId: Id<"nodes">,
 ) {
+  const node = await ctx.db.get(nodeId);
+  if (!node || node.archived) {
+    return;
+  }
   await ctx.scheduler.runAfter(0, internal.ai.extractTaskMetadata, { nodeId });
-  await ctx.scheduler.runAfter(0, internal.ai.generateEmbeddingForNode, { nodeId });
+  if (shouldGenerateEmbeddingForNodeText(node.text)) {
+    await ctx.scheduler.runAfter(0, internal.ai.generateEmbeddingForNode, { nodeId });
+  }
 }
 
 export async function enqueueNodeEmbeddingRefresh(
   ctx: MutationCtx,
   nodeId: Id<"nodes">,
 ) {
+  const node = await ctx.db.get(nodeId);
+  if (!node || node.archived || !shouldGenerateEmbeddingForNodeText(node.text)) {
+    return;
+  }
   await ctx.scheduler.runAfter(0, internal.ai.generateEmbeddingForNode, { nodeId });
 }
 
@@ -213,6 +226,10 @@ export async function enqueuePageRootEmbeddingRefresh(
 
   for (const node of rootNodes) {
     if (node.parentNodeId !== null) {
+      continue;
+    }
+
+    if (!shouldGenerateEmbeddingForNodeText(node.text)) {
       continue;
     }
 

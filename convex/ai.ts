@@ -12,6 +12,7 @@ import {
   buildDeterministicEmbedding,
   buildEmbeddingInput,
   buildRootEmbeddingInput,
+  shouldGenerateEmbeddingForNodeText,
 } from "../lib/domain/embeddings";
 import {
   normalizeScreenshotImportNodes,
@@ -43,6 +44,8 @@ const getNodeAiContextRef = internal.workspace.getNodeAiContext as any;
 const upsertEmbeddingJobRef = internal.aiData.upsertEmbeddingJob as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const saveNodeEmbeddingRef = internal.aiData.saveNodeEmbedding as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const clearNodeEmbeddingRef = internal.aiData.clearNodeEmbedding as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const applyTaskMetadataRef = internal.aiData.applyTaskMetadata as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -652,6 +655,16 @@ export const generateEmbeddingForNode = internalAction({
       });
 
       if (!context || context.node.archived) {
+        await ctx.runMutation(clearNodeEmbeddingRef, {
+          nodeId: args.nodeId,
+        });
+        return;
+      }
+
+      if (!shouldGenerateEmbeddingForNodeText(context.node.text)) {
+        await ctx.runMutation(clearNodeEmbeddingRef, {
+          nodeId: args.nodeId,
+        });
         return;
       }
 
@@ -672,6 +685,9 @@ export const generateEmbeddingForNode = internalAction({
             });
 
       if (input.trim().length === 0) {
+        await ctx.runMutation(clearNodeEmbeddingRef, {
+          nodeId: args.nodeId,
+        });
         return;
       }
 

@@ -17,6 +17,7 @@ import {
   buildDeterministicEmbedding,
   buildEmbeddingInput,
   buildRootEmbeddingInput,
+  shouldGenerateEmbeddingForNodeText,
 } from "../lib/domain/embeddings";
 import {
   applySelectedInlineFormattingShortcut,
@@ -821,6 +822,12 @@ test("buildDeterministicEmbedding is stable and uses contextual input", () => {
 
   assert.equal(first.length, 1536);
   assert.deepEqual(first, second);
+});
+
+test("shouldGenerateEmbeddingForNodeText skips trivial placeholder lines", () => {
+  assert.equal(shouldGenerateEmbeddingForNodeText("---"), false);
+  assert.equal(shouldGenerateEmbeddingForNodeText("."), false);
+  assert.equal(shouldGenerateEmbeddingForNodeText("real note"), true);
 });
 
 test("buildRootEmbeddingInput includes root-level subtree context", () => {
