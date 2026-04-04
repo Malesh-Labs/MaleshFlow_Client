@@ -2171,6 +2171,63 @@ export const moveNode = mutation({
   },
 });
 
+export const moveNodesBatch = mutation({
+  args: {
+    ownerKey: v.string(),
+    moves: v.array(
+      v.object({
+        nodeId: v.id("nodes"),
+        pageId: v.optional(v.id("pages")),
+        parentNodeId: v.optional(nullableNodeIdValidator),
+        afterNodeId: v.optional(nullableNodeIdValidator),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    if (args.moves.length === 0) {
+      return null;
+    }
+
+    const touchedPageIds = new Set<Id<"pages">>();
+
+    for (const move of args.moves) {
+      const node = await ctx.db.get(move.nodeId);
+      if (!node) {
+        throw new Error("Node not found.");
+      }
+
+      const previousPageId = node.pageId;
+      const pageId = move.pageId ?? node.pageId;
+      const parentNodeId =
+        move.parentNodeId === undefined ? node.parentNodeId : move.parentNodeId;
+      const position = await computeNodePosition(
+        ctx.db,
+        pageId,
+        parentNodeId,
+        move.afterNodeId ?? null,
+      );
+
+      await ctx.db.patch(move.nodeId, {
+        pageId,
+        parentNodeId,
+        position,
+        updatedAt: getTimestamp(),
+      });
+
+      touchedPageIds.add(previousPageId);
+      touchedPageIds.add(pageId);
+      await enqueueNodeEmbeddingRefresh(ctx, move.nodeId);
+    }
+
+    for (const pageId of touchedPageIds) {
+      await enqueuePageRootEmbeddingRefresh(ctx, pageId);
+    }
+
+    return null;
+  },
+});
+
 export const reorderNode = mutation({
   args: {
     ownerKey: v.string(),

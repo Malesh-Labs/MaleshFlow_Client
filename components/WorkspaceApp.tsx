@@ -2387,6 +2387,7 @@ function ConfiguredWorkspace({
   const createNodesBatch = useMutation(api.workspace.createNodesBatch);
   const updateNode = useMutation(api.workspace.updateNode);
   const moveNode = useMutation(api.workspace.moveNode);
+  const moveNodesBatch = useMutation(api.workspace.moveNodesBatch);
   const splitNode = useMutation(api.workspace.splitNode);
   const replaceNodeAndInsertSiblings = useMutation(
     api.workspace.replaceNodeAndInsertSiblings,
@@ -2968,6 +2969,38 @@ function ConfiguredWorkspace({
       `Pasted ${createdRootNodeIds.length} item${createdRootNodeIds.length === 1 ? "" : "s"}`,
     );
   }, [insertOutlineClipboardNodes, selectSingleNode, selectedNodeIds, visibleNodeOrder, workspaceNodeMap]);
+  const executeNodeMoveBatch = useCallback(
+    async (
+      moves: Array<{
+        nodeId: Id<"nodes">;
+        pageId: Id<"pages">;
+        parentNodeId: Id<"nodes"> | null;
+        afterNodeId: Id<"nodes"> | null;
+      }>,
+    ) => {
+      if (moves.length === 0) {
+        return;
+      }
+
+      if (moves.length === 1) {
+        const move = moves[0]!;
+        await moveNode({
+          ownerKey,
+          nodeId: move.nodeId,
+          pageId: move.pageId,
+          parentNodeId: move.parentNodeId,
+          afterNodeId: move.afterNodeId,
+        });
+        return;
+      }
+
+      await moveNodesBatch({
+        ownerKey,
+        moves,
+      });
+    },
+    [moveNode, moveNodesBatch, ownerKey],
+  );
   const canImportScreenshotWithoutSelection =
     (
       pageMeta.pageType === "default" ||
@@ -4046,21 +4079,13 @@ function ConfiguredWorkspace({
         return;
       }
 
-      for (const [index, context] of rootNodeContexts.entries()) {
+      const moves = rootNodeContexts.map((context, index) => {
         const beforePlacement = buildNodePlacement(
           context.pageId,
           context.parentNodeId,
           (context.previousSibling?._id as Id<"nodes"> | undefined) ?? null,
         );
         const afterPlacement = desiredPlacements[index]!;
-
-        await moveNode({
-          ownerKey,
-          nodeId: context.node._id as Id<"nodes">,
-          pageId: afterPlacement.pageId,
-          parentNodeId: afterPlacement.parentNodeId,
-          afterNodeId: afterPlacement.afterNodeId,
-        });
 
         historyEntries.push({
           type: "move_node",
@@ -4070,7 +4095,15 @@ function ConfiguredWorkspace({
           afterPlacement,
           focusEditorId: getNodeEditorId(context.node._id as Id<"nodes">),
         });
-      }
+        return {
+          nodeId: context.node._id as Id<"nodes">,
+          pageId: afterPlacement.pageId,
+          parentNodeId: afterPlacement.parentNodeId,
+          afterNodeId: afterPlacement.afterNodeId,
+        };
+      });
+
+      await executeNodeMoveBatch(moves);
 
       if (historyEntries.length === 1) {
         history.pushUndoEntry(historyEntries[0]!);
@@ -4093,7 +4126,7 @@ function ConfiguredWorkspace({
       });
       setExplicitSelectedNodeIds(rootNodeIds);
     },
-    [history, moveNode, ownerKey, pagesById, selectSingleNode, setExplicitSelectedNodeIds, sidebarNodes, tree],
+    [executeNodeMoveBatch, history, pagesById, selectSingleNode, setExplicitSelectedNodeIds, sidebarNodes, tree],
   );
 
   const focusLastVisiblePageNode = useCallback(() => {
@@ -4185,7 +4218,7 @@ function ConfiguredWorkspace({
                 | undefined) ?? null)
             : null;
 
-        for (const context of contexts) {
+        const moves = contexts.map((context) => {
           const beforePlacement = buildNodePlacement(
             context.pageId,
             context.parentNodeId,
@@ -4197,14 +4230,6 @@ function ConfiguredWorkspace({
             nextAfterNodeId,
           );
 
-          await moveNode({
-            ownerKey,
-            nodeId: context.node._id as Id<"nodes">,
-            pageId: context.pageId,
-            parentNodeId: context.parentNodeId,
-            afterNodeId: nextAfterNodeId,
-          });
-
           historyEntries.push({
             type: "move_node",
             pageId: context.pageId,
@@ -4214,8 +4239,17 @@ function ConfiguredWorkspace({
             focusEditorId: getNodeEditorId(context.node._id as Id<"nodes">),
           });
 
+          const move = {
+            nodeId: context.node._id as Id<"nodes">,
+            pageId: context.pageId,
+            parentNodeId: context.parentNodeId,
+            afterNodeId: nextAfterNodeId,
+          };
           nextAfterNodeId = context.node._id as Id<"nodes">;
-        }
+          return move;
+        });
+
+        await executeNodeMoveBatch(moves);
       } else {
         const nextSibling = lastContext.siblings[lastContext.siblingIndex + 1];
         if (!nextSibling) {
@@ -4224,7 +4258,7 @@ function ConfiguredWorkspace({
 
         const afterNodeId = nextSibling._id as Id<"nodes">;
 
-        for (const context of [...contexts].reverse()) {
+        const moves = [...contexts].reverse().map((context) => {
           const beforePlacement = buildNodePlacement(
             context.pageId,
             context.parentNodeId,
@@ -4236,14 +4270,6 @@ function ConfiguredWorkspace({
             afterNodeId,
           );
 
-          await moveNode({
-            ownerKey,
-            nodeId: context.node._id as Id<"nodes">,
-            pageId: context.pageId,
-            parentNodeId: context.parentNodeId,
-            afterNodeId,
-          });
-
           historyEntries.push({
             type: "move_node",
             pageId: context.pageId,
@@ -4252,7 +4278,15 @@ function ConfiguredWorkspace({
             afterPlacement,
             focusEditorId: getNodeEditorId(context.node._id as Id<"nodes">),
           });
-        }
+          return {
+            nodeId: context.node._id as Id<"nodes">,
+            pageId: context.pageId,
+            parentNodeId: context.parentNodeId,
+            afterNodeId,
+          };
+        });
+
+        await executeNodeMoveBatch(moves);
       }
 
       if (historyEntries.length === 0) {
@@ -4278,8 +4312,7 @@ function ConfiguredWorkspace({
     },
     [
       history,
-      moveNode,
-      ownerKey,
+      executeNodeMoveBatch,
       pagesById,
       selectSingleNode,
       selectedNodeIds,
@@ -4363,7 +4396,7 @@ function ConfiguredWorkspace({
         let nextAfterNodeId = parentNode._id as Id<"nodes">;
         const targetParentNodeId = (parentNode.parentNodeId as Id<"nodes"> | null) ?? null;
 
-        for (const context of contexts) {
+        const moves = contexts.map((context) => {
           const beforePlacement = buildNodePlacement(
             context.pageId,
             context.parentNodeId,
@@ -4375,14 +4408,6 @@ function ConfiguredWorkspace({
             nextAfterNodeId,
           );
 
-          await moveNode({
-            ownerKey,
-            nodeId: context.node._id as Id<"nodes">,
-            pageId: context.pageId,
-            parentNodeId: targetParentNodeId,
-            afterNodeId: nextAfterNodeId,
-          });
-
           historyEntries.push({
             type: "move_node",
             pageId: context.pageId,
@@ -4392,8 +4417,17 @@ function ConfiguredWorkspace({
             focusEditorId: getNodeEditorId(context.node._id as Id<"nodes">),
           });
 
+          const move = {
+            nodeId: context.node._id as Id<"nodes">,
+            pageId: context.pageId,
+            parentNodeId: targetParentNodeId,
+            afterNodeId: nextAfterNodeId,
+          };
           nextAfterNodeId = context.node._id as Id<"nodes">;
-        }
+          return move;
+        });
+
+        await executeNodeMoveBatch(moves);
       } else {
         if (!firstContext.previousSibling) {
           return;
@@ -4402,7 +4436,7 @@ function ConfiguredWorkspace({
         let nextAfterNodeId = getLastChildNodeId(firstContext.previousSibling);
         const targetParentNodeId = firstContext.previousSibling._id as Id<"nodes">;
 
-        for (const context of contexts) {
+        const moves = contexts.map((context) => {
           const beforePlacement = buildNodePlacement(
             context.pageId,
             context.parentNodeId,
@@ -4414,14 +4448,6 @@ function ConfiguredWorkspace({
             nextAfterNodeId,
           );
 
-          await moveNode({
-            ownerKey,
-            nodeId: context.node._id as Id<"nodes">,
-            pageId: context.pageId,
-            parentNodeId: targetParentNodeId,
-            afterNodeId: nextAfterNodeId,
-          });
-
           historyEntries.push({
             type: "move_node",
             pageId: context.pageId,
@@ -4431,8 +4457,17 @@ function ConfiguredWorkspace({
             focusEditorId: getNodeEditorId(context.node._id as Id<"nodes">),
           });
 
+          const move = {
+            nodeId: context.node._id as Id<"nodes">,
+            pageId: context.pageId,
+            parentNodeId: targetParentNodeId,
+            afterNodeId: nextAfterNodeId,
+          };
           nextAfterNodeId = context.node._id as Id<"nodes">;
-        }
+          return move;
+        });
+
+        await executeNodeMoveBatch(moves);
       }
 
       if (historyEntries.length === 0) {
@@ -4460,8 +4495,7 @@ function ConfiguredWorkspace({
     },
     [
       history,
-      moveNode,
-      ownerKey,
+      executeNodeMoveBatch,
       pagesById,
       selectedNodeIds,
       setDragSelection,
