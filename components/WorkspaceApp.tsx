@@ -4729,15 +4729,6 @@ function ConfiguredWorkspace({
     const historyEntries: Array<Extract<HistoryEntry, { type: "archive_node_tree" }>> = [];
 
     for (const node of deletableNodes) {
-      if (isPlannerLinkedTask(node)) {
-        await completePlannerTask({
-          ownerKey,
-          plannerNodeId: node._id as Id<"nodes">,
-          completionMode: recurringCompletionMode,
-        });
-        continue;
-      }
-
       const context = findNodeContext(sidebarNodes, tree, node._id as string);
       const focusAfterRedoId =
         context?.previousSibling?._id
@@ -4791,8 +4782,6 @@ function ConfiguredWorkspace({
     tree,
     visibleNodeOrder,
     workspaceNodeMap,
-    completePlannerTask,
-    recurringCompletionMode,
   ]);
 
   const openInsertedComposer = useCallback(
@@ -10681,15 +10670,6 @@ function OutlineNodeEditor({
 
     if (event.key === "Backspace" && draft.length === 0 && !isDisabled) {
       event.preventDefault();
-      if (isPlannerLinkedTask(node)) {
-        await completePlannerTaskMutation({
-          ownerKey,
-          plannerNodeId: node._id as Id<"nodes">,
-          completionMode: recurringCompletionMode,
-        });
-        history.resetTrackedValue(editorId, editorTarget);
-        return;
-      }
       await setNodeTreeArchived({
         ownerKey,
         nodeId: node._id as Id<"nodes">,
