@@ -7467,7 +7467,7 @@ function ConfiguredWorkspace({
         >
           <div
             className={clsx(
-              "mx-auto mt-16 flex max-h-[calc(100vh-8rem)] w-full flex-col overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]",
+              "mx-auto mt-16 flex h-[calc(100vh-8rem)] w-full flex-col overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]",
               paletteMode === "migration"
                 ? "max-w-6xl"
                 : paletteMode === "chat" ||
@@ -7669,7 +7669,7 @@ function ConfiguredWorkspace({
             <div
               ref={paletteResultsRef}
               className={clsx(
-                "min-h-0 flex-1",
+                "min-h-0 h-full flex-1",
               paletteMode === "chat" ||
               paletteMode === "replace" ||
               paletteMode === "archive" ||
