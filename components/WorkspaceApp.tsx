@@ -152,11 +152,11 @@ type PaletteMode =
   | "screenshotImport"
   | "taskSchedule";
 const PALETTE_MODE_ORDER: PaletteMode[] = [
+  "actions",
   "pages",
   "find",
   "nodes",
   "chat",
-  "actions",
 ];
 type NodeSearchResult = {
   node: Doc<"nodes">;
@@ -7547,6 +7547,20 @@ function ConfiguredWorkspace({
                 <button
                   type="button"
                   onClick={() => {
+                    switchPaletteMode("actions");
+                  }}
+                  className={clsx(
+                    "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
+                    paletteMode === "actions"
+                      ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
+                      : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                  )}
+                >
+                  Actions
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
                     switchPaletteMode("pages");
                   }}
                   className={clsx(
@@ -7599,20 +7613,6 @@ function ConfiguredWorkspace({
                   )}
                 >
                   Chat
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    switchPaletteMode("actions");
-                  }}
-                  className={clsx(
-                    "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
-                    paletteMode === "actions"
-                      ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
-                      : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
-                  )}
-                >
-                  Actions
                 </button>
                 {paletteMode === "archive" ? (
                   <button
