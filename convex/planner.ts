@@ -45,6 +45,10 @@ async function buildPlannerTaskSelectionSummary(ctx: MutationCtx, plannerNode: D
   };
 }
 
+function isPlannerPlaceholderTaskText(text: string) {
+  return text.trim() === "__small__";
+}
+
 export const ensurePlannerPageSections = mutation({
   args: {
     ownerKey: v.string(),
@@ -206,6 +210,7 @@ export const resolveNextPlannerTask = mutation({
     const currentDayTasks = currentDayTree
       .filter((node) => node._id !== currentDay._id)
       .filter((node) => node.kind === "task" && node.taskStatus !== "done" && node.taskStatus !== "cancelled")
+      .filter((node) => !isPlannerPlaceholderTaskText(node.text))
       .sort((left, right) =>
         comparePlannerTaskOrder(
           { ...left, ...getEffectiveTaskDueDateRange(left, currentDayNodeMap) },

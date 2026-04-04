@@ -9494,6 +9494,7 @@ function OutlineNodeEditor({
   const isCollapsed = hasChildren && collapsedNodeIds.has(node._id);
   const isTaskRow = node.kind === "task";
   const isHeadingRow = isHeadingLine;
+  const hidePlannerTemplateWeekdayMarker = isPlannerTemplateWeekdayRoot;
   const recurrenceFrequency = getNodeRecurrenceFrequency(node);
   const effectiveDueRange = useMemo(
     () => getEffectiveTaskDueDateRange(node, nodeMap),
@@ -10953,10 +10954,17 @@ function OutlineNodeEditor({
             <span className="absolute -left-1.5 -top-[5px] h-2.5 w-2.5 rounded-full bg-[var(--workspace-brand)]" />
           </div>
         ) : null}
-        <div className={clsx("flex gap-1.5 items-start", isHeadingRow ? headingRowMinHeightClass : "min-h-0")}>
+        <div
+          className={clsx(
+            "flex items-start",
+            hidePlannerTemplateWeekdayMarker ? "gap-0" : "gap-1.5",
+            isHeadingRow ? headingRowMinHeightClass : "min-h-0",
+          )}
+        >
           <div
             className={clsx(
-              "flex w-4 flex-none justify-center text-[var(--workspace-text-faint)]",
+              "flex flex-none justify-center text-[var(--workspace-text-faint)]",
+              hidePlannerTemplateWeekdayMarker ? "w-0 overflow-hidden opacity-0" : "w-4",
               isHeadingRow
                 ? clsx("items-start", headingMarkerOffsetClass)
                 : isTaskRow
@@ -10964,7 +10972,8 @@ function OutlineNodeEditor({
                   : "items-start pt-[5px]",
             )}
           >
-            {isLocked ||
+            {hidePlannerTemplateWeekdayMarker ||
+            isLocked ||
             ((isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder) ? null : node.kind === "task" ? (
               <button
                 type="button"
