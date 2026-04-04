@@ -1667,6 +1667,13 @@ function serializeTreeNodeForClipboard(node: TreeNode): OutlineClipboardNode {
   };
 }
 
+function countTreeNodeSubtree(node: TreeNode): number {
+  return (
+    1 +
+    node.children.reduce((total, child) => total + countTreeNodeSubtree(child), 0)
+  );
+}
+
 function buildOutlineClipboardText(nodes: OutlineClipboardNode[], depth = 0): string {
   const lines: string[] = [];
 
@@ -4723,9 +4730,16 @@ function ConfiguredWorkspace({
       return;
     }
 
-    if (deletableNodes.length > 1) {
+    const totalDeletedNodeCount = deletableNodes.reduce((total, node) => {
+      const treeNode =
+        findTreeNodeById(tree, node._id as string) ??
+        findTreeNodeById(sidebarNodes, node._id as string);
+      return total + (treeNode ? countTreeNodeSubtree(treeNode) : 1);
+    }, 0);
+
+    if (totalDeletedNodeCount > 1) {
       const confirmed = window.confirm(
-        `Delete ${deletableNodes.length} selected items?`,
+        `Delete ${totalDeletedNodeCount} selected items?`,
       );
       if (!confirmed) {
         return;
