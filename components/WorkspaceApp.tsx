@@ -2646,9 +2646,6 @@ function ConfiguredWorkspace({
             )
           : tree;
   const sectionDepthOffset = isMobileLayout ? 0 : 1;
-  const taskVisibleRoots = [taskSidebarSection].filter(
-    (node): node is TreeNode => Boolean(node),
-  );
   const plannerVisibleRoots = [plannerTemplateSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
@@ -2663,7 +2660,7 @@ function ConfiguredWorkspace({
   );
   const pageVisibleRows =
     pageMeta.pageType === "task"
-      ? flattenTreeNodes([...genericRoots, ...taskVisibleRoots], collapsedNodeIds)
+      ? flattenTreeNodes(genericRoots, collapsedNodeIds)
       : pageMeta.pageType === "planner"
       ? flattenTreeNodes([...genericRoots, ...plannerVisibleRoots], collapsedNodeIds)
       : pageMeta.pageType === "model"
@@ -6591,94 +6588,48 @@ function ConfiguredWorkspace({
                 }}
               >
                 {pageMeta.pageType === "task" ? (
-                  <div className="space-y-8">
-                    <div className="min-w-0 space-y-1">
-                      <OutlineNodeList
-                        nodes={genericRoots}
-                        ownerKey={ownerKey}
-                        pageId={selectedPage._id}
-                        nodeBacklinkCounts={pageNodeBacklinkCounts}
-                        nodeMap={nodeMap}
-                        createNodesBatch={createNodesBatch}
-                        insertOutlineClipboardNodes={insertOutlineClipboardNodes}
-                        updateNode={updateNode}
-                        moveNode={moveNode}
-                        splitNode={splitNode}
-                        replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
-                        setNodeTreeArchived={setNodeTreeArchived}
-                        isPageReadOnly={isPageArchived}
-                        collapsedNodeIds={collapsedNodeIds}
-                        selectedNodeIds={selectedNodeIds}
-                        onToggleNodeCollapsed={toggleNodeCollapsed}
-                        onSelectSingleNode={selectSingleNode}
-                        onSelectNodeRange={selectNodeRange}
-                        pendingInsertedComposer={pendingInsertedComposer}
-                        onOpenInsertedComposer={openInsertedComposer}
-                        onClearInsertedComposer={clearInsertedComposer}
-                        onBeginTextEditing={clearNodeSelection}
-                        activeDraggedNodeId={activeDraggedNodeId}
-                        activeDraggedNodePayload={activeDraggedNodePayload}
-                        onSetActiveDraggedNodeId={setActiveDraggedNodeId}
-                        onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
-                        onSetSelectedNodeIds={setExplicitSelectedNodeIds}
-                        buildDraggedNodePayload={buildDraggedNodePayload}
-                        onDropDraggedNodes={dropDraggedNodes}
-                        onSelectionStart={beginNodeSelection}
-                        onSelectionExtend={extendNodeSelection}
-                        availableTags={sortedTags}
-                        pagesByTitle={pagesByTitle}
-                        pagesById={pagesById}
-                        onOpenPage={handleSelectPage}
-                        onOpenNode={handleOpenLinkedNode}
-                        onOpenTag={openFindPaletteForQuery}
-                        onOpenFindQuery={openFindPaletteForQuery}
-                        recurringCompletionMode={recurringCompletionMode}
-                      />
-                    </div>
-                    {taskSidebarSection ? (
-                      <PageSection
-                        title="Sidebar"
-                        sectionNode={taskSidebarSection}
-                        ownerKey={ownerKey}
-                        pageId={selectedPage._id}
-                        nodeBacklinkCounts={pageNodeBacklinkCounts}
-                        nodeMap={nodeMap}
-                        createNodesBatch={createNodesBatch}
-                        insertOutlineClipboardNodes={insertOutlineClipboardNodes}
-                        updateNode={updateNode}
-                        moveNode={moveNode}
-                        splitNode={splitNode}
-                        replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
-                        setNodeTreeArchived={setNodeTreeArchived}
-                        isPageReadOnly={isPageArchived}
-                        collapsedNodeIds={collapsedNodeIds}
-                        selectedNodeIds={selectedNodeIds}
-                        onToggleNodeCollapsed={toggleNodeCollapsed}
-                        onSelectSingleNode={selectSingleNode}
-                        onSelectNodeRange={selectNodeRange}
-                        pendingInsertedComposer={pendingInsertedComposer}
-                        onOpenInsertedComposer={openInsertedComposer}
-                        onClearInsertedComposer={clearInsertedComposer}
-                        onBeginTextEditing={clearNodeSelection}
-                        activeDraggedNodeId={activeDraggedNodeId}
-                        activeDraggedNodePayload={activeDraggedNodePayload}
-                        onSetActiveDraggedNodeId={setActiveDraggedNodeId}
-                        onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
-                        onSetSelectedNodeIds={setExplicitSelectedNodeIds}
-                        buildDraggedNodePayload={buildDraggedNodePayload}
-                        onDropDraggedNodes={dropDraggedNodes}
-                        onSelectionStart={beginNodeSelection}
-                        onSelectionExtend={extendNodeSelection}
-                        availableTags={sortedTags}
-                        pagesByTitle={pagesByTitle}
-                        pagesById={pagesById}
-                        onOpenPage={handleSelectPage}
-                        onOpenNode={handleOpenLinkedNode}
-                        onOpenTag={openFindPaletteForQuery}
-                        onOpenFindQuery={openFindPaletteForQuery}
-                        recurringCompletionMode={recurringCompletionMode}
-                      />
-                    ) : null}
+                  <div className="min-w-0 space-y-1">
+                    <OutlineNodeList
+                      nodes={genericRoots}
+                      ownerKey={ownerKey}
+                      pageId={selectedPage._id}
+                      nodeBacklinkCounts={pageNodeBacklinkCounts}
+                      nodeMap={nodeMap}
+                      createNodesBatch={createNodesBatch}
+                      insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+                      updateNode={updateNode}
+                      moveNode={moveNode}
+                      splitNode={splitNode}
+                      replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                      setNodeTreeArchived={setNodeTreeArchived}
+                      isPageReadOnly={isPageArchived}
+                      collapsedNodeIds={collapsedNodeIds}
+                      selectedNodeIds={selectedNodeIds}
+                      onToggleNodeCollapsed={toggleNodeCollapsed}
+                      onSelectSingleNode={selectSingleNode}
+                      onSelectNodeRange={selectNodeRange}
+                      pendingInsertedComposer={pendingInsertedComposer}
+                      onOpenInsertedComposer={openInsertedComposer}
+                      onClearInsertedComposer={clearInsertedComposer}
+                      onBeginTextEditing={clearNodeSelection}
+                      activeDraggedNodeId={activeDraggedNodeId}
+                      activeDraggedNodePayload={activeDraggedNodePayload}
+                      onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                      onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                      onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                      buildDraggedNodePayload={buildDraggedNodePayload}
+                      onDropDraggedNodes={dropDraggedNodes}
+                      onSelectionStart={beginNodeSelection}
+                      onSelectionExtend={extendNodeSelection}
+                      availableTags={sortedTags}
+                      pagesByTitle={pagesByTitle}
+                      pagesById={pagesById}
+                      onOpenPage={handleSelectPage}
+                      onOpenNode={handleOpenLinkedNode}
+                      onOpenTag={openFindPaletteForQuery}
+                      onOpenFindQuery={openFindPaletteForQuery}
+                      recurringCompletionMode={recurringCompletionMode}
+                    />
                   </div>
                 ) : pageMeta.pageType === "planner" ? (
                   <div className="space-y-8">
