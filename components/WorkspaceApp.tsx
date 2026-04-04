@@ -364,7 +364,6 @@ type WorkspaceErrorBoundaryState = {
 type SectionSlot =
   | "taskSidebar"
   | "plannerSidebar"
-  | "plannerRunningArchive"
   | "plannerTemplate"
   | "model"
   | "recentExamples"
@@ -2544,7 +2543,6 @@ function ConfiguredWorkspace({
   const recentExamplesSection = findSectionNode(tree, "recentExamples");
   const taskSidebarSection = findSectionNode(tree, "taskSidebar");
   const plannerSidebarSection = findSectionNode(tree, "plannerSidebar");
-  const plannerRunningArchiveSection = findSectionNode(tree, "plannerRunningArchive");
   const plannerTemplateSection = findSectionNode(tree, "plannerTemplate");
   const journalThoughtsSection = findSectionNode(tree, "journalThoughts");
   const journalFeedbackSection = findSectionNode(tree, "journalFeedback");
@@ -2611,11 +2609,7 @@ function ConfiguredWorkspace({
       ? collectChildren(
           tree,
           new Set(
-            [
-              plannerSidebarSection?._id,
-              plannerRunningArchiveSection?._id,
-              plannerTemplateSection?._id,
-            ].filter(Boolean) as string[],
+            [plannerSidebarSection?._id, plannerTemplateSection?._id].filter(Boolean) as string[],
           ),
         )
       : pageMeta.pageType === "model"
@@ -2642,10 +2636,7 @@ function ConfiguredWorkspace({
   const taskVisibleRoots = [taskSidebarSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
-  const plannerTopVisibleRoots = [plannerRunningArchiveSection].filter(
-    (node): node is TreeNode => Boolean(node),
-  );
-  const plannerBottomVisibleRoots = [plannerTemplateSection].filter(
+  const plannerVisibleRoots = [plannerTemplateSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
   const modelVisibleRoots = [modelSection, recentExamplesSection].filter(
@@ -2661,10 +2652,7 @@ function ConfiguredWorkspace({
     pageMeta.pageType === "task"
       ? flattenTreeNodes([...genericRoots, ...taskVisibleRoots], collapsedNodeIds)
       : pageMeta.pageType === "planner"
-      ? flattenTreeNodes(
-          [...plannerTopVisibleRoots, ...genericRoots, ...plannerBottomVisibleRoots],
-          collapsedNodeIds,
-        )
+      ? flattenTreeNodes([...genericRoots, ...plannerVisibleRoots], collapsedNodeIds)
       : pageMeta.pageType === "model"
       ? flattenTreeNodes([...modelVisibleRoots, ...genericRoots], collapsedNodeIds)
       : pageMeta.pageType === "journal"
@@ -3362,7 +3350,7 @@ function ConfiguredWorkspace({
       return;
     }
 
-    if (plannerSidebarSection && plannerRunningArchiveSection && plannerTemplateSection) {
+    if (plannerSidebarSection && plannerTemplateSection) {
       hasRequestedPlannerSections.current.delete(selectedPage._id as string);
       return;
     }
@@ -3384,7 +3372,6 @@ function ConfiguredWorkspace({
     isOwnerKeyValid,
     ownerKey,
     pageMeta.pageType,
-    plannerRunningArchiveSection,
     plannerSidebarSection,
     plannerTemplateSection,
     selectedPage,
@@ -6732,7 +6719,7 @@ function ConfiguredWorkspace({
                       <p className="text-sm text-[var(--workspace-text-subtle)]">{plannerStatus}</p>
                     ) : null}
                     <p className="text-sm text-[var(--workspace-text-faint)]">
-                      Edit the Monday-Sunday template by typing under those weekday rows below. Completed planner tasks move into the running archive section above your day plans.
+                      Edit the Monday-Sunday template by typing under those weekday rows below. Completed planner tasks currently archive into the global archived <span className="text-[var(--workspace-text-subtle)]">Past Weeks</span> page.
                     </p>
                     {plannerNextTaskSuggestion ? (
                       <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4">
@@ -6801,48 +6788,6 @@ function ConfiguredWorkspace({
                     ) : null}
                     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start">
                       <div className="min-w-0 space-y-1">
-                        <PageSection
-                          title="Running Archive"
-                          sectionNode={plannerRunningArchiveSection}
-                          ownerKey={ownerKey}
-                          pageId={selectedPage._id}
-                          nodeBacklinkCounts={pageNodeBacklinkCounts}
-                          nodeMap={nodeMap}
-                          createNodesBatch={createNodesBatch}
-                          insertOutlineClipboardNodes={insertOutlineClipboardNodes}
-                          updateNode={updateNode}
-                          moveNode={moveNode}
-                          splitNode={splitNode}
-                          replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
-                          setNodeTreeArchived={setNodeTreeArchived}
-                          isPageReadOnly={isPageArchived}
-                          collapsedNodeIds={collapsedNodeIds}
-                          selectedNodeIds={selectedNodeIds}
-                          onToggleNodeCollapsed={toggleNodeCollapsed}
-                          onSelectSingleNode={selectSingleNode}
-                          onSelectNodeRange={selectNodeRange}
-                          pendingInsertedComposer={pendingInsertedComposer}
-                          onOpenInsertedComposer={openInsertedComposer}
-                          onClearInsertedComposer={clearInsertedComposer}
-                          onBeginTextEditing={clearNodeSelection}
-                          activeDraggedNodeId={activeDraggedNodeId}
-                          activeDraggedNodePayload={activeDraggedNodePayload}
-                          onSetActiveDraggedNodeId={setActiveDraggedNodeId}
-                          onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
-                          onSetSelectedNodeIds={setExplicitSelectedNodeIds}
-                          buildDraggedNodePayload={buildDraggedNodePayload}
-                          onDropDraggedNodes={dropDraggedNodes}
-                          onSelectionStart={beginNodeSelection}
-                          onSelectionExtend={extendNodeSelection}
-                          availableTags={sortedTags}
-                          pagesByTitle={pagesByTitle}
-                          pagesById={pagesById}
-                          onOpenPage={handleSelectPage}
-                          onOpenNode={handleOpenLinkedNode}
-                          onOpenTag={openFindPaletteForQuery}
-                          onOpenFindQuery={openFindPaletteForQuery}
-                          recurringCompletionMode={recurringCompletionMode}
-                        />
                         <OutlineNodeList
                           nodes={genericRoots}
                           ownerKey={ownerKey}
