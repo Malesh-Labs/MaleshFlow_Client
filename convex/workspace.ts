@@ -1979,6 +1979,115 @@ export const updateNode = mutation({
   },
 });
 
+export const updateNodesBatch = mutation({
+  args: {
+    ownerKey: v.string(),
+    updates: v.array(
+      v.object({
+        nodeId: v.id("nodes"),
+        text: v.optional(v.string()),
+        kind: v.optional(nodeKindValidator),
+        lockKind: v.optional(v.boolean()),
+        taskStatus: v.optional(taskStatusValidator),
+        noteCompleted: v.optional(v.boolean()),
+        priority: v.optional(priorityValidator),
+        dueAt: v.optional(v.union(v.number(), v.null())),
+        dueEndAt: v.optional(v.union(v.number(), v.null())),
+        recurrenceFrequency: v.optional(recurrenceFrequencyValidator),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    if (args.updates.length === 0) {
+      return null;
+    }
+
+    const touchedPageIds = new Set<Id<"pages">>();
+
+    for (const update of args.updates) {
+      const node = await ctx.db.get(update.nodeId);
+      if (!node) {
+        throw new Error("Node not found.");
+      }
+
+      const patch: Partial<Doc<"nodes">> = {
+        updatedAt: getTimestamp(),
+      };
+
+      if (update.text !== undefined) {
+        patch.text = update.text;
+      }
+
+      if (update.kind !== undefined) {
+        patch.kind = update.kind;
+        patch.taskStatus =
+          update.kind === "task"
+            ? (update.taskStatus ?? node.taskStatus ?? "todo")
+            : null;
+      } else if (update.taskStatus !== undefined) {
+        patch.taskStatus = update.taskStatus;
+      }
+
+      if (update.priority !== undefined) {
+        patch.priority = update.priority;
+      }
+
+      if (update.dueAt !== undefined) {
+        patch.dueAt = update.dueAt;
+      }
+
+      if (update.dueEndAt !== undefined) {
+        patch.dueEndAt = update.dueEndAt;
+      }
+
+      if (
+        update.lockKind !== undefined ||
+        update.noteCompleted !== undefined ||
+        update.kind !== undefined ||
+        update.recurrenceFrequency !== undefined
+      ) {
+        const sourceMeta =
+          node.sourceMeta && typeof node.sourceMeta === "object"
+            ? { ...(node.sourceMeta as Record<string, unknown>) }
+            : {};
+
+        if (update.lockKind !== undefined) {
+          sourceMeta.taskKindLocked = update.lockKind;
+        }
+
+        if (update.noteCompleted !== undefined) {
+          sourceMeta.noteCompleted = update.noteCompleted;
+        } else if (update.kind === "task") {
+          sourceMeta.noteCompleted = false;
+        }
+
+        if (update.recurrenceFrequency !== undefined) {
+          sourceMeta.recurrenceFrequency = update.recurrenceFrequency;
+        } else if (update.kind === "note") {
+          sourceMeta.recurrenceFrequency = null;
+        }
+
+        patch.sourceMeta = sourceMeta;
+      }
+
+      await ctx.db.patch(update.nodeId, patch);
+      const refreshed = await ctx.db.get(update.nodeId);
+      if (refreshed) {
+        await syncLinksForNode(ctx.db, refreshed);
+        await enqueueNodeAiWork(ctx, refreshed._id);
+        touchedPageIds.add(refreshed.pageId);
+      }
+    }
+
+    for (const pageId of touchedPageIds) {
+      await enqueuePageRootEmbeddingRefresh(ctx, pageId);
+    }
+
+    return null;
+  },
+});
+
 export const splitNode = mutation({
   args: {
     ownerKey: v.string(),

@@ -2386,6 +2386,7 @@ function ConfiguredWorkspace({
   const refreshSidebarLinks = useMutation(api.workspace.refreshSidebarLinks);
   const createNodesBatch = useMutation(api.workspace.createNodesBatch);
   const updateNode = useMutation(api.workspace.updateNode);
+  const updateNodesBatch = useMutation(api.workspace.updateNodesBatch);
   const moveNode = useMutation(api.workspace.moveNode);
   const moveNodesBatch = useMutation(api.workspace.moveNodesBatch);
   const splitNode = useMutation(api.workspace.splitNode);
@@ -3000,6 +3001,40 @@ function ConfiguredWorkspace({
       });
     },
     [moveNode, moveNodesBatch, ownerKey],
+  );
+  const executeNodeUpdateBatch = useCallback(
+    async (
+      updates: Array<{
+        nodeId: Id<"nodes">;
+        text?: string;
+        kind?: "note" | "task";
+        lockKind?: boolean;
+        taskStatus?: NodeValueSnapshot["taskStatus"];
+        noteCompleted?: boolean;
+        dueAt?: number | null;
+        dueEndAt?: number | null;
+        recurrenceFrequency?: RecurrenceFrequency | null;
+      }>,
+    ) => {
+      if (updates.length === 0) {
+        return;
+      }
+
+      if (updates.length === 1) {
+        const update = updates[0]!;
+        await updateNode({
+          ownerKey,
+          ...update,
+        });
+        return;
+      }
+
+      await updateNodesBatch({
+        ownerKey,
+        updates,
+      });
+    },
+    [ownerKey, updateNode, updateNodesBatch],
   );
   const canImportScreenshotWithoutSelection =
     (
@@ -4550,6 +4585,17 @@ function ConfiguredWorkspace({
 
     const historyEntries: Array<Extract<HistoryEntry, { type: "update_node" }>> = [];
     let completedPlannerLinkedTask = false;
+    const updates: Array<{
+      nodeId: Id<"nodes">;
+      text: string;
+      kind: "note" | "task";
+      lockKind: boolean;
+      taskStatus: NodeValueSnapshot["taskStatus"];
+      noteCompleted: boolean;
+      dueAt: number | null;
+      dueEndAt: number | null;
+      recurrenceFrequency: RecurrenceFrequency | null;
+    }> = [];
 
     for (const nodeId of orderedSelectedNodeIds) {
       const node = workspaceNodeMap.get(nodeId);
@@ -4594,17 +4640,16 @@ function ConfiguredWorkspace({
               recurrenceFrequency: null,
             }, node);
 
-      await updateNode({
-        ownerKey,
-        nodeId: node._id,
+      updates.push({
+        nodeId: node._id as Id<"nodes">,
         text: afterSnapshot.text,
         kind: afterSnapshot.kind,
         lockKind: true,
         taskStatus: afterSnapshot.taskStatus,
         noteCompleted: false,
-        dueAt: afterSnapshot.dueAt,
-        dueEndAt: afterSnapshot.dueEndAt,
-        recurrenceFrequency: afterSnapshot.recurrenceFrequency,
+        dueAt: afterSnapshot.dueAt ?? null,
+        dueEndAt: afterSnapshot.dueEndAt ?? null,
+        recurrenceFrequency: afterSnapshot.recurrenceFrequency ?? null,
       });
 
       historyEntries.push({
@@ -4616,6 +4661,8 @@ function ConfiguredWorkspace({
         focusEditorId: getNodeEditorId(node._id as Id<"nodes">),
       });
     }
+
+    await executeNodeUpdateBatch(updates);
 
     if (historyEntries.length === 0) {
       if (completedPlannerLinkedTask) {
@@ -4636,7 +4683,7 @@ function ConfiguredWorkspace({
       focusAfterUndoId: historyEntries[0]!.focusEditorId,
       focusAfterRedoId: historyEntries[historyEntries.length - 1]!.focusEditorId,
     });
-  }, [clearNodeSelection, completePlannerTask, history, ownerKey, pagesById, recurringCompletionMode, selectedNodeIds, updateNode, visibleNodeOrder, workspaceNodeMap]);
+  }, [clearNodeSelection, completePlannerTask, executeNodeUpdateBatch, history, ownerKey, pagesById, recurringCompletionMode, selectedNodeIds, visibleNodeOrder, workspaceNodeMap]);
 
   const toggleHighlightedNodeCompletion = useCallback(async () => {
     if (selectedNodeIds.size === 0) {
@@ -4651,6 +4698,17 @@ function ConfiguredWorkspace({
     }
 
     const historyEntries: Array<Extract<HistoryEntry, { type: "update_node" }>> = [];
+    const updates: Array<{
+      nodeId: Id<"nodes">;
+      text: string;
+      kind: "note" | "task";
+      lockKind: boolean;
+      taskStatus: NodeValueSnapshot["taskStatus"];
+      noteCompleted: boolean;
+      dueAt: number | null;
+      dueEndAt: number | null;
+      recurrenceFrequency: RecurrenceFrequency | null;
+    }> = [];
 
     for (const nodeId of orderedSelectedNodeIds) {
       const node = workspaceNodeMap.get(nodeId);
@@ -4696,17 +4754,16 @@ function ConfiguredWorkspace({
               recurrenceFrequency: null,
             }, node);
 
-      await updateNode({
-        ownerKey,
-        nodeId: node._id,
+      updates.push({
+        nodeId: node._id as Id<"nodes">,
         text: afterSnapshot.text,
         kind: afterSnapshot.kind,
         lockKind: true,
         taskStatus: afterSnapshot.taskStatus,
         noteCompleted: afterSnapshot.noteCompleted,
-        dueAt: afterSnapshot.dueAt,
-        dueEndAt: afterSnapshot.dueEndAt,
-        recurrenceFrequency: afterSnapshot.recurrenceFrequency,
+        dueAt: afterSnapshot.dueAt ?? null,
+        dueEndAt: afterSnapshot.dueEndAt ?? null,
+        recurrenceFrequency: afterSnapshot.recurrenceFrequency ?? null,
       });
 
       historyEntries.push({
@@ -4718,6 +4775,8 @@ function ConfiguredWorkspace({
         focusEditorId: getNodeEditorId(node._id as Id<"nodes">),
       });
     }
+
+    await executeNodeUpdateBatch(updates);
 
     if (historyEntries.length === 0) {
       return;
@@ -4736,7 +4795,7 @@ function ConfiguredWorkspace({
       focusAfterUndoId: historyEntries[0]!.focusEditorId,
       focusAfterRedoId: historyEntries[historyEntries.length - 1]!.focusEditorId,
     });
-  }, [clearNodeSelection, completePlannerTask, history, ownerKey, pagesById, recurringCompletionMode, selectSingleNode, selectedNodeIds, updateNode, visibleNodeOrder, workspaceNodeMap]);
+  }, [clearNodeSelection, completePlannerTask, executeNodeUpdateBatch, history, ownerKey, pagesById, recurringCompletionMode, selectSingleNode, selectedNodeIds, visibleNodeOrder, workspaceNodeMap]);
 
   const deleteHighlightedNodes = useCallback(async () => {
     if (selectedNodeIds.size === 0) {
