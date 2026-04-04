@@ -40,6 +40,7 @@ import {
   buildDefaultMigrationLessonsDoc,
   normalizeImportedOutlineText,
 } from "../lib/domain/migration";
+import { parseImportedTextToOutlineNodes } from "../lib/domain/importer";
 
 test("extractLinks finds wiki links and node refs", () => {
   const links = extractLinks(
@@ -211,6 +212,69 @@ test("parseHeadingSyntax recognizes markdown-style heading prefixes", () => {
     level: null,
     text: "#not a heading",
   });
+});
+
+test("parseImportedTextToOutlineNodes normalizes Dynalist links and separators", () => {
+  const nodes = parseImportedTextToOutlineNodes([
+    "#perm [transfer](https://dynalist.io/d/gZbxdAfe_LzJ-ZNaczyYnfou#z=9ny-nVGCTvJEz_HNjOW9-S_J) from [Dad](https://dynalist.io/d/ZmhlkDoH3vv2Xjn6sR_PmsKv#z=NP7B6Ch5MiRkUML-C5YZ3xvq)",
+    "—————————",
+  ].join("\n"));
+
+  assert.deepEqual(nodes, [
+    {
+      text: "#perm [[transfer]] from [[Dad]]",
+      kind: "note",
+      taskStatus: null,
+      noteCompleted: false,
+      dueAt: null,
+      recurrenceFrequency: null,
+      lockKind: false,
+      children: [],
+    },
+    {
+      text: "---",
+      kind: "note",
+      taskStatus: null,
+      noteCompleted: false,
+      dueAt: null,
+      recurrenceFrequency: null,
+      lockKind: false,
+      children: [],
+    },
+  ]);
+});
+
+test("parseImportedTextToOutlineNodes converts due markers into real task schedule data", () => {
+  const nodes = parseImportedTextToOutlineNodes([
+    "#perm renew car registration !(2027-02-09 | 1y)",
+    "~~#temp insurance renews !(2026-07-07 | 6m)~~",
+  ].join("\n"));
+
+  assert.deepEqual(nodes, [
+    {
+      text: "#perm renew car registration",
+      kind: "task",
+      taskStatus: "todo",
+      noteCompleted: false,
+      dueAt: dateInputValueToTimestamp("2027-02-09"),
+      recurrenceFrequency: "yearly",
+      lockKind: true,
+      children: [],
+    },
+    {
+      text: "#temp insurance renews",
+      kind: "task",
+      taskStatus: "done",
+      noteCompleted: false,
+      dueAt: dateInputValueToTimestamp("2026-07-07"),
+      recurrenceFrequency: {
+        interval: 6,
+        unit: "month",
+      },
+      lockKind: true,
+      children: [],
+    },
+  ]);
 });
 
 test("splitTextForInlineFormatting applies strike, italic, and bold markers", () => {

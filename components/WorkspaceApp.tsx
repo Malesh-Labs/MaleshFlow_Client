@@ -76,9 +76,11 @@ import {
 } from "@/components/workspaceHistory";
 import { ArchiveSearchPanel } from "@/components/ArchiveSearchPanel";
 import { FindReplacePanel } from "@/components/FindReplacePanel";
+import { ImporterPanel } from "@/components/ImporterPanel";
 import { MigrationPanel } from "@/components/MigrationPanel";
 import { ScreenshotImportPanel } from "@/components/ScreenshotImportPanel";
 import { TaskSchedulePanel } from "@/components/TaskSchedulePanel";
+import type { ImportedOutlineNode } from "@/lib/domain/importer";
 
 const SKIP = "skip" as const;
 const SIDEBAR_SECTIONS = [
@@ -133,6 +135,7 @@ type PaletteMode =
   | "replace"
   | "archive"
   | "migration"
+  | "importer"
   | "screenshotImport"
   | "taskSchedule";
 const PALETTE_MODE_ORDER: PaletteMode[] = [
@@ -1615,6 +1618,19 @@ function countNodesInClipboardPayload(nodes: OutlineClipboardNode[]): number {
   );
 }
 
+function importedNodesToClipboardNodes(nodes: ImportedOutlineNode[]): OutlineClipboardNode[] {
+  return nodes.map((node) => ({
+    text: node.text,
+    kind: node.kind,
+    taskStatus: node.taskStatus,
+    noteCompleted: node.noteCompleted,
+    dueAt: node.dueAt,
+    recurrenceFrequency: node.recurrenceFrequency,
+    lockKind: node.lockKind,
+    children: importedNodesToClipboardNodes(node.children),
+  }));
+}
+
 function flattenOutlineClipboardNodesForBatch(
   nodes: OutlineClipboardNode[],
   destination: {
@@ -2852,6 +2868,48 @@ function ConfiguredWorkspace({
     visibleNodeOrder,
     workspaceNodeMap,
   ]);
+  const handleImportTextNodes = useCallback(
+    async ({
+      pageId,
+      pageTitle,
+      afterNodeId,
+      nodes,
+    }: {
+      pageId: Id<"pages">;
+      pageTitle: string;
+      afterNodeId: Id<"nodes"> | null;
+      nodes: ImportedOutlineNode[];
+    }) => {
+      const outlineNodes = importedNodesToClipboardNodes(nodes);
+      const result = await insertOutlineClipboardNodes({
+        nodes: outlineNodes,
+        pageId,
+        parentNodeId: null,
+        afterNodeId,
+      });
+
+      const firstCreatedRootNodeId = result.createdRootNodeIds[0] ?? null;
+      setSelectedPageId(pageId);
+      setLocationPageId(pageId);
+      writePageIdToHistory(pageId, "push", pageTitle);
+      clearNodeSelection();
+      if (firstCreatedRootNodeId) {
+        setPendingRevealNodeId(firstCreatedRootNodeId as string);
+      }
+
+      const importedNodeCount = countNodesInClipboardPayload(outlineNodes);
+      setCopySnackbarMessage(
+        `Imported ${importedNodeCount} item${importedNodeCount === 1 ? "" : "s"} to ${pageTitle}`,
+      );
+    },
+    [
+      clearNodeSelection,
+      insertOutlineClipboardNodes,
+      setCopySnackbarMessage,
+      setLocationPageId,
+      setSelectedPageId,
+    ],
+  );
   const canImportScreenshot = selectedNodeIds.size > 0 || canImportScreenshotWithoutSelection;
   const screenshotImportTargetLabel =
     selectedNodeIds.size > 0
@@ -3484,6 +3542,26 @@ function ConfiguredWorkspace({
         actionLabel: "Open",
         onSelect: () => {
           switchPaletteMode("migration");
+        },
+      },
+      {
+        key: "import-text",
+        title: "Importer",
+        subtitle: "Paste text, normalize Dynalist-style content, preview the parsed nodes, and import them into a chosen page.",
+        keywords: [
+          "import",
+          "paste",
+          "text",
+          "dynalist",
+          "links",
+          "due",
+          "recurring",
+          "recurrence",
+          "schedule",
+        ],
+        actionLabel: "Open",
+        onSelect: () => {
+          switchPaletteMode("importer");
         },
       },
       {
@@ -4575,6 +4653,7 @@ function ConfiguredWorkspace({
       if (
         paletteMode === "archive" ||
         paletteMode === "migration" ||
+        paletteMode === "importer" ||
         paletteMode === "screenshotImport"
       ) {
         return;
@@ -4590,6 +4669,7 @@ function ConfiguredWorkspace({
       paletteMode === "chat" ||
       paletteMode === "archive" ||
       paletteMode === "migration" ||
+      paletteMode === "importer" ||
       paletteMode === "screenshotImport" ||
       activePaletteResultsCount === 0
     ) {
@@ -6519,6 +6599,7 @@ function ConfiguredWorkspace({
                 : paletteMode === "chat" ||
                     paletteMode === "replace" ||
                     paletteMode === "archive" ||
+                    paletteMode === "importer" ||
                     paletteMode === "screenshotImport" ||
                     paletteMode === "taskSchedule"
                   ? "max-w-4xl"
@@ -6631,6 +6712,17 @@ function ConfiguredWorkspace({
                     Migration
                   </button>
                 ) : null}
+                {paletteMode === "importer" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      switchPaletteMode("importer");
+                    }}
+                    className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition"
+                  >
+                    Importer
+                  </button>
+                ) : null}
                 {paletteMode === "screenshotImport" ? (
                   <button
                     type="button"
@@ -6658,6 +6750,7 @@ function ConfiguredWorkspace({
               paletteMode === "replace" ||
               paletteMode === "archive" ||
               paletteMode === "migration" ||
+              paletteMode === "importer" ||
               paletteMode === "screenshotImport" ||
               paletteMode === "taskSchedule" ? (
                 <p className="text-sm text-[var(--workspace-text-subtle)]">
@@ -6669,6 +6762,8 @@ function ConfiguredWorkspace({
                       ? "Search archived pages and nodes without mixing them into active workspace results."
                       : paletteMode === "migration"
                         ? "Snapshot imports, review suggested changes, and explicitly approve each chunk before it touches the workspace."
+                        : paletteMode === "importer"
+                          ? "Paste text, preview exactly what will be added, and import it into the page you choose."
                         : paletteMode === "screenshotImport"
                           ? "Paste an outliner screenshot, preview the translated structure, then import it as real nodes."
                           : "Set a due date, recurrence, and recurring completion rule for the current task."}
@@ -6705,6 +6800,7 @@ function ConfiguredWorkspace({
               paletteMode === "replace" ||
               paletteMode === "archive" ||
               paletteMode === "migration" ||
+              paletteMode === "importer" ||
               paletteMode === "screenshotImport" ||
                   paletteMode === "taskSchedule"
                   ? "overflow-hidden"
@@ -6896,6 +6992,20 @@ function ConfiguredWorkspace({
                 />
               ) : paletteMode === "migration" ? (
                 <MigrationPanel ownerKey={ownerKey} />
+              ) : paletteMode === "importer" ? (
+                <ImporterPanel
+                  ownerKey={ownerKey}
+                  pages={pages ?? []}
+                  initialPageId={selectedPage?._id ?? null}
+                  onImport={handleImportTextNodes}
+                  onImported={() => {
+                    setPaletteOpen(false);
+                    setPaletteQuery("");
+                    setPaletteMode("pages");
+                    setTextSearchResults([]);
+                    setNodeSearchResults([]);
+                  }}
+                />
               ) : paletteMode === "screenshotImport" ? (
                 <ScreenshotImportPanel
                   ownerKey={ownerKey}

@@ -816,6 +816,31 @@ export const getPageTree = query({
   },
 });
 
+export const getPageRootAppendTarget = query({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived || isPagePendingDeletion(page)) {
+      return null;
+    }
+
+    const lastRootNode = await ctx.db
+      .query("nodes")
+      .withIndex("by_page_parent_position", (q) =>
+        q.eq("pageId", args.pageId).eq("parentNodeId", null),
+      )
+      .order("desc")
+      .take(1);
+
+    return (lastRootNode[0]?._id as Id<"nodes"> | undefined) ?? null;
+  },
+});
+
 export const previewFindAndReplace = query({
   args: {
     ownerKey: v.string(),
