@@ -7770,7 +7770,7 @@ function ConfiguredWorkspace({
               paletteMode === "screenshotImport" ||
                   paletteMode === "taskSchedule"
                   ? "overflow-hidden"
-                  : "max-h-[420px] overflow-y-auto py-2",
+                  : "overflow-y-auto py-2",
               )}
             >
               {paletteMode === "pages" ? (
