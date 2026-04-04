@@ -51,6 +51,14 @@ export type PlannerTaskLike = {
   position?: number;
 };
 
+export type TaskDueInheritanceNode = {
+  _id: string;
+  kind: string;
+  parentNodeId?: string | null;
+  dueAt: number | null;
+  dueEndAt?: number | null;
+};
+
 function getPlannerDayDate(timestamp: number) {
   const date = new Date(timestamp);
   return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0, 0);
@@ -109,6 +117,57 @@ export function plannerDayMatchesDueDateRange(args: {
   const dueEnd = getPlannerDayDate(args.dueEndAt ?? args.dueAt).getTime();
 
   return day >= dueStart && day <= dueEnd;
+}
+
+export function getEffectiveTaskDueDateRange<
+  TNode extends TaskDueInheritanceNode,
+  TMapNode extends TaskDueInheritanceNode,
+>(
+  node: TNode,
+  nodeMap: Map<string, TMapNode>,
+) {
+  if (node.kind !== "task") {
+    return {
+      dueAt: null,
+      dueEndAt: null,
+    };
+  }
+
+  if (node.dueAt) {
+    return {
+      dueAt: node.dueAt,
+      dueEndAt: node.dueEndAt ?? null,
+    };
+  }
+
+  const visitedNodeIds = new Set<string>([node._id]);
+  let parentNodeId = node.parentNodeId ?? null;
+
+  while (parentNodeId) {
+    if (visitedNodeIds.has(parentNodeId)) {
+      break;
+    }
+    visitedNodeIds.add(parentNodeId);
+
+    const parentNode = nodeMap.get(parentNodeId) ?? null;
+    if (!parentNode) {
+      break;
+    }
+
+    if (parentNode.kind === "task" && parentNode.dueAt) {
+      return {
+        dueAt: parentNode.dueAt,
+        dueEndAt: parentNode.dueEndAt ?? null,
+      };
+    }
+
+    parentNodeId = parentNode.parentNodeId ?? null;
+  }
+
+  return {
+    dueAt: null,
+    dueEndAt: null,
+  };
 }
 
 function getPriorityScore(priority: string | null | undefined) {

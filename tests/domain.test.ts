@@ -44,6 +44,7 @@ import {
   normalizeImportedOutlineText,
 } from "../lib/domain/migration";
 import { parseImportedTextToOutlineNodes } from "../lib/domain/importer";
+import { getEffectiveTaskDueDateRange } from "../lib/domain/planner";
 
 test("extractLinks finds wiki links and node refs", () => {
   const links = extractLinks(
@@ -247,6 +248,42 @@ test("parseImportedTextToOutlineNodes normalizes Dynalist links and separators",
       children: [],
     },
   ]);
+});
+
+test("getEffectiveTaskDueDateRange inherits due dates from ancestor task items", () => {
+  const parentTask = {
+    _id: "parent",
+    kind: "task",
+    parentNodeId: null,
+    dueAt: new Date("2026-06-10T12:00:00.000Z").getTime(),
+    dueEndAt: new Date("2026-06-12T12:00:00.000Z").getTime(),
+  };
+  const childTask = {
+    _id: "child",
+    kind: "task",
+    parentNodeId: "parent",
+    dueAt: null,
+    dueEndAt: null,
+  };
+  const grandchildTask = {
+    _id: "grandchild",
+    kind: "task",
+    parentNodeId: "child",
+    dueAt: null,
+    dueEndAt: null,
+  };
+  const nodes = new Map(
+    [parentTask, childTask, grandchildTask].map((node) => [node._id, node]),
+  );
+
+  assert.deepEqual(getEffectiveTaskDueDateRange(childTask, nodes), {
+    dueAt: parentTask.dueAt,
+    dueEndAt: parentTask.dueEndAt,
+  });
+  assert.deepEqual(getEffectiveTaskDueDateRange(grandchildTask, nodes), {
+    dueAt: parentTask.dueAt,
+    dueEndAt: parentTask.dueEndAt,
+  });
 });
 
 test("parseImportedTextToOutlineNodes converts due markers into real task schedule data", () => {

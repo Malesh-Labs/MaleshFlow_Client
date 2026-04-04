@@ -13,6 +13,7 @@ import {
 import {
   comparePlannerTaskOrder,
   formatPlannerDayTitle,
+  getEffectiveTaskDueDateRange,
   getPlannerWeekdayName,
   plannerDayMatchesDueDateRange,
 } from "../../lib/domain/planner";
@@ -26,6 +27,10 @@ export const PLANNER_SIDEBAR_SLOT = "plannerSidebar";
 export const PLANNER_TEMPLATE_SLOT = "plannerTemplate";
 export const PLANNER_DAY_META_KIND = "plannerDay";
 export const PLANNER_LINKED_TASK_META_KIND = "plannerLinkedTask";
+export type PlannerSourceTask = Doc<"nodes"> & {
+  dueAt: number | null;
+  dueEndAt: number | null;
+};
 
 function getRecordMeta(value: unknown) {
   return value && typeof value === "object"
@@ -139,6 +144,10 @@ function buildChildrenByParent(nodes: Doc<"nodes">[]) {
   }
 
   return map;
+}
+
+function buildNodeMap(nodes: Doc<"nodes">[]) {
+  return new Map(nodes.map((node) => [node._id as string, node]));
 }
 
 export async function clonePlannerSubtree(
@@ -409,7 +418,7 @@ export async function appendPlannerLinkedTaskCopy(
     plannerPageId: Id<"pages">;
     dayNodeId: Id<"nodes">;
     plannerDate: number;
-    sourceTask: Doc<"nodes">;
+    sourceTask: PlannerSourceTask;
     afterNodeId: Id<"nodes"> | null;
   },
 ) {
@@ -479,9 +488,8 @@ export async function listEligiblePlannerSourceTasks(
   const pageMap = new Map(
     pages.filter((page): page is Doc<"pages"> => page !== null).map((page) => [page._id, page]),
   );
-
-  return activeTasks.filter((task) => {
-    const page = pageMap.get(task.pageId);
+  const eligiblePageIds = uniquePageIds.filter((pageId) => {
+    const page = pageMap.get(pageId);
     if (!page || page.archived || !isTaskSourcePage(page)) {
       return false;
     }
@@ -490,27 +498,58 @@ export async function listEligiblePlannerSourceTasks(
       return false;
     }
 
-    if (args.excludeSourceTaskIds?.has(task._id as string)) {
-      return false;
+    return true;
+  });
+  const pageNodeMaps = new Map<string, Map<string, Doc<"nodes">>>();
+  await Promise.all(
+    eligiblePageIds.map(async (pageId) => {
+      const pageNodes = await listPageNodes(db, pageId);
+      pageNodeMaps.set(pageId as string, buildNodeMap(pageNodes));
+    }),
+  );
+
+  return activeTasks.flatMap((task) => {
+    const page = pageMap.get(task.pageId);
+    if (!page || page.archived || !isTaskSourcePage(page) || isPlannerScanExcludedPage(page)) {
+      return [];
     }
+
+    if (args.excludeSourceTaskIds?.has(task._id as string)) {
+      return [];
+    }
+
+    const pageNodeMap = pageNodeMaps.get(task.pageId as string);
+    const effectiveDueRange = pageNodeMap
+      ? getEffectiveTaskDueDateRange(task, pageNodeMap)
+      : {
+          dueAt: task.dueAt ?? null,
+          dueEndAt: task.dueEndAt ?? null,
+        };
+    const effectiveTask: PlannerSourceTask = {
+      ...task,
+      dueAt: effectiveDueRange.dueAt,
+      dueEndAt: effectiveDueRange.dueEndAt ?? null,
+    };
 
     if (args.plannerDate) {
       return plannerDayMatchesDueDateRange({
         dayTimestamp: args.plannerDate,
-        dueAt: task.dueAt,
-        dueEndAt: task.dueEndAt ?? null,
-      });
+        dueAt: effectiveTask.dueAt,
+        dueEndAt: effectiveTask.dueEndAt ?? null,
+      })
+        ? [effectiveTask]
+        : [];
     }
 
     if (args.dueByDate) {
-      if (!task.dueAt) {
-        return true;
+      if (!effectiveTask.dueAt) {
+        return [effectiveTask];
       }
 
-      return task.dueAt <= args.dueByDate;
+      return effectiveTask.dueAt <= args.dueByDate ? [effectiveTask] : [];
     }
 
-    return true;
+    return [effectiveTask];
   });
 }
 

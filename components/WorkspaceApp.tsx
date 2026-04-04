@@ -63,6 +63,7 @@ import {
 } from "@/lib/domain/workspaceUi";
 import {
   formatPlannerStartDateLabel,
+  getEffectiveTaskDueDateRange,
   plannerChatPlanSchema,
 } from "@/lib/domain/planner";
 import {
@@ -895,14 +896,16 @@ function getTaskScheduleSummary(task: {
   dueAt: number | null;
   dueEndAt?: number | null;
   sourceMeta?: Record<string, unknown> | null;
-}) {
+}, effectiveDueRange?: { dueAt: number | null; dueEndAt: number | null }) {
   if (task.kind !== "task") {
     return "";
   }
 
   const parts: string[] = [];
-  if (task.dueAt) {
-    parts.push(formatDueDateRange(task.dueAt, task.dueEndAt ?? null));
+  const dueAt = effectiveDueRange?.dueAt ?? task.dueAt;
+  const dueEndAt = effectiveDueRange?.dueEndAt ?? task.dueEndAt ?? null;
+  if (dueAt) {
+    parts.push(formatDueDateRange(dueAt, dueEndAt));
   }
 
   const recurrenceFrequency = getNodeRecurrenceFrequency(task);
@@ -2748,8 +2751,15 @@ function ConfiguredWorkspace({
 
     return node;
   }, [paletteContextNodeId, pagesById, workspaceNodeMap]);
+  const taskScheduleEffectiveDueRange = useMemo(
+    () =>
+      taskScheduleTargetNode
+        ? getEffectiveTaskDueDateRange(taskScheduleTargetNode, workspaceNodeMap)
+        : { dueAt: null, dueEndAt: null },
+    [taskScheduleTargetNode, workspaceNodeMap],
+  );
   const taskScheduleSummary = taskScheduleTargetNode
-    ? getTaskScheduleSummary(taskScheduleTargetNode)
+    ? getTaskScheduleSummary(taskScheduleTargetNode, taskScheduleEffectiveDueRange)
     : "";
   const insertOutlineClipboardNodes = useCallback(
     async ({
@@ -7803,8 +7813,8 @@ function ConfiguredWorkspace({
                 taskScheduleTargetNode ? (
                   <TaskSchedulePanel
                     taskTitle={taskScheduleTargetNode.text}
-                    dueAt={taskScheduleTargetNode.dueAt ?? null}
-                    dueEndAt={taskScheduleTargetNode.dueEndAt ?? null}
+                    dueAt={taskScheduleEffectiveDueRange.dueAt}
+                    dueEndAt={taskScheduleEffectiveDueRange.dueEndAt}
                     recurrenceFrequency={getNodeRecurrenceFrequency(taskScheduleTargetNode)}
                     recurringCompletionMode={recurringCompletionMode}
                     onRecurringCompletionModeChange={setRecurringCompletionMode}
@@ -9485,14 +9495,18 @@ function OutlineNodeEditor({
   const isTaskRow = node.kind === "task";
   const isHeadingRow = isHeadingLine;
   const recurrenceFrequency = getNodeRecurrenceFrequency(node);
+  const effectiveDueRange = useMemo(
+    () => getEffectiveTaskDueDateRange(node, nodeMap),
+    [node, nodeMap],
+  );
   const dueDateLabel =
     node.kind === "task"
-      ? formatDueDateRange(node.dueAt, node.dueEndAt ?? null)
+      ? formatDueDateRange(effectiveDueRange.dueAt, effectiveDueRange.dueEndAt ?? null)
       : "";
   const isOverdueTask =
     node.kind === "task" &&
     !isCompleted &&
-    isOverdueDueDateRange(node.dueAt, node.dueEndAt ?? null);
+    isOverdueDueDateRange(effectiveDueRange.dueAt, effectiveDueRange.dueEndAt ?? null);
   const headingRowMinHeightClass = getHeadingRowMinHeightClass(headingSyntax.level);
   const headingMarkerOffsetClass = getHeadingMarkerOffsetClass(headingSyntax.level);
   const headingControlOffsetClass = getHeadingControlOffsetClass(headingSyntax.level);
@@ -11153,9 +11167,9 @@ function OutlineNodeEditor({
                   : "items-start pt-[2px]",
             )}
           >
-            {node.kind === "task" && (node.dueAt || recurrenceFrequency) ? (
+            {node.kind === "task" && (effectiveDueRange.dueAt || recurrenceFrequency) ? (
               <div className="flex items-center gap-1 pt-px text-[10px] leading-none">
-                {node.dueAt ? (
+                {effectiveDueRange.dueAt ? (
                   <span
                     className={clsx(
                       "rounded-full border px-1.5 py-1 text-[var(--workspace-text-faint)]",

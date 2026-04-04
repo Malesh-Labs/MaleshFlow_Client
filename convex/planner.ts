@@ -17,7 +17,10 @@ import {
   completePlannerLinkedTask,
 } from "./lib/planner";
 import { collectNodeTree, listPageNodes } from "./lib/workspace";
-import { comparePlannerTaskOrder } from "../lib/domain/planner";
+import {
+  comparePlannerTaskOrder,
+  getEffectiveTaskDueDateRange,
+} from "../lib/domain/planner";
 
 async function buildPlannerTaskSelectionSummary(ctx: MutationCtx, plannerNode: Doc<"nodes">) {
   const linkedSourceTaskId = getPlannerLinkedSourceTaskId(plannerNode);
@@ -197,10 +200,18 @@ export const resolveNextPlannerTask = mutation({
     }
 
     const currentDayTree = await collectNodeTree(ctx.db, currentDay._id);
+    const currentDayNodeMap = new Map(
+      currentDayTree.map((node) => [node._id as string, node]),
+    );
     const currentDayTasks = currentDayTree
       .filter((node) => node._id !== currentDay._id)
       .filter((node) => node.kind === "task" && node.taskStatus !== "done" && node.taskStatus !== "cancelled")
-      .sort((left, right) => comparePlannerTaskOrder(left, right));
+      .sort((left, right) =>
+        comparePlannerTaskOrder(
+          { ...left, ...getEffectiveTaskDueDateRange(left, currentDayNodeMap) },
+          { ...right, ...getEffectiveTaskDueDateRange(right, currentDayNodeMap) },
+        ),
+      );
     if (currentDayTasks.length > 0) {
       const summary = await buildPlannerTaskSelectionSummary(ctx, currentDayTasks[0]!);
       return {
