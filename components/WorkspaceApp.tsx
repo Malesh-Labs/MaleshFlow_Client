@@ -758,6 +758,23 @@ function isPlannerDayTask(
     return false;
   }
 
+  return isPlannerDayItem(node, nodeMap);
+}
+
+function isPlannerDayItem(
+  node:
+    | Pick<Doc<"nodes">, "_id" | "parentNodeId" | "sourceMeta" | "kind">
+    | Pick<TreeNode, "_id" | "parentNodeId" | "sourceMeta" | "kind">
+    | null
+    | undefined,
+  nodeMap:
+    | Map<string, Pick<Doc<"nodes">, "_id" | "parentNodeId" | "sourceMeta" | "kind">>
+    | Map<string, Pick<TreeNode, "_id" | "parentNodeId" | "sourceMeta" | "kind">>,
+) {
+  if (!node) {
+    return false;
+  }
+
   let currentParentId = (node.parentNodeId as string | null) ?? null;
   while (currentParentId) {
     const parentNode = nodeMap.get(currentParentId) ?? null;
@@ -4759,6 +4776,20 @@ function ConfiguredWorkspace({
       }
 
       if (isPlannerDayTask(node, workspaceNodeMap)) {
+        await completePlannerTask({
+          ownerKey,
+          plannerNodeId: node._id as Id<"nodes">,
+          completionMode: recurringCompletionMode,
+        });
+        clearNodeSelection();
+        continue;
+      }
+
+      if (
+        node.kind === "note" &&
+        !isNodeNoteCompleted(node) &&
+        isPlannerDayItem(node, workspaceNodeMap)
+      ) {
         await completePlannerTask({
           ownerKey,
           plannerNodeId: node._id as Id<"nodes">,
@@ -10288,6 +10319,16 @@ function OutlineNodeEditor({
         dueEndAt: node.dueEndAt ?? null,
         recurrenceFrequency,
       }, node);
+
+    if (isPlannerDayItem(node, nodeMap) && !isNoteCompleted) {
+      await completePlannerTaskMutation({
+        ownerKey,
+        plannerNodeId: node._id as Id<"nodes">,
+        completionMode: recurringCompletionMode,
+      });
+      history.resetTrackedValue(editorId, editorTarget);
+      return;
+    }
 
     await updateNode({
       ownerKey,

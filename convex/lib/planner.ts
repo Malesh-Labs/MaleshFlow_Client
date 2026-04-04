@@ -154,6 +154,157 @@ function buildNodeMap(nodes: Doc<"nodes">[]) {
   return new Map(nodes.map((node) => [node._id as string, node]));
 }
 
+function isPlannerNodeCompleted(node: Doc<"nodes">) {
+  if (node.kind === "task") {
+    return node.taskStatus === "done";
+  }
+  return getNodeSourceMeta(node).noteCompleted === true;
+}
+
+function isPlannerDayAncestorNode(node: Doc<"nodes"> | null | undefined) {
+  return !!node && isPlannerDayNode(node);
+}
+
+function isPlannerSubtreeCompleted(
+  nodeId: Id<"nodes">,
+  nodeMap: Map<string, Doc<"nodes">>,
+  childrenByParent: Map<string | null, Doc<"nodes">[]>,
+) {
+  const rootNode = nodeMap.get(nodeId as string);
+  if (!rootNode || !isPlannerNodeCompleted(rootNode)) {
+    return false;
+  }
+
+  const descendants = childrenByParent.get(nodeId as string) ?? [];
+  for (const child of descendants) {
+    if (!isPlannerSubtreeCompleted(child._id, nodeMap, childrenByParent)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function findArchivablePlannerSubtreeRoot(
+  startNode: Doc<"nodes">,
+  nodeMap: Map<string, Doc<"nodes">>,
+  childrenByParent: Map<string | null, Doc<"nodes">[]>,
+) {
+  let currentNode: Doc<"nodes"> | null = startNode;
+  let highestEligibleNode: Doc<"nodes"> | null = null;
+  while (currentNode) {
+    const parentNode: Doc<"nodes"> | null = currentNode.parentNodeId
+      ? (nodeMap.get(currentNode.parentNodeId as string) ?? null)
+      : null;
+    if (isPlannerDayAncestorNode(currentNode)) {
+      break;
+    }
+    if (isPlannerSubtreeCompleted(currentNode._id, nodeMap, childrenByParent)) {
+      highestEligibleNode = currentNode;
+    }
+    if (!parentNode || isPlannerDayAncestorNode(parentNode)) {
+      break;
+    }
+    currentNode = parentNode;
+  }
+  return highestEligibleNode;
+}
+
+async function syncPlannerLinkedSourceTaskCompletion(
+  ctx: MutationCtx,
+  plannerNodes: Doc<"nodes">[],
+  completionMode: RecurringCompletionMode,
+  now: number,
+) {
+  const syncedSourceTaskIds = new Set<string>();
+  const touchedPageIds = new Set<string>();
+
+  for (const plannerNode of plannerNodes) {
+    const sourceTaskId = getPlannerLinkedSourceTaskId(plannerNode);
+    if (!sourceTaskId || syncedSourceTaskIds.has(sourceTaskId as string)) {
+      continue;
+    }
+    syncedSourceTaskIds.add(sourceTaskId as string);
+
+    const sourceTask = await ctx.db.get(sourceTaskId);
+    if (!sourceTask || sourceTask.archived) {
+      continue;
+    }
+
+    const recurrenceFrequency = parseRecurrenceFrequency(
+      getNodeSourceMeta(sourceTask).recurrenceFrequency,
+    );
+    if (recurrenceFrequency && sourceTask.dueAt) {
+      const nextRange = advanceRecurringDueDateRange({
+        dueAt: sourceTask.dueAt,
+        dueEndAt: sourceTask.dueEndAt ?? null,
+        frequency: recurrenceFrequency,
+        mode: completionMode,
+      });
+      await ctx.db.patch(sourceTask._id, {
+        taskStatus: "todo",
+        dueAt: nextRange.dueAt,
+        dueEndAt: nextRange.dueEndAt,
+        updatedAt: now,
+      });
+    } else {
+      await ctx.db.patch(sourceTask._id, {
+        taskStatus: "done",
+        updatedAt: now,
+      });
+    }
+
+    touchedPageIds.add(sourceTask.pageId as string);
+  }
+
+  for (const pageId of touchedPageIds) {
+    await enqueuePageRootEmbeddingRefresh(ctx, pageId as Id<"pages">);
+  }
+}
+
+async function archivePlannerSubtreeToPastWeeks(
+  ctx: MutationCtx,
+  plannerRootNode: Doc<"nodes">,
+  completionMode: RecurringCompletionMode,
+  now: number,
+) {
+  const plannerSubtree = await collectNodeTree(ctx.db, plannerRootNode._id);
+  await syncPlannerLinkedSourceTaskCompletion(ctx, plannerSubtree, completionMode, now);
+
+  const pastWeeksPage = await ensurePastWeeksPage(ctx);
+  const existingPastWeeksRoots = (await listPageNodes(ctx.db, pastWeeksPage._id)).filter(
+    (node) => node.parentNodeId === null,
+  );
+  const afterNodeId =
+    existingPastWeeksRoots.sort((left, right) => left.position - right.position)[
+      existingPastWeeksRoots.length - 1
+    ]?._id ?? null;
+
+  await clonePlannerSubtree(ctx, {
+    sourceNodes: plannerSubtree,
+    rootNodeId: plannerRootNode._id,
+    targetPageId: pastWeeksPage._id,
+    targetParentNodeId: null,
+    targetAfterNodeId: afterNodeId,
+    transformSourceMeta: (_sourceNode, sourceMeta) => ({
+      ...sourceMeta,
+      sourceType: "plannerArchive",
+      archivedFromPlannerNodeId: plannerRootNode._id,
+      archivedAt: now,
+    }),
+    transformNode: (sourceNode, depth) =>
+      depth === 0 && sourceNode.kind === "task"
+        ? {
+            taskStatus: "done",
+          }
+        : {},
+  });
+
+  await setNodeTreeArchivedState(ctx.db, plannerRootNode._id, true, now);
+  await enqueuePageRootEmbeddingRefresh(ctx, plannerRootNode.pageId);
+  await enqueuePageRootEmbeddingRefresh(ctx, pastWeeksPage._id);
+}
+
 export async function clonePlannerSubtree(
   ctx: MutationCtx,
   args: {
@@ -573,70 +724,45 @@ export async function completePlannerLinkedTask(
     throw new Error("Planner item not found.");
   }
 
-  const sourceTaskId = getPlannerLinkedSourceTaskId(plannerNode);
   const now = Date.now();
-  if (sourceTaskId) {
-    const sourceTask = await ctx.db.get(sourceTaskId);
-    if (sourceTask && !sourceTask.archived) {
-      const recurrenceFrequency = parseRecurrenceFrequency(
-        getNodeSourceMeta(sourceTask).recurrenceFrequency,
-      );
-      if (recurrenceFrequency && sourceTask.dueAt) {
-        const nextRange = advanceRecurringDueDateRange({
-          dueAt: sourceTask.dueAt,
-          dueEndAt: sourceTask.dueEndAt ?? null,
-          frequency: recurrenceFrequency,
-          mode: args.completionMode,
-        });
-        await ctx.db.patch(sourceTask._id, {
-          taskStatus: "todo",
-          dueAt: nextRange.dueAt,
-          dueEndAt: nextRange.dueEndAt,
-          updatedAt: now,
-        });
-      } else {
-        await ctx.db.patch(sourceTask._id, {
-          taskStatus: "done",
-          updatedAt: now,
-        });
-      }
-      await enqueuePageRootEmbeddingRefresh(ctx, sourceTask.pageId);
+
+  if (!isPlannerNodeCompleted(plannerNode)) {
+    const sourceMeta = getNodeSourceMeta(plannerNode);
+    if (plannerNode.kind === "task") {
+      await ctx.db.patch(plannerNode._id, {
+        taskStatus: "done",
+        updatedAt: now,
+      });
+    } else {
+      await ctx.db.patch(plannerNode._id, {
+        sourceMeta: {
+          ...sourceMeta,
+          noteCompleted: true,
+        },
+        updatedAt: now,
+      });
     }
   }
 
-  const pastWeeksPage = await ensurePastWeeksPage(ctx);
-  const plannerSubtree = await collectNodeTree(ctx.db, plannerNode._id);
-  const existingPastWeeksRoots = (await listPageNodes(ctx.db, pastWeeksPage._id)).filter(
-    (node) => node.parentNodeId === null,
+  const pageNodes = await listPageNodes(ctx.db, plannerNode.pageId);
+  const nodeMap = buildNodeMap(pageNodes);
+  const childrenByParent = buildChildrenByParent(pageNodes);
+  const refreshedPlannerNode = nodeMap.get(args.plannerNodeId as string);
+  if (!refreshedPlannerNode) {
+    throw new Error("Planner item not found after completion.");
+  }
+
+  const archivableRoot = findArchivablePlannerSubtreeRoot(
+    refreshedPlannerNode,
+    nodeMap,
+    childrenByParent,
   );
-  const afterNodeId =
-    existingPastWeeksRoots.sort((left, right) => left.position - right.position)[
-      existingPastWeeksRoots.length - 1
-    ]?._id ?? null;
+  if (!archivableRoot) {
+    await enqueuePageRootEmbeddingRefresh(ctx, refreshedPlannerNode.pageId);
+    return;
+  }
 
-  await clonePlannerSubtree(ctx, {
-    sourceNodes: plannerSubtree,
-    rootNodeId: plannerNode._id,
-    targetPageId: pastWeeksPage._id,
-    targetParentNodeId: null,
-    targetAfterNodeId: afterNodeId,
-    transformSourceMeta: (sourceNode, sourceMeta) => ({
-      ...sourceMeta,
-      sourceType: "plannerArchive",
-      archivedFromPlannerNodeId: plannerNode._id,
-      archivedAt: now,
-    }),
-    transformNode: (sourceNode, depth) =>
-      depth === 0 && sourceNode.kind === "task"
-        ? {
-            taskStatus: "done",
-          }
-        : {},
-  });
-
-  await setNodeTreeArchivedState(ctx.db, plannerNode._id, true, now);
-  await enqueuePageRootEmbeddingRefresh(ctx, plannerNode.pageId);
-  await enqueuePageRootEmbeddingRefresh(ctx, pastWeeksPage._id);
+  await archivePlannerSubtreeToPastWeeks(ctx, archivableRoot, args.completionMode, now);
 }
 
 export function buildPlannerChatPromptContext(args: {
