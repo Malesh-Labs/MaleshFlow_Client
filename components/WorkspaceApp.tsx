@@ -8882,6 +8882,7 @@ function WorkspaceAiChatPanel({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
   const historyEndRef = useRef<HTMLDivElement>(null);
+  const shouldStickHistoryToBottomRef = useRef(true);
   const [caretPosition, setCaretPosition] = useState<number | null>(null);
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
@@ -8920,6 +8921,10 @@ function WorkspaceAiChatPanel({
   useEffect(() => {
     const container = historyRef.current;
     if (!container) {
+      return;
+    }
+
+    if (!shouldStickHistoryToBottomRef.current) {
       return;
     }
 
@@ -8995,6 +9000,7 @@ function WorkspaceAiChatPanel({
 
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
+      shouldStickHistoryToBottomRef.current = true;
       onSubmit();
     }
   };
@@ -9019,6 +9025,12 @@ function WorkspaceAiChatPanel({
       {showHistoryPanel ? (
         <div
           ref={historyRef}
+          onScroll={(event) => {
+            const container = event.currentTarget;
+            const distanceFromBottom =
+              container.scrollHeight - container.scrollTop - container.clientHeight;
+            shouldStickHistoryToBottomRef.current = distanceFromBottom <= 40;
+          }}
           className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-b border-[var(--workspace-border-subtle)] px-5 py-4 [touch-action:pan-y]"
         >
           <div className="space-y-4">
@@ -9156,7 +9168,10 @@ function WorkspaceAiChatPanel({
         </div>
         <button
           type="button"
-          onClick={onSubmit}
+          onClick={() => {
+            shouldStickHistoryToBottomRef.current = true;
+            onSubmit();
+          }}
           disabled={isLoading || draft.trim().length === 0}
           className={clsx(
             "border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition",
