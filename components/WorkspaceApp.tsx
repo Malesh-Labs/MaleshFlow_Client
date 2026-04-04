@@ -744,19 +744,36 @@ function getNodeMeta(node: { sourceMeta?: unknown } | null | undefined) {
   return node.sourceMeta as Record<string, unknown>;
 }
 
-function isPlannerLinkedTask(
+function isPlannerDayTask(
   node:
-    | Pick<Doc<"nodes">, "sourceMeta" | "kind">
-    | Pick<TreeNode, "sourceMeta" | "kind">
+    | Pick<Doc<"nodes">, "_id" | "parentNodeId" | "sourceMeta" | "kind">
+    | Pick<TreeNode, "_id" | "parentNodeId" | "sourceMeta" | "kind">
     | null
     | undefined,
+  nodeMap:
+    | Map<string, Pick<Doc<"nodes">, "_id" | "parentNodeId" | "sourceMeta" | "kind">>
+    | Map<string, Pick<TreeNode, "_id" | "parentNodeId" | "sourceMeta" | "kind">>,
 ) {
   if (!node || node.kind !== "task") {
     return false;
   }
 
-  const meta = getNodeMeta(node);
-  return meta.plannerKind === "plannerLinkedTask" && typeof meta.sourceTaskNodeId === "string";
+  let currentParentId = (node.parentNodeId as string | null) ?? null;
+  while (currentParentId) {
+    const parentNode = nodeMap.get(currentParentId) ?? null;
+    if (!parentNode) {
+      return false;
+    }
+
+    const parentMeta = getNodeMeta(parentNode);
+    if (parentMeta.plannerKind === "plannerDay") {
+      return true;
+    }
+
+    currentParentId = (parentNode.parentNodeId as string | null) ?? null;
+  }
+
+  return false;
 }
 
 function isNodeNoteCompleted(
@@ -4511,7 +4528,7 @@ function ConfiguredWorkspace({
         continue;
       }
 
-      if (isPlannerLinkedTask(node)) {
+      if (isPlannerDayTask(node, workspaceNodeMap)) {
         await completePlannerTask({
           ownerKey,
           plannerNodeId: node._id as Id<"nodes">,
@@ -4612,7 +4629,7 @@ function ConfiguredWorkspace({
         continue;
       }
 
-      if (isPlannerLinkedTask(node)) {
+      if (isPlannerDayTask(node, workspaceNodeMap)) {
         await completePlannerTask({
           ownerKey,
           plannerNodeId: node._id as Id<"nodes">,
@@ -9938,20 +9955,6 @@ function OutlineNodeEditor({
       taskStatus: (node.taskStatus ?? null) as NodeValueSnapshot["taskStatus"],
     });
     if (parsed.shouldDelete) {
-      if (isPlannerLinkedTask(node)) {
-        await completePlannerTaskMutation({
-          ownerKey,
-          plannerNodeId: node._id as Id<"nodes">,
-          completionMode: recurringCompletionMode,
-        });
-        history.resetTrackedValue(editorId, editorTarget);
-        return {
-          deleted: true,
-          updateEntry: null,
-          parsed: null,
-        };
-      }
-
       await setNodeTreeArchived({
         ownerKey,
         nodeId: node._id as Id<"nodes">,
@@ -10031,7 +10034,7 @@ function OutlineNodeEditor({
       return;
     }
 
-    if (isPlannerLinkedTask(node)) {
+    if (isPlannerDayTask(node, nodeMap)) {
       await completePlannerTaskMutation({
         ownerKey,
         plannerNodeId: node._id as Id<"nodes">,
