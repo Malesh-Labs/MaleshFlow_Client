@@ -262,15 +262,34 @@ test("parseImportedTextToOutlineNodes converts due markers into real task schedu
       children: [],
     },
     {
-      text: "#temp insurance renews",
+      text: "~~#temp insurance renews~~",
       kind: "task",
-      taskStatus: "done",
+      taskStatus: "todo",
       noteCompleted: false,
       dueAt: dateInputValueToTimestamp("2026-07-07"),
       recurrenceFrequency: {
         interval: 6,
         unit: "month",
       },
+      lockKind: true,
+      children: [],
+    },
+  ]);
+});
+
+test("parseImportedTextToOutlineNodes preserves full-line strikethrough as text formatting", () => {
+  const nodes = parseImportedTextToOutlineNodes(
+    "~~#perm [costco membership](https://dynalist.io/d/gZbxdAfe_LzJ-ZNaczyYnfou#z=H5s8GLBy4E5_PVXp4-V2Vvcb) renews !(2026-05-17)~~",
+  );
+
+  assert.deepEqual(nodes, [
+    {
+      text: "~~#perm [[costco membership]] renews~~",
+      kind: "task",
+      taskStatus: "todo",
+      noteCompleted: false,
+      dueAt: dateInputValueToTimestamp("2026-05-17"),
+      recurrenceFrequency: null,
       lockKind: true,
       children: [],
     },

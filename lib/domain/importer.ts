@@ -30,19 +30,28 @@ function replaceDynalistMarkdownLinks(text: string) {
   );
 }
 
-function stripCompletedWrapper(text: string) {
+function unwrapFullLineStrike(text: string) {
   const trimmed = text.trim();
   if (trimmed.startsWith("~~") && trimmed.endsWith("~~") && trimmed.length > 4) {
     return {
       text: trimmed.slice(2, -2).trim(),
-      completed: true,
+      wrapped: true,
     };
   }
 
   return {
     text: trimmed,
-    completed: false,
+    wrapped: false,
   };
+}
+
+function restoreFullLineStrike(text: string, wrapped: boolean) {
+  const trimmed = text.trim();
+  if (!wrapped || trimmed.length === 0) {
+    return trimmed;
+  }
+
+  return `~~${trimmed}~~`;
 }
 
 function parseRecurrenceShorthand(value: string | undefined): RecurrenceFrequency {
@@ -98,9 +107,10 @@ function parseRecurrenceShorthand(value: string | undefined): RecurrenceFrequenc
 
 function parseImportedLine(rawLine: string): Omit<ImportedOutlineNode, "children"> | null {
   const normalizedLine = replaceDynalistMarkdownLinks(rawLine);
-  const { text: maybeCompletedText, completed } = stripCompletedWrapper(normalizedLine);
+  const { text: unwrappedText, wrapped: hadFullLineStrike } =
+    unwrapFullLineStrike(normalizedLine);
 
-  let workingText = maybeCompletedText;
+  let workingText = unwrappedText;
   let dueAt: number | null = null;
   let recurrenceFrequency: RecurrenceFrequency = null;
 
@@ -136,7 +146,7 @@ function parseImportedLine(rawLine: string): Omit<ImportedOutlineNode, "children
 
   const todoMatch = workingText.match(TASK_TODO_PATTERN);
   if (todoMatch) {
-    const text = todoMatch[1]?.trim() ?? "";
+    const text = restoreFullLineStrike(todoMatch[1]?.trim() ?? "", hadFullLineStrike);
     if (!text) {
       return null;
     }
@@ -144,7 +154,7 @@ function parseImportedLine(rawLine: string): Omit<ImportedOutlineNode, "children
     return {
       text,
       kind: "task",
-      taskStatus: completed ? "done" : "todo",
+      taskStatus: "todo",
       noteCompleted: false,
       dueAt,
       recurrenceFrequency,
@@ -152,7 +162,7 @@ function parseImportedLine(rawLine: string): Omit<ImportedOutlineNode, "children
     };
   }
 
-  const text = workingText.trim();
+  const text = restoreFullLineStrike(workingText, hadFullLineStrike);
   if (!text) {
     return null;
   }
@@ -161,8 +171,8 @@ function parseImportedLine(rawLine: string): Omit<ImportedOutlineNode, "children
   return {
     text,
     kind,
-    taskStatus: kind === "task" ? (completed ? "done" : "todo") : null,
-    noteCompleted: kind === "note" ? completed : false,
+    taskStatus: kind === "task" ? "todo" : null,
+    noteCompleted: false,
     dueAt: kind === "task" ? dueAt : null,
     recurrenceFrequency: kind === "task" ? recurrenceFrequency : null,
     lockKind: kind === "task",

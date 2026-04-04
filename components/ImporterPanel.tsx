@@ -112,14 +112,21 @@ export function ImporterPanel({
   );
 
   useEffect(() => {
+    if (targetPageId && activePages.some((page) => page._id === targetPageId)) {
+      return;
+    }
+
     if (initialPageId && activePages.some((page) => page._id === initialPageId)) {
       setTargetPageId(initialPageId);
       return;
     }
 
-    if (!targetPageId && activePages.length > 0) {
+    if (activePages.length > 0) {
       setTargetPageId(activePages[0]!._id);
+      return;
     }
+
+    setTargetPageId(null);
   }, [activePages, initialPageId, targetPageId]);
 
   useEffect(() => {
