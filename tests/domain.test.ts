@@ -91,6 +91,33 @@ test("extractLinks finds wiki links and node refs", () => {
   ]);
 });
 
+test("extractLinks finds plain external urls without swallowing punctuation", () => {
+  const links = extractLinks(
+    "Visit test.com, https://example.com/path, and www.openai.com for details.",
+  );
+
+  assert.deepEqual(links, [
+    {
+      kind: "external",
+      label: "test.com",
+      text: "test.com",
+      targetUrl: "test.com",
+    },
+    {
+      kind: "external",
+      label: "https://example.com/path",
+      text: "https://example.com/path",
+      targetUrl: "https://example.com/path",
+    },
+    {
+      kind: "external",
+      label: "www.openai.com",
+      text: "www.openai.com",
+      targetUrl: "www.openai.com",
+    },
+  ]);
+});
+
 test("normalizeCalendarTaskText removes link markup and inline formatting", () => {
   assert.equal(
     normalizeCalendarTaskText("**Pay** __[taxes](https://example.com)__ for [[Home|page:abc]]"),
@@ -156,6 +183,41 @@ test("extractLinkMatches preserves ranges for inline rendering", () => {
         end: 80,
         kind: "external",
         label: "[OpenAI](openai.com)",
+      },
+    ],
+  );
+});
+
+test("extractLinkMatches finds plain urls without duplicating markdown links", () => {
+  const matches = extractLinkMatches(
+    "See test.com, [OpenAI](openai.com), and https://example.com/path.",
+  );
+
+  assert.deepEqual(
+    matches.map((match) => ({
+      start: match.start,
+      end: match.end,
+      kind: match.link.kind,
+      label: match.link.label,
+    })),
+    [
+      {
+        start: 4,
+        end: 12,
+        kind: "external",
+        label: "test.com",
+      },
+      {
+        start: 14,
+        end: 34,
+        kind: "external",
+        label: "[OpenAI](openai.com)",
+      },
+      {
+        start: 40,
+        end: 64,
+        kind: "external",
+        label: "https://example.com/path",
       },
     ],
   );

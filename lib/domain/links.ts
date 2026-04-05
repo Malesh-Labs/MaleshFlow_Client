@@ -26,10 +26,39 @@ export type ExtractedLinkMatch = {
 const WIKI_LINK_PATTERN = /\[\[([^[\]]+)\]\]/g;
 const NODE_LINK_PATTERN = /\(\(([a-zA-Z0-9_-]+)\)\)/g;
 const MARKDOWN_LINK_PATTERN = /\[([^\]]+)\]\(([^)\s]+)\)/g;
+const PLAIN_URL_PATTERN =
+  /(?:https?:\/\/[^\s<]+|www\.[^\s<]+|(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?:\/[^\s<]*)?)/g;
 const PAGE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?page:([a-zA-Z0-9_-]+)$/;
 const NODE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?node:([a-zA-Z0-9_-]+)$/;
 const COMPLETE_MARKDOWN_LINK_PATTERN = /^\[([^\]]+)\]\(([^)]*)\)$/;
 const COMPLETE_WIKI_LINK_PATTERN = /^\[\[([^[\]]+)\]\]$/;
+
+function rangesOverlap(
+  left: Pick<ExtractedLinkMatch, "start" | "end">,
+  right: Pick<ExtractedLinkMatch, "start" | "end">,
+) {
+  return left.start < right.end && right.start < left.end;
+}
+
+function trimTrailingUrlPunctuation(value: string) {
+  let trimmed = value.replace(/[.,!?;:>]+$/g, "");
+  while (trimmed.endsWith(")") && !trimmed.includes("(")) {
+    trimmed = trimmed.slice(0, -1);
+  }
+  while (trimmed.endsWith("]") && !trimmed.includes("[")) {
+    trimmed = trimmed.slice(0, -1);
+  }
+  return trimmed;
+}
+
+function isValidPlainUrlBoundary(text: string, start: number) {
+  if (start <= 0) {
+    return true;
+  }
+
+  const previousCharacter = text[start - 1];
+  return previousCharacter ? !/[A-Za-z0-9_@]/.test(previousCharacter) : true;
+}
 
 export function extractLinkMatches(text: string) {
   const matches: ExtractedLinkMatch[] = [];
@@ -120,6 +149,38 @@ export function extractLinkMatches(text: string) {
         kind: "external",
         label: match[0],
         text: labelText,
+        targetUrl,
+      },
+    });
+  }
+
+  for (const match of text.matchAll(PLAIN_URL_PATTERN)) {
+    const rawUrl = match[0]?.trim();
+    const start = match.index ?? 0;
+    if (!rawUrl || !isValidPlainUrlBoundary(text, start)) {
+      continue;
+    }
+
+    const targetUrl = trimTrailingUrlPunctuation(rawUrl);
+    if (targetUrl.length === 0) {
+      continue;
+    }
+
+    const end = start + targetUrl.length;
+    const overlapsExistingMatch = matches.some((existingMatch) =>
+      rangesOverlap(existingMatch, { start, end }),
+    );
+    if (overlapsExistingMatch) {
+      continue;
+    }
+
+    matches.push({
+      start,
+      end,
+      link: {
+        kind: "external",
+        label: targetUrl,
+        text: targetUrl,
         targetUrl,
       },
     });
