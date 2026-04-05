@@ -11,7 +11,6 @@ import {
   getPlannerDayRoots,
   getPlannerDayTimestamp,
   getPlannerLinkedSourceTaskId,
-  getPlannerStartDate,
   isPlannerPage,
   listEligiblePlannerSourceTasks,
   completePlannerLinkedTask,
@@ -134,17 +133,15 @@ export const appendPlannerDay = mutation({
 
     await ensurePlannerSections(ctx, page);
     const nodes = await listPageNodes(ctx.db, page._id);
-    const startDate = getPlannerStartDate(page);
-    if (!startDate) {
-      throw new Error("Set a start date first.");
-    }
-
     const dayRoots = getPlannerDayRoots(nodes);
+    if (dayRoots.length === 0) {
+      throw new Error("Create the first day in the planner before adding the next one.");
+    }
     const nextPlannerDate =
-      dayRoots.length === 0
-        ? startDate
-        : (getPlannerDayTimestamp(dayRoots[dayRoots.length - 1]!) ?? startDate) +
-          24 * 60 * 60 * 1000;
+      (getPlannerDayTimestamp(dayRoots[dayRoots.length - 1]!) ??
+        getPlannerDayTimestamp(dayRoots[0]!) ??
+        0) +
+      24 * 60 * 60 * 1000;
 
     return await appendPlannerDayCore(ctx, {
       page,

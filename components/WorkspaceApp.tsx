@@ -45,7 +45,6 @@ import {
   getRecurrenceLabel,
   isOverdueDueDateRange,
   parseRecurrenceFrequency,
-  timestampToDateInputValue,
   type RecurrenceFrequency,
   type RecurringCompletionMode,
 } from "@/lib/domain/recurrence";
@@ -62,7 +61,6 @@ import {
   filterPagesForCommandPalette,
 } from "@/lib/domain/workspaceUi";
 import {
-  formatPlannerStartDateLabel,
   getEffectiveTaskDueDateRange,
   plannerChatPlanSchema,
 } from "@/lib/domain/planner";
@@ -2417,7 +2415,6 @@ function ConfiguredWorkspace({
   const generateJournalFeedback = useAction(api.chat.generateJournalFeedback);
   const runPlannerChat = useAction(api.chat.runPlannerChat);
   const applyApprovedPlannerPlan = useMutation(api.chatData.applyApprovedPlannerPlan);
-  const setPlannerStartDate = useMutation(api.planner.setPlannerStartDate);
   const appendPlannerDay = useMutation(api.planner.appendPlannerDay);
   const completePlannerDayWithAi = useAction(api.plannerAi.completePlannerDayWithAi);
   const addRandomPlannerTask = useMutation(api.planner.addRandomPlannerTask);
@@ -2540,10 +2537,6 @@ function ConfiguredWorkspace({
       : null;
   const isSelectedPageExcludedFromPlannerScan =
     selectedPageSourceMeta?.excludeFromPlannerScan === true;
-  const plannerStartDate =
-    typeof selectedPageSourceMeta?.plannerStartDate === "number"
-      ? (selectedPageSourceMeta.plannerStartDate as number)
-      : null;
   const plannerChatMessages = plannerChatThread?.messages ?? [];
   const pageTitleEditorId = selectedPage ? getPageTitleEditorId(selectedPage._id) : null;
   const pageTitleTarget = useMemo(
@@ -5895,40 +5888,6 @@ function ConfiguredWorkspace({
     setSelectedNodeIds(new Set([nodeId]));
   }, []);
 
-  const promptForPlannerStartDate = useCallback(async () => {
-    if (!selectedPageId || pageMeta.pageType !== "planner" || isPageArchived) {
-      return null;
-    }
-
-    const defaultValue =
-      plannerStartDate !== null
-        ? timestampToDateInputValue(plannerStartDate)
-        : timestampToDateInputValue(Date.now());
-    const value = window.prompt("Planner start date (YYYY-MM-DD)", defaultValue);
-    if (value === null) {
-      return null;
-    }
-
-    const trimmedValue = value.trim();
-    const [yearText, monthText, dayText] = trimmedValue.split("-");
-    const year = Number(yearText);
-    const month = Number(monthText);
-    const day = Number(dayText);
-    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
-      setPlannerStatus("Enter a valid date like 2026-04-03.");
-      return null;
-    }
-
-    const nextTimestamp = new Date(year, month - 1, day, 12, 0, 0, 0).getTime();
-    await setPlannerStartDate({
-      ownerKey,
-      pageId: selectedPageId,
-      startDate: nextTimestamp,
-    });
-    setPlannerStatus(`Planner now starts on ${formatPlannerStartDateLabel(nextTimestamp).replace("Starts ", "")}.`);
-    return nextTimestamp;
-  }, [isPageArchived, ownerKey, pageMeta.pageType, plannerStartDate, selectedPageId, setPlannerStartDate]);
-
   const handleAppendPlannerDay = useCallback(async () => {
     if (!selectedPageId || pageMeta.pageType !== "planner" || isPageArchived) {
       return;
@@ -5937,13 +5896,6 @@ function ConfiguredWorkspace({
     setIsPlannerAppendingDay(true);
     setPlannerStatus("");
     try {
-      if (plannerStartDate === null) {
-        const createdStartDate = await promptForPlannerStartDate();
-        if (createdStartDate === null) {
-          return;
-        }
-      }
-
       const result = await appendPlannerDay({
         ownerKey,
         pageId: selectedPageId,
@@ -5965,8 +5917,6 @@ function ConfiguredWorkspace({
     isPageArchived,
     ownerKey,
     pageMeta.pageType,
-    plannerStartDate,
-    promptForPlannerStartDate,
     selectedPageId,
   ]);
 
@@ -6847,14 +6797,6 @@ function ConfiguredWorkspace({
                 ) : pageMeta.pageType === "planner" ? (
                   <div className="space-y-8">
                     <div className="flex flex-wrap items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void promptForPlannerStartDate()}
-                        disabled={isPageArchived}
-                        className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {formatPlannerStartDateLabel(plannerStartDate)}
-                      </button>
                       <button
                         type="button"
                         onClick={() => void handleAppendPlannerDay()}
