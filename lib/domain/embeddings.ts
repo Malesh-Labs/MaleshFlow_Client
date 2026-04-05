@@ -59,3 +59,58 @@ export function buildDeterministicEmbedding(text: string) {
 
   return vector.map((value) => value / magnitude);
 }
+
+export function formatNodeForEmbedding(node: {
+  text: string;
+  kind: string;
+  taskStatus: string | null;
+}) {
+  const text = node.text.trim();
+  if (text.length === 0) {
+    return "";
+  }
+
+  if (node.kind === "task") {
+    return `${node.taskStatus === "done" ? "[x]" : "[ ]"} ${text}`;
+  }
+
+  return text;
+}
+
+export function collectRootSubtreeLines(
+  rootNodeId: string,
+  allNodes: Array<{
+    _id: string;
+    parentNodeId: string | null;
+    position: number;
+    text: string;
+    kind: string;
+    taskStatus: string | null;
+  }>,
+) {
+  const sortedNodes = [...allNodes].sort((left, right) => left.position - right.position);
+  const childrenByParent = new Map<string | null, Array<(typeof sortedNodes)[number]>>();
+
+  for (const node of sortedNodes) {
+    const key = node.parentNodeId ?? null;
+    const bucket = childrenByParent.get(key) ?? [];
+    bucket.push(node);
+    childrenByParent.set(key, bucket);
+  }
+
+  const lines: string[] = [];
+  const visit = (nodeId: string, depth: number) => {
+    const children = childrenByParent.get(nodeId) ?? [];
+    for (const child of children) {
+      const prefix = "  ".repeat(depth);
+      const formatted = formatNodeForEmbedding(child);
+      if (formatted.length > 0) {
+        lines.push(`${prefix}- ${formatted}`);
+      }
+      visit(child._id, depth + 1);
+    }
+  };
+
+  visit(rootNodeId, 0);
+  return lines;
+}

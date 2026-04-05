@@ -2305,6 +2305,7 @@ function ConfiguredWorkspace({
     "model" | "journalFeedback" | null
   >(null);
   const [embeddingRebuildStatus, setEmbeddingRebuildStatus] = useState("");
+  const [shouldTrackEmbeddingRebuild, setShouldTrackEmbeddingRebuild] = useState(true);
   const [isCreatingPage, setIsCreatingPage] = useState<SidebarSection | null>(null);
   const [isCreatingPlannerPage, setIsCreatingPlannerPage] = useState(false);
   const [isSendingChat, setIsSendingChat] = useState(false);
@@ -2376,7 +2377,7 @@ function ConfiguredWorkspace({
   );
   const embeddingRebuildProgress = useQuery(
     api.workspace.getEmbeddingRebuildStatus,
-    ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
+    ownerKey && isOwnerKeyValid && shouldTrackEmbeddingRebuild ? { ownerKey } : SKIP,
   );
   const tags = useQuery(
     api.workspace.listTags,
@@ -3265,7 +3266,7 @@ function ConfiguredWorkspace({
   const workspaceChatMessages = workspaceKnowledgeThread?.messages ?? [];
   const embeddingProgressLabel = useMemo(() => {
     if (!embeddingRebuildProgress) {
-      return "Embedding status unavailable.";
+      return shouldTrackEmbeddingRebuild ? "Embedding status unavailable." : "";
     }
 
     if (embeddingRebuildProgress.total === 0) {
@@ -3285,6 +3286,23 @@ function ConfiguredWorkspace({
     }
 
     return `Embeddings: ${embeddingRebuildProgress.completed}/${embeddingRebuildProgress.total} complete • ${embeddingRebuildProgress.pending} pending`;
+  }, [embeddingRebuildProgress, shouldTrackEmbeddingRebuild]);
+
+  useEffect(() => {
+    if (!embeddingRebuildProgress) {
+      return;
+    }
+
+    if (!embeddingRebuildProgress.idle) {
+      setShouldTrackEmbeddingRebuild(true);
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setShouldTrackEmbeddingRebuild(false);
+    }, 2500);
+
+    return () => window.clearTimeout(timeout);
   }, [embeddingRebuildProgress]);
 
   useEffect(() => {
@@ -3707,6 +3725,7 @@ function ConfiguredWorkspace({
   const handleRebuildEmbeddings = useCallback(async () => {
     setIsRebuildingEmbeddings(true);
     setEmbeddingRebuildStatus("");
+    setShouldTrackEmbeddingRebuild(true);
     try {
       const result = (await rebuildEmbeddings({
         ownerKey,
@@ -11475,12 +11494,13 @@ function OutlineNodeEditor({
   };
 
   return (
-    <div
-      className={clsx(
-        "space-y-px",
-        isPlannerDayRoot ? "mb-8" : "",
-      )}
-    >
+      <div
+        className={clsx(
+          "space-y-px",
+          isPlannerFocusRoot ? "mb-6" : "",
+          isPlannerDayRoot ? "mb-8" : "",
+        )}
+      >
       <div
         data-node-shell
         data-node-id={node._id}

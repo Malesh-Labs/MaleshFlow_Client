@@ -17,6 +17,7 @@ import {
   buildDeterministicEmbedding,
   buildEmbeddingInput,
   buildRootEmbeddingInput,
+  collectRootSubtreeLines,
   shouldGenerateEmbeddingForNodeText,
 } from "../lib/domain/embeddings";
 import {
@@ -275,6 +276,49 @@ test("parseImportedTextToOutlineNodes normalizes Dynalist links and separators",
       lockKind: false,
       children: [],
     },
+  ]);
+});
+
+test("collectRootSubtreeLines preserves nesting and task markers", () => {
+  const lines = collectRootSubtreeLines("root", [
+    {
+      _id: "root",
+      parentNodeId: null,
+      position: 1,
+      text: "Root",
+      kind: "note",
+      taskStatus: null,
+    },
+    {
+      _id: "child-note",
+      parentNodeId: "root",
+      position: 1,
+      text: "Draft plan",
+      kind: "note",
+      taskStatus: null,
+    },
+    {
+      _id: "child-task",
+      parentNodeId: "root",
+      position: 2,
+      text: "Ship fix",
+      kind: "task",
+      taskStatus: "todo",
+    },
+    {
+      _id: "grandchild-task",
+      parentNodeId: "child-task",
+      position: 1,
+      text: "Verify deploy",
+      kind: "task",
+      taskStatus: "done",
+    },
+  ]);
+
+  assert.deepEqual(lines, [
+    "- Draft plan",
+    "- [ ] Ship fix",
+    "  - [x] Verify deploy",
   ]);
 });
 

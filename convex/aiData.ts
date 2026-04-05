@@ -1,7 +1,75 @@
 import { v } from "convex/values";
-import { internalMutation, internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { priorityValidator, taskStatusValidator } from "./lib/validators";
+import {
+  applyEmbeddingJobStatusTransition,
+  getEmbeddingRebuildState,
+  shouldFinalizeEmbeddingRebuild,
+} from "./lib/embeddingRebuild";
+
+function buildEmbeddingJobReplacement(
+  job: Doc<"embeddingJobs">,
+  overrides: Partial<{
+    status: Doc<"embeddingJobs">["status"];
+    attempts: number;
+    lastQueuedAt: number;
+    updatedAt: number;
+    lastError: string | undefined;
+    lastEmbeddedHash: string | undefined;
+    lastEmbeddedPageId: Doc<"embeddingJobs">["lastEmbeddedPageId"];
+    lastEmbeddedAt: number | undefined;
+    rebuildRunId: string | undefined;
+  }>,
+  clears: Partial<Record<"lastError" | "lastEmbeddedHash" | "lastEmbeddedPageId" | "lastEmbeddedAt" | "rebuildRunId", true>> = {},
+) {
+  const next = {
+    nodeId: job.nodeId,
+    status: overrides.status ?? job.status,
+    attempts: overrides.attempts ?? job.attempts,
+    lastQueuedAt: overrides.lastQueuedAt ?? job.lastQueuedAt,
+    updatedAt: overrides.updatedAt ?? job.updatedAt,
+  } as {
+    nodeId: Doc<"embeddingJobs">["nodeId"];
+    status: Doc<"embeddingJobs">["status"];
+    attempts: number;
+    lastQueuedAt: number;
+    updatedAt: number;
+    lastError?: string;
+    lastEmbeddedHash?: string;
+    lastEmbeddedPageId?: Doc<"embeddingJobs">["lastEmbeddedPageId"];
+    lastEmbeddedAt?: number;
+    rebuildRunId?: string;
+  };
+
+  const lastError = overrides.lastError ?? job.lastError;
+  if (!clears.lastError && lastError !== undefined) {
+    next.lastError = lastError;
+  }
+
+  const lastEmbeddedHash = overrides.lastEmbeddedHash ?? job.lastEmbeddedHash;
+  if (!clears.lastEmbeddedHash && lastEmbeddedHash !== undefined) {
+    next.lastEmbeddedHash = lastEmbeddedHash;
+  }
+
+  const lastEmbeddedPageId =
+    overrides.lastEmbeddedPageId ?? job.lastEmbeddedPageId;
+  if (!clears.lastEmbeddedPageId && lastEmbeddedPageId !== undefined) {
+    next.lastEmbeddedPageId = lastEmbeddedPageId;
+  }
+
+  const lastEmbeddedAt = overrides.lastEmbeddedAt ?? job.lastEmbeddedAt;
+  if (!clears.lastEmbeddedAt && lastEmbeddedAt !== undefined) {
+    next.lastEmbeddedAt = lastEmbeddedAt;
+  }
+
+  const rebuildRunId = overrides.rebuildRunId ?? job.rebuildRunId;
+  if (!clears.rebuildRunId && rebuildRunId !== undefined) {
+    next.rebuildRunId = rebuildRunId;
+  }
+
+  return next;
+}
 
 export const fallbackTextSearch = internalQuery({
   args: {
@@ -117,6 +185,7 @@ export const upsertEmbeddingJob = internalMutation({
       v.literal("error"),
     ),
     error: v.optional(v.string()),
+    rebuildRunId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -124,26 +193,79 @@ export const upsertEmbeddingJob = internalMutation({
       .withIndex("by_node", (query) => query.eq("nodeId", args.nodeId))
       .first();
     const now = Date.now();
+    const nextAttempts = existing
+      ? args.status === "running" && existing.status !== "running"
+        ? existing.attempts + 1
+        : existing.attempts
+      : args.status === "running"
+        ? 1
+        : 0;
+    const nextLastQueuedAt =
+      args.status === "queued" ? now : existing?.lastQueuedAt ?? now;
+    const nextLastError = args.status === "error" ? args.error : undefined;
+    const nextRebuildRunId = args.rebuildRunId ?? existing?.rebuildRunId;
 
     if (existing) {
-      await ctx.db.patch(existing._id, {
-        status: args.status,
-        attempts: existing.attempts + (args.status === "running" ? 1 : 0),
-        lastError: args.error,
-        lastQueuedAt: args.status === "queued" ? now : existing.lastQueuedAt,
-        updatedAt: now,
+      await updateTrackedEmbeddingRebuildState(ctx, {
+        previousStatus: existing.status,
+        previousRunId: existing.rebuildRunId ?? null,
+        nextStatus: args.status,
+        nextRunId: nextRebuildRunId ?? null,
+        now,
+        error: nextLastError,
       });
+
+      const shouldPatch =
+        existing.status !== args.status ||
+        existing.attempts !== nextAttempts ||
+        (existing.lastError ?? undefined) !== nextLastError ||
+        existing.lastQueuedAt !== nextLastQueuedAt ||
+        (existing.rebuildRunId ?? undefined) !== nextRebuildRunId;
+
+      if (shouldPatch) {
+        await ctx.db.replace(
+          existing._id,
+          buildEmbeddingJobReplacement(
+            existing,
+            {
+              status: args.status,
+              attempts: nextAttempts,
+              lastQueuedAt: nextLastQueuedAt,
+              updatedAt: now,
+              lastError: nextLastError,
+              rebuildRunId: nextRebuildRunId,
+            },
+            {
+              lastError: nextLastError === undefined ? true : undefined,
+              rebuildRunId: nextRebuildRunId === undefined ? true : undefined,
+            },
+          ),
+        );
+      }
       return existing._id;
     }
 
     return await ctx.db.insert("embeddingJobs", {
       nodeId: args.nodeId,
       status: args.status,
-      attempts: args.status === "running" ? 1 : 0,
-      lastError: args.error,
-      lastQueuedAt: now,
+      attempts: nextAttempts,
+      lastQueuedAt: nextLastQueuedAt,
       updatedAt: now,
+      ...(nextLastError ? { lastError: nextLastError } : {}),
+      ...(nextRebuildRunId ? { rebuildRunId: nextRebuildRunId } : {}),
     });
+  },
+});
+
+export const getEmbeddingJobState = internalQuery({
+  args: {
+    nodeId: v.id("nodes"),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("embeddingJobs")
+      .withIndex("by_node", (query) => query.eq("nodeId", args.nodeId))
+      .first();
   },
 });
 
@@ -152,6 +274,7 @@ export const saveNodeEmbedding = internalMutation({
     nodeId: v.id("nodes"),
     pageId: v.id("pages"),
     content: v.string(),
+    contentHash: v.string(),
     vector: v.array(v.float64()),
   },
   handler: async (ctx, args) => {
@@ -160,15 +283,19 @@ export const saveNodeEmbedding = internalMutation({
       .withIndex("by_node", (query) => query.eq("nodeId", args.nodeId))
       .first();
     const now = Date.now();
+    const shouldWriteEmbedding =
+      !existing ||
+      existing.pageId !== args.pageId ||
+      existing.content !== args.content;
 
-    if (existing) {
+    if (existing && shouldWriteEmbedding) {
       await ctx.db.patch(existing._id, {
         pageId: args.pageId,
         content: args.content,
         vector: args.vector,
         updatedAt: now,
       });
-    } else {
+    } else if (!existing) {
       await ctx.db.insert("nodeEmbeddings", {
         nodeId: args.nodeId,
         pageId: args.pageId,
@@ -184,11 +311,49 @@ export const saveNodeEmbedding = internalMutation({
       .withIndex("by_node", (query) => query.eq("nodeId", args.nodeId))
       .first();
     if (existingJob) {
-      await ctx.db.patch(existingJob._id, {
-        status: "completed",
-        updatedAt: now,
+      await updateTrackedEmbeddingRebuildState(ctx, {
+        previousStatus: existingJob.status,
+        previousRunId: existingJob.rebuildRunId ?? null,
+        nextStatus: "completed",
+        nextRunId: existingJob.rebuildRunId ?? null,
+        now,
       });
+
+      const shouldPatchJob =
+        existingJob.status !== "completed" ||
+        existingJob.lastError !== undefined ||
+        existingJob.lastEmbeddedHash !== args.contentHash ||
+        existingJob.lastEmbeddedPageId !== args.pageId;
+
+      if (shouldPatchJob) {
+        await ctx.db.replace(
+          existingJob._id,
+          buildEmbeddingJobReplacement(
+            existingJob,
+            {
+              status: "completed",
+              lastEmbeddedHash: args.contentHash,
+              lastEmbeddedPageId: args.pageId,
+              lastEmbeddedAt: now,
+              updatedAt: now,
+            },
+            { lastError: true },
+          ),
+        );
+      }
+      return;
     }
+
+    await ctx.db.insert("embeddingJobs", {
+      nodeId: args.nodeId,
+      status: "completed",
+      attempts: 0,
+      lastQueuedAt: now,
+      lastEmbeddedHash: args.contentHash,
+      lastEmbeddedPageId: args.pageId,
+      lastEmbeddedAt: now,
+      updatedAt: now,
+    });
   },
 });
 
@@ -205,13 +370,45 @@ export const clearNodeEmbedding = internalMutation({
       .query("nodeEmbeddings")
       .withIndex("by_node", (query) => query.eq("nodeId", args.nodeId))
       .collect();
-
-    for (const job of embeddingJobs) {
-      await ctx.db.delete(job._id);
-    }
+    const now = Date.now();
 
     for (const embedding of embeddings) {
       await ctx.db.delete(embedding._id);
+    }
+
+    for (const job of embeddingJobs) {
+      await updateTrackedEmbeddingRebuildState(ctx, {
+        previousStatus: job.status,
+        previousRunId: job.rebuildRunId ?? null,
+        nextStatus: "completed",
+        nextRunId: job.rebuildRunId ?? null,
+        now,
+      });
+
+      const shouldPatchJob =
+        job.status !== "completed" ||
+        job.lastError !== undefined ||
+        job.lastEmbeddedHash !== undefined ||
+        job.lastEmbeddedPageId !== undefined;
+
+      if (shouldPatchJob) {
+        await ctx.db.replace(
+          job._id,
+          buildEmbeddingJobReplacement(
+            job,
+            {
+              status: "completed",
+              updatedAt: now,
+            },
+            {
+              lastError: true,
+              lastEmbeddedHash: true,
+              lastEmbeddedPageId: true,
+              lastEmbeddedAt: true,
+            },
+          ),
+        );
+      }
     }
   },
 });
@@ -240,3 +437,50 @@ export const applyTaskMetadata = internalMutation({
     });
   },
 });
+
+async function updateTrackedEmbeddingRebuildState(
+  ctx: MutationCtx,
+  args: {
+    previousStatus: "queued" | "running" | "completed" | "error" | null;
+    previousRunId: string | null;
+    nextStatus: "queued" | "running" | "completed" | "error";
+    nextRunId: string | null;
+    now: number;
+    error?: string;
+  },
+) {
+  const trackedRunId = args.nextRunId ?? args.previousRunId;
+  if (!trackedRunId) {
+    return;
+  }
+
+  const state = await getEmbeddingRebuildState(ctx.db);
+  if (!state || state.runId !== trackedRunId || state.status !== "running") {
+    return;
+  }
+
+  const nextCounts = applyEmbeddingJobStatusTransition(
+    state,
+    args.previousStatus,
+    args.nextStatus,
+  );
+  const shouldFinish = shouldFinalizeEmbeddingRebuild({
+    ...state,
+    ...nextCounts,
+  });
+  const nextStatus = shouldFinish
+    ? nextCounts.error > 0
+      ? "error"
+      : "completed"
+    : state.status;
+
+  await ctx.db.patch(state._id, {
+    ...nextCounts,
+    status: nextStatus,
+    updatedAt: args.now,
+    ...(args.nextStatus === "error" && args.error
+      ? { lastError: args.error }
+      : {}),
+    ...(shouldFinish ? { finishedAt: args.now } : {}),
+  });
+}

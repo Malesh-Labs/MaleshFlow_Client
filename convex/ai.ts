@@ -1,5 +1,6 @@
 "use node";
 
+import { createHash } from "node:crypto";
 import OpenAI from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { v } from "convex/values";
@@ -39,9 +40,13 @@ const fallbackTextSearchRef = internal.aiData.fallbackTextSearch as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const hydrateEmbeddingMatchesRef = internal.aiData.hydrateEmbeddingMatches as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const getNodeAiContextRef = internal.workspace.getNodeAiContext as any;
+const getNodeEmbeddingContextRef = internal.workspace.getNodeEmbeddingContext as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const getNodeTaskMetadataContextRef = internal.workspace.getNodeTaskMetadataContext as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const upsertEmbeddingJobRef = internal.aiData.upsertEmbeddingJob as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const getEmbeddingJobStateRef = internal.aiData.getEmbeddingJobState as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const saveNodeEmbeddingRef = internal.aiData.saveNodeEmbedding as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -83,51 +88,8 @@ async function createEmbedding(text: string) {
   return response.data[0]?.embedding ?? buildDeterministicEmbedding(text);
 }
 
-function formatNodeForEmbedding(node: {
-  text: string;
-  kind: string;
-  taskStatus: string | null;
-}) {
-  const text = node.text.trim();
-  if (text.length === 0) {
-    return "";
-  }
-
-  if (node.kind === "task") {
-    return `${node.taskStatus === "done" ? "[x]" : "[ ]"} ${text}`;
-  }
-
-  return text;
-}
-
-function collectRootSubtreeLines(
-  rootNodeId: string,
-  allNodes: Array<Doc<"nodes">>,
-) {
-  const sortedNodes = [...allNodes].sort((left, right) => left.position - right.position);
-  const childrenByParent = new Map<string | null, Array<Doc<"nodes">>>();
-
-  for (const node of sortedNodes) {
-    const key = node.parentNodeId ?? null;
-    const bucket = childrenByParent.get(key) ?? [];
-    bucket.push(node);
-    childrenByParent.set(key, bucket);
-  }
-
-  const lines: string[] = [];
-  const visit = (nodeId: string, depth: number) => {
-    const children = childrenByParent.get(nodeId) ?? [];
-    for (const child of children) {
-      const formatted = formatNodeForEmbedding(child);
-      if (formatted.length > 0) {
-        lines.push(`${"  ".repeat(depth)}${formatted}`);
-      }
-      visit(child._id, depth + 1);
-    }
-  };
-
-  visit(rootNodeId, 0);
-  return lines;
+function buildEmbeddingContentHash(text: string) {
+  return createHash("sha256").update(text).digest("hex");
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -644,13 +606,8 @@ export const generateEmbeddingForNode = internalAction({
     nodeId: v.id("nodes"),
   },
   handler: async (ctx, args) => {
-    await ctx.runMutation(internal.aiData.upsertEmbeddingJob, {
-      nodeId: args.nodeId,
-      status: "running",
-    });
-
     try {
-      const context = await ctx.runQuery(getNodeAiContextRef, {
+      const context = await ctx.runQuery(getNodeEmbeddingContextRef, {
         nodeId: args.nodeId,
       });
 
@@ -671,15 +628,12 @@ export const generateEmbeddingForNode = internalAction({
       const input =
         context.node.parentNodeId === null
           ? buildRootEmbeddingInput({
-              pageTitle: context.page.title,
+              pageTitle: context.pageTitle,
               rootText: context.node.text.trim(),
-              subtreeLines: collectRootSubtreeLines(context.node._id, [
-                context.node,
-                ...(context.subtreeNodes ?? []),
-              ]),
+              subtreeLines: context.subtreeLines ?? [],
             })
           : buildEmbeddingInput({
-              pageTitle: context.page.title,
+              pageTitle: context.pageTitle,
               ancestors: context.ancestors,
               nodeText: context.node.text,
             });
@@ -691,12 +645,34 @@ export const generateEmbeddingForNode = internalAction({
         return;
       }
 
+      const contentHash = buildEmbeddingContentHash(input);
+      const existingJob = await ctx.runQuery(getEmbeddingJobStateRef, {
+        nodeId: args.nodeId,
+      });
+
+      if (
+        existingJob?.lastEmbeddedHash === contentHash &&
+        existingJob?.lastEmbeddedPageId === context.node.pageId
+      ) {
+        await ctx.runMutation(upsertEmbeddingJobRef, {
+          nodeId: args.nodeId,
+          status: "completed",
+        });
+        return;
+      }
+
+      await ctx.runMutation(upsertEmbeddingJobRef, {
+        nodeId: args.nodeId,
+        status: "running",
+      });
+
       const vector = await createEmbedding(input);
 
       await ctx.runMutation(saveNodeEmbeddingRef, {
         nodeId: context.node._id,
-        pageId: context.page._id,
+        pageId: context.node.pageId,
         content: input,
+        contentHash,
         vector,
       });
     } catch (error) {
@@ -728,7 +704,7 @@ export const extractTaskMetadata = internalAction({
     nodeId: v.id("nodes"),
   },
   handler: async (ctx, args) => {
-    const context = await ctx.runQuery(getNodeAiContextRef, {
+    const context = await ctx.runQuery(getNodeTaskMetadataContextRef, {
       nodeId: args.nodeId,
     });
 
@@ -781,7 +757,7 @@ export const extractTaskMetadata = internalAction({
           },
           {
             role: "user",
-            content: `Page: ${context.page.title}\nAncestors: ${context.ancestors.join(" > ") || "(none)"}\nNode: ${context.node.text}\nCurrent kind: ${context.node.kind}`,
+            content: `Page: ${context.pageTitle}\nAncestors: ${context.ancestors.join(" > ") || "(none)"}\nNode: ${context.node.text}\nCurrent kind: ${context.node.kind}`,
           },
         ],
         text: {

@@ -248,10 +248,38 @@ export default defineSchema({
     attempts: v.number(),
     lastError: v.optional(v.string()),
     lastQueuedAt: v.number(),
+    lastEmbeddedHash: v.optional(v.string()),
+    lastEmbeddedPageId: v.optional(v.id("pages")),
+    lastEmbeddedAt: v.optional(v.number()),
+    rebuildRunId: v.optional(v.string()),
     updatedAt: v.number(),
   })
     .index("by_node", ["nodeId"])
     .index("by_status_updatedAt", ["status", "updatedAt"]),
+
+  embeddingRebuildState: defineTable({
+    key: v.string(),
+    runId: v.string(),
+    status: v.union(
+      v.literal("idle"),
+      v.literal("running"),
+      v.literal("completed"),
+      v.literal("error"),
+    ),
+    scanComplete: v.boolean(),
+    scannedNodes: v.number(),
+    eligibleNodes: v.number(),
+    skippedNodes: v.number(),
+    queued: v.number(),
+    running: v.number(),
+    completed: v.number(),
+    error: v.number(),
+    lastQueuedAt: v.union(v.number(), v.null()),
+    startedAt: v.number(),
+    updatedAt: v.number(),
+    finishedAt: v.optional(v.number()),
+    lastError: v.optional(v.string()),
+  }).index("by_key", ["key"]),
 
   nodeEmbeddings: defineTable({
     nodeId: v.id("nodes"),

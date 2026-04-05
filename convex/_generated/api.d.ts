@@ -15,6 +15,7 @@ import type * as chatData from "../chatData.js";
 import type * as importExport from "../importExport.js";
 import type * as importExportData from "../importExportData.js";
 import type * as lib_auth from "../lib/auth.js";
+import type * as lib_embeddingRebuild from "../lib/embeddingRebuild.js";
 import type * as lib_planner from "../lib/planner.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as lib_workspace from "../lib/workspace.js";
@@ -38,6 +39,7 @@ declare const fullApi: ApiFromModules<{
   importExport: typeof importExport;
   importExportData: typeof importExportData;
   "lib/auth": typeof lib_auth;
+  "lib/embeddingRebuild": typeof lib_embeddingRebuild;
   "lib/planner": typeof lib_planner;
   "lib/validators": typeof lib_validators;
   "lib/workspace": typeof lib_workspace;

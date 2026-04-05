@@ -23,6 +23,11 @@ import {
   setNodeTreeArchivedState,
   syncLinksForNode,
 } from "./lib/workspace";
+import {
+  EMBEDDING_REBUILD_STATE_KEY,
+  buildEmbeddingRebuildStatus,
+  getEmbeddingRebuildState,
+} from "./lib/embeddingRebuild";
 import { nodeKindValidator, nullableNodeIdValidator, priorityValidator, recurrenceFrequencyValidator, taskStatusValidator } from "./lib/validators";
 import {
   buildPlannerChatPromptContext,
@@ -35,7 +40,10 @@ import {
   listEligiblePlannerSourceTasks,
 } from "./lib/planner";
 import { replaceLiteralOccurrences } from "../lib/domain/findReplace";
-import { shouldGenerateEmbeddingForNodeText } from "../lib/domain/embeddings";
+import {
+  collectRootSubtreeLines,
+  shouldGenerateEmbeddingForNodeText,
+} from "../lib/domain/embeddings";
 import { rewriteMatchingPageWikiLinks } from "../lib/domain/links";
 import { extractTagMatches } from "../lib/domain/tags";
 
@@ -47,6 +55,7 @@ const MAX_BACKLINK_COUNT_NODE_BATCH = 250;
 const MAX_PAGE_TREE_NODES = 1200;
 const MAX_PAGE_TREE_NODE_TEXT_CHARS = 250_000;
 const MAX_PAGE_TREE_BACKLINKS = 1200;
+const MAX_NODE_AI_ANCESTOR_DEPTH = 40;
 const MAX_NODE_AI_SUBTREE_NODES = 2000;
 const PAGE_DELETE_NODE_BATCH_SIZE = 100;
 const PAGE_DELETE_LINK_BATCH_SIZE = 200;
@@ -55,36 +64,81 @@ const FIND_REPLACE_PREVIEW_LIMIT = 40;
 const FIND_REPLACE_BATCH_SIZE = 50;
 const EMBEDDING_REBUILD_BATCH_SIZE = 200;
 
-function collectCappedSubtreeNodes(
-  rootNodeId: Id<"nodes">,
-  nodes: Doc<"nodes">[],
+async function collectNodeAncestorTexts(
+  db: DatabaseReader,
+  parentNodeId: Id<"nodes"> | null,
 ) {
-  const childrenByParent = new Map<string | null, Doc<"nodes">[]>();
-  for (const node of [...nodes].sort((left, right) => left.position - right.position)) {
-    const key = node.parentNodeId ?? null;
-    const existing = childrenByParent.get(key) ?? [];
-    existing.push(node);
-    childrenByParent.set(key, existing);
+  const ancestors: string[] = [];
+  let currentParentId = parentNodeId;
+  let depth = 0;
+
+  while (currentParentId && depth < MAX_NODE_AI_ANCESTOR_DEPTH) {
+    const parent = await db.get(currentParentId);
+    if (!parent) {
+      break;
+    }
+
+    ancestors.unshift(parent.text);
+    currentParentId = parent.parentNodeId;
+    depth += 1;
   }
 
-  const collected: Doc<"nodes">[] = [];
-  const visit = (parentNodeId: Id<"nodes">) => {
-    if (collected.length >= MAX_NODE_AI_SUBTREE_NODES) {
-      return;
-    }
+  return ancestors;
+}
 
-    const children = childrenByParent.get(parentNodeId) ?? [];
+async function collectCappedRootSubtreeLines(
+  db: DatabaseReader,
+  rootNode: Doc<"nodes">,
+) {
+  const collected: Array<{
+    _id: string;
+    parentNodeId: string | null;
+    position: number;
+    text: string;
+    kind: string;
+    taskStatus: string | null;
+  }> = [];
+  const queue: Array<Id<"nodes">> = [rootNode._id];
+
+  while (queue.length > 0 && collected.length < MAX_NODE_AI_SUBTREE_NODES) {
+    const parentNodeId = queue.shift()!;
+    const children = await db
+      .query("nodes")
+      .withIndex("by_page_parent_position", (query) =>
+        query.eq("pageId", rootNode.pageId).eq("parentNodeId", parentNodeId),
+      )
+      .collect();
+
     for (const child of children) {
-      if (collected.length >= MAX_NODE_AI_SUBTREE_NODES) {
-        return;
+      if (child.archived) {
+        continue;
       }
-      collected.push(child);
-      visit(child._id);
+      if (collected.length >= MAX_NODE_AI_SUBTREE_NODES) {
+        break;
+      }
+      collected.push({
+        _id: child._id,
+        parentNodeId: child.parentNodeId,
+        position: child.position,
+        text: child.text,
+        kind: child.kind,
+        taskStatus: child.taskStatus,
+      });
+      queue.push(child._id);
     }
-  };
+  }
 
-  visit(rootNodeId);
-  return collected;
+  return collectRootSubtreeLines(rootNode._id, [
+    {
+      _id: rootNode._id,
+      parentNodeId: rootNode.parentNodeId,
+      position: rootNode.position,
+      text: rootNode.text,
+      kind: rootNode.kind,
+      taskStatus: rootNode.taskStatus,
+    },
+    ...collected,
+  ]);
 }
 
 async function listPageNodesForTree(
@@ -598,7 +652,34 @@ export const rebuildEmbeddings = mutation({
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
+    const now = getTimestamp();
+    const runId = `${now}`;
+    const existingState = await getEmbeddingRebuildState(ctx.db);
+    const nextState = {
+      key: EMBEDDING_REBUILD_STATE_KEY,
+      runId,
+      status: "running" as const,
+      scanComplete: false,
+      scannedNodes: 0,
+      eligibleNodes: 0,
+      skippedNodes: 0,
+      queued: 0,
+      running: 0,
+      completed: 0,
+      error: 0,
+      lastQueuedAt: null,
+      startedAt: now,
+      updatedAt: now,
+    };
+
+    if (existingState) {
+      await ctx.db.replace(existingState._id, nextState);
+    } else {
+      await ctx.db.insert("embeddingRebuildState", nextState);
+    }
+
     await ctx.scheduler.runAfter(0, internal.workspace.rebuildEmbeddingsBatch, {
+      runId,
       cursor: null,
       batchSize: EMBEDDING_REBUILD_BATCH_SIZE,
     });
@@ -606,16 +687,23 @@ export const rebuildEmbeddings = mutation({
     return {
       started: true,
       batchSize: EMBEDDING_REBUILD_BATCH_SIZE,
+      runId,
     };
   },
 });
 
 export const rebuildEmbeddingsBatch = internalMutation({
   args: {
+    runId: v.string(),
     cursor: v.union(v.string(), v.null()),
     batchSize: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
+    const state = await getEmbeddingRebuildState(ctx.db);
+    if (!state || state.runId !== args.runId || state.status !== "running") {
+      return;
+    }
+
     const batchSize = Math.max(
       1,
       Math.min(args.batchSize ?? EMBEDDING_REBUILD_BATCH_SIZE, EMBEDDING_REBUILD_BATCH_SIZE),
@@ -625,15 +713,22 @@ export const rebuildEmbeddingsBatch = internalMutation({
       numItems: batchSize,
     });
     const now = getTimestamp();
+    let scannedDelta = 0;
+    let eligibleDelta = 0;
+    let skippedDelta = 0;
+    let queuedDelta = 0;
 
     for (const node of result.page) {
+      scannedDelta += 1;
       if (node.archived || !shouldGenerateEmbeddingForNodeText(node.text)) {
+        skippedDelta += 1;
         await ctx.runMutation(internal.aiData.clearNodeEmbedding, {
           nodeId: node._id,
         });
         continue;
       }
 
+      eligibleDelta += 1;
       const existingJob = await ctx.db
         .query("embeddingJobs")
         .withIndex("by_node", (query) => query.eq("nodeId", node._id))
@@ -643,6 +738,7 @@ export const rebuildEmbeddingsBatch = internalMutation({
         await ctx.db.patch(existingJob._id, {
           status: "queued",
           lastQueuedAt: now,
+          rebuildRunId: args.runId,
           updatedAt: now,
         });
       } else {
@@ -651,17 +747,45 @@ export const rebuildEmbeddingsBatch = internalMutation({
           status: "queued",
           attempts: 0,
           lastQueuedAt: now,
+          rebuildRunId: args.runId,
           updatedAt: now,
         });
       }
+      queuedDelta += 1;
 
       await ctx.scheduler.runAfter(0, internal.ai.generateEmbeddingForNode, {
         nodeId: node._id,
       });
     }
 
+    const latestState = await getEmbeddingRebuildState(ctx.db);
+    if (!latestState || latestState.runId !== args.runId || latestState.status !== "running") {
+      return;
+    }
+
+    const nextQueued = latestState.queued + queuedDelta;
+    const nextStateStatus =
+      result.isDone && latestState.running === 0 && nextQueued === 0
+        ? latestState.error > 0
+          ? "error"
+          : "completed"
+        : latestState.status;
+
+    await ctx.db.patch(latestState._id, {
+      scannedNodes: latestState.scannedNodes + scannedDelta,
+      eligibleNodes: latestState.eligibleNodes + eligibleDelta,
+      skippedNodes: latestState.skippedNodes + skippedDelta,
+      queued: nextQueued,
+      lastQueuedAt: queuedDelta > 0 ? now : latestState.lastQueuedAt,
+      scanComplete: result.isDone,
+      status: nextStateStatus,
+      updatedAt: now,
+      ...(nextStateStatus !== "running" ? { finishedAt: now } : {}),
+    });
+
     if (!result.isDone) {
       await ctx.scheduler.runAfter(0, internal.workspace.rebuildEmbeddingsBatch, {
+        runId: args.runId,
         cursor: result.continueCursor,
         batchSize,
       });
@@ -675,56 +799,7 @@ export const getEmbeddingRebuildStatus = query({
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
-
-    const eligibleActiveNodes = (await ctx.db.query("nodes").collect()).filter(
-      (node) => !node.archived && shouldGenerateEmbeddingForNodeText(node.text),
-    );
-    const activeNodeIds = new Set(eligibleActiveNodes.map((node) => node._id));
-    const jobs = (await ctx.db.query("embeddingJobs").collect()).filter((job) =>
-      activeNodeIds.has(job.nodeId),
-    );
-    const jobsByNodeId = new Map(jobs.map((job) => [job.nodeId, job]));
-
-    let queued = 0;
-    let running = 0;
-    let completed = 0;
-    let error = 0;
-    let pending = 0;
-
-    for (const node of eligibleActiveNodes) {
-      const job = jobsByNodeId.get(node._id);
-      if (!job) {
-        pending += 1;
-        continue;
-      }
-
-      if (job.status === "queued") {
-        queued += 1;
-      } else if (job.status === "running") {
-        running += 1;
-      } else if (job.status === "completed") {
-        completed += 1;
-      } else if (job.status === "error") {
-        error += 1;
-      }
-    }
-
-    const total = eligibleActiveNodes.length;
-
-    return {
-      total,
-      queued,
-      running,
-      completed,
-      error,
-      pending,
-      idle: queued === 0 && running === 0,
-      complete: total === 0 ? true : completed === total && queued === 0 && running === 0 && pending === 0 && error === 0,
-      lastQueuedAt:
-        jobs.length > 0
-          ? Math.max(...jobs.map((job) => job.lastQueuedAt))
-          : null,
-    };
+    return buildEmbeddingRebuildStatus(await getEmbeddingRebuildState(ctx.db));
   },
 });
 
@@ -2509,7 +2584,7 @@ export const deleteNode = mutation({
   },
 });
 
-export const getNodeAiContext = internalQuery({
+export const getNodeEmbeddingContext = internalQuery({
   args: {
     nodeId: v.id("nodes"),
   },
@@ -2524,29 +2599,54 @@ export const getNodeAiContext = internalQuery({
       return null;
     }
 
-    const ancestors: string[] = [];
-    let currentParentId = node.parentNodeId;
-
-    while (currentParentId) {
-      const parent = await ctx.db.get(currentParentId);
-      if (!parent) {
-        break;
-      }
-
-      ancestors.unshift(parent.text);
-      currentParentId = parent.parentNodeId;
-    }
-
-    const subtreeNodes =
-      node.parentNodeId === null
-        ? collectCappedSubtreeNodes(node._id, await listPageNodes(ctx.db, page._id))
-        : [];
+    const ancestors = await collectNodeAncestorTexts(ctx.db, node.parentNodeId);
+    const subtreeLines =
+      node.parentNodeId === null ? await collectCappedRootSubtreeLines(ctx.db, node) : [];
 
     return {
-      page,
-      node,
+      pageTitle: page.title,
+      node: {
+        _id: node._id,
+        pageId: node.pageId,
+        parentNodeId: node.parentNodeId,
+        text: node.text,
+        kind: node.kind,
+        taskStatus: node.taskStatus,
+        archived: node.archived,
+      },
       ancestors,
-      subtreeNodes,
+      subtreeLines,
+    };
+  },
+});
+
+export const getNodeTaskMetadataContext = internalQuery({
+  args: {
+    nodeId: v.id("nodes"),
+  },
+  handler: async (ctx, args) => {
+    const node = await ctx.db.get(args.nodeId);
+    if (!node) {
+      return null;
+    }
+
+    const page = await ctx.db.get(node.pageId);
+    if (!page) {
+      return null;
+    }
+
+    return {
+      pageTitle: page.title,
+      node: {
+        _id: node._id,
+        text: node.text,
+        kind: node.kind,
+        taskStatus: node.taskStatus,
+        priority: node.priority,
+        archived: node.archived,
+        sourceMeta: node.sourceMeta,
+      },
+      ancestors: await collectNodeAncestorTexts(ctx.db, node.parentNodeId),
     };
   },
 });
