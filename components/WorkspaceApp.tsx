@@ -772,7 +772,7 @@ function getNodeMeta(node: { sourceMeta?: unknown } | null | undefined) {
   return node.sourceMeta as Record<string, unknown>;
 }
 
-function isPlannerDayTask(
+function isPlannerCompletionTask(
   node:
     | Pick<Doc<"nodes">, "_id" | "parentNodeId" | "sourceMeta" | "kind">
     | Pick<TreeNode, "_id" | "parentNodeId" | "sourceMeta" | "kind">
@@ -786,10 +786,10 @@ function isPlannerDayTask(
     return false;
   }
 
-  return isPlannerDayItem(node, nodeMap);
+  return isPlannerCompletionItem(node, nodeMap);
 }
 
-function isPlannerDayItem(
+function isPlannerCompletionItem(
   node:
     | Pick<Doc<"nodes">, "_id" | "parentNodeId" | "sourceMeta" | "kind">
     | Pick<TreeNode, "_id" | "parentNodeId" | "sourceMeta" | "kind">
@@ -811,7 +811,10 @@ function isPlannerDayItem(
     }
 
     const parentMeta = getNodeMeta(parentNode);
-    if (parentMeta.plannerKind === "plannerDay") {
+    if (
+      parentMeta.plannerKind === "plannerDay" ||
+      parentMeta.sectionSlot === "plannerFocus"
+    ) {
       return true;
     }
 
@@ -4873,7 +4876,7 @@ function ConfiguredWorkspace({
         continue;
       }
 
-      if (isPlannerDayTask(node, workspaceNodeMap)) {
+      if (isPlannerCompletionTask(node, workspaceNodeMap)) {
         await completePlannerTask({
           ownerKey,
           plannerNodeId: node._id as Id<"nodes">,
@@ -4986,7 +4989,7 @@ function ConfiguredWorkspace({
         continue;
       }
 
-      if (isPlannerDayTask(node, workspaceNodeMap)) {
+      if (isPlannerCompletionTask(node, workspaceNodeMap)) {
         await completePlannerTask({
           ownerKey,
           plannerNodeId: node._id as Id<"nodes">,
@@ -4999,7 +5002,7 @@ function ConfiguredWorkspace({
       if (
         node.kind === "note" &&
         !isNodeNoteCompleted(node) &&
-        isPlannerDayItem(node, workspaceNodeMap)
+        isPlannerCompletionItem(node, workspaceNodeMap)
       ) {
         await completePlannerTask({
           ownerKey,
@@ -10735,7 +10738,7 @@ function OutlineNodeEditor({
       return;
     }
 
-    if (isPlannerDayTask(node, nodeMap)) {
+    if (isPlannerCompletionTask(node, nodeMap)) {
       await completePlannerTaskMutation({
         ownerKey,
         plannerNodeId: node._id as Id<"nodes">,
@@ -10776,7 +10779,7 @@ function OutlineNodeEditor({
         recurrenceFrequency,
       }, node);
 
-    if (isPlannerDayItem(node, nodeMap) && !isNoteCompleted) {
+    if (isPlannerCompletionItem(node, nodeMap) && !isNoteCompleted) {
       await completePlannerTaskMutation({
         ownerKey,
         plannerNodeId: node._id as Id<"nodes">,
