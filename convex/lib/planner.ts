@@ -150,7 +150,7 @@ export function getPlannerDayRoots(nodes: Doc<"nodes">[]) {
 
 export function getCurrentPlannerDay(nodes: Doc<"nodes">[]) {
   const roots = getPlannerDayRoots(nodes);
-  return roots[roots.length - 1] ?? null;
+  return roots[0] ?? null;
 }
 
 function buildChildrenByParent(nodes: Doc<"nodes">[]) {
