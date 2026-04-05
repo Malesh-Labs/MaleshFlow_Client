@@ -2,7 +2,6 @@ import { v } from "convex/values";
 import { internalQuery, mutation } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { assertOwnerKey } from "./lib/auth";
-import { listPageNodes } from "./lib/workspace";
 import {
   isPlannerDerivedSourceTask,
   isPlannerPage,
@@ -14,7 +13,6 @@ import {
   type TaskCalendarFeed,
   type TaskCalendarFeedEvent,
 } from "../lib/domain/calendar";
-import { getEffectiveTaskDueDateRange } from "../lib/domain/planner";
 import { extractLinks } from "../lib/domain/links";
 
 const TASK_CALENDAR_FEED_KIND = "task_ics";
@@ -42,10 +40,6 @@ function getTaskCalendarFeedUrl(token: string) {
   const url = new URL("/task-calendar.ics", siteUrl);
   url.searchParams.set("token", token);
   return url.toString();
-}
-
-function buildPageNodeMap(nodes: Doc<"nodes">[]) {
-  return new Map(nodes.map((node) => [node._id as string, node]));
 }
 
 async function resolveCalendarTaskSummary(
@@ -164,19 +158,8 @@ export const getTaskCalendarFeedByToken = internalQuery({
       }
 
       const pageTasks = tasksByPageId.get(pageId as string) ?? [];
-      const shouldLoadPageNodes = pageTasks.some((task) => !task.dueAt);
-      const pageNodeMap = shouldLoadPageNodes
-        ? buildPageNodeMap(await listPageNodes(ctx.db, pageId))
-        : new Map(pageTasks.map((task) => [task._id as string, task]));
-
       for (const task of pageTasks) {
-        const effectiveDueRange = task.dueAt
-          ? {
-              dueAt: task.dueAt,
-              dueEndAt: task.dueEndAt ?? null,
-            }
-          : getEffectiveTaskDueDateRange(task, pageNodeMap);
-        if (!effectiveDueRange.dueAt) {
+        if (!task.dueAt) {
           continue;
         }
 
@@ -189,8 +172,8 @@ export const getTaskCalendarFeedByToken = internalQuery({
             pageTitle: page.title,
             tags,
           }),
-          dueAt: effectiveDueRange.dueAt,
-          dueEndAt: effectiveDueRange.dueEndAt ?? null,
+          dueAt: task.dueAt,
+          dueEndAt: task.dueEndAt ?? null,
           updatedAt: task.updatedAt,
           categories: tags,
         });
