@@ -7048,9 +7048,11 @@ function ConfiguredWorkspace({
                               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--workspace-accent)]">
                                 Random Task Suggestion
                               </p>
-                              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[var(--workspace-text)] [overflow-wrap:anywhere]">
-                                {plannerRandomTaskSuggestion.text}
-                              </h3>
+                              <div className="mt-3 rounded-md border border-[var(--workspace-border-soft)] bg-[color-mix(in_srgb,var(--workspace-brand)_8%,var(--workspace-surface))] px-4 py-3">
+                                <h3 className="text-2xl font-semibold tracking-tight text-[var(--workspace-text)] [overflow-wrap:anywhere]">
+                                  {plannerRandomTaskSuggestion.text}
+                                </h3>
+                              </div>
                             </div>
                             <button
                               type="button"
@@ -7130,9 +7132,11 @@ function ConfiguredWorkspace({
                               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--workspace-accent)]">
                                 Next Suggested Task
                               </p>
-                              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[var(--workspace-text)] [overflow-wrap:anywhere]">
-                                {plannerNextTaskSuggestion.text}
-                              </h3>
+                              <div className="mt-3 rounded-md border border-[var(--workspace-border-soft)] bg-[color-mix(in_srgb,var(--workspace-brand)_8%,var(--workspace-surface))] px-4 py-3">
+                                <h3 className="text-2xl font-semibold tracking-tight text-[var(--workspace-text)] [overflow-wrap:anywhere]">
+                                  {plannerNextTaskSuggestion.text}
+                                </h3>
+                              </div>
                             </div>
                             <button
                               type="button"
@@ -9850,9 +9854,13 @@ function OutlineNodeEditor({
   const isTaskCompleted = node.kind === "task" && node.taskStatus === "done";
   const isCompleted = isTaskCompleted || isNoteCompleted;
   const isLocked = nodeMeta.locked === true;
+  const sectionSlot =
+    typeof nodeMeta.sectionSlot === "string" ? nodeMeta.sectionSlot : null;
   const isPlannerTemplateWeekdayRoot =
     typeof nodeMeta.plannerTemplateWeekday === "string" &&
     node.parentNodeId !== null;
+  const isPlannerFocusRoot =
+    sectionSlot === "plannerFocus" && node.parentNodeId === null;
   const isPlannerDayRoot =
     nodeMeta.plannerKind === "plannerDay" && node.parentNodeId === null;
   const isDisabled = isLocked || isPageReadOnly;
@@ -9985,12 +9993,16 @@ function OutlineNodeEditor({
   const headingRowMinHeightClass = getHeadingRowMinHeightClass(headingSyntax.level);
   const headingMarkerOffsetClass = getHeadingMarkerOffsetClass(headingSyntax.level);
   const headingControlOffsetClass = getHeadingControlOffsetClass(headingSyntax.level);
+  const focusTitleTypographyClass = isPlannerFocusRoot
+    ? "text-sm font-semibold uppercase tracking-[0.22em]"
+    : "";
   const baseTypographyClass = getNodeTypographyClass({
     isTaskRow,
     headingLevel: headingSyntax.level,
   });
   const previewTypographyClass = clsx(
     baseTypographyClass,
+    focusTitleTypographyClass,
     hasPageLinkPreview && !isTaskRow && !isHeadingRow ? "py-1" : "",
     hasPageLinkPreview && isTaskRow ? "py-0.5" : "",
     hasNestedGrandchildren ? "italic" : "",
@@ -11537,9 +11549,15 @@ function OutlineNodeEditor({
         ) : null}
         <div
           className={clsx(
-            "flex items-start",
+            "flex items-start rounded-md transition",
             hidePlannerTemplateWeekdayMarker ? "gap-0" : "gap-1.5",
             isHeadingRow ? headingRowMinHeightClass : "min-h-0",
+            isPlannerFocusRoot
+              ? "border border-[var(--workspace-border-soft)] bg-[color-mix(in_srgb,var(--workspace-brand)_8%,var(--workspace-surface))] px-3 py-2.5 shadow-[inset_0_1px_0_color-mix(in_srgb,var(--workspace-brand)_10%,white)]"
+              : "",
+            isPlannerDayRoot
+              ? "border border-[color-mix(in_srgb,var(--workspace-brand)_28%,var(--workspace-border))] bg-[color-mix(in_srgb,var(--workspace-brand)_12%,transparent)] px-2.5 py-2"
+              : "",
           )}
         >
           <div
@@ -11841,7 +11859,7 @@ function OutlineNodeEditor({
           </div>
         </div>
         {isPlannerDayRoot ? (
-          <div className="ml-[1.375rem] mt-2 mb-4 border-t border-[var(--workspace-border)]/80" />
+          <div className="mx-1 mt-3 mb-5 border-t border-[color-mix(in_srgb,var(--workspace-brand)_20%,var(--workspace-border))]" />
         ) : null}
       </div>
       {hasChildren && (shouldRenderChildren || !isCollapsed) ? (
