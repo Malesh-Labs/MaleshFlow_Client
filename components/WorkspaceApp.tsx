@@ -2146,6 +2146,17 @@ function readStoredRecurringCompletionMode(defaultValue: RecurringCompletionMode
     : defaultValue;
 }
 
+function persistCollapsedNodeIdsToSessionStorage(nodeIds: Iterable<string>) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.sessionStorage.setItem(
+    COLLAPSED_NODES_STORAGE_KEY,
+    JSON.stringify([...nodeIds]),
+  );
+}
+
 function getHeadingPreviewClass(level: 1 | 2 | 3 | null) {
   if (level === 1) {
     return "text-[1.9rem] leading-[2.3rem] font-semibold tracking-tight";
@@ -2391,6 +2402,7 @@ function ConfiguredWorkspace({
     useState<PendingInsertedComposer | null>(null);
   const [locationPageId, setLocationPageId] = useState<string | null>(null);
   const connectionState = useConvexConnectionState();
+  const hasHydratedSessionUiStateRef = useRef(false);
 
   const isOwnerKeyValid = useQuery(
     api.workspace.validateOwnerKey,
@@ -2511,8 +2523,19 @@ function ConfiguredWorkspace({
     setDragSelection(null);
   }, []);
 
+  const updateCollapsedNodeIds = useCallback(
+    (updater: (current: Set<string>) => Set<string>) => {
+      setCollapsedNodeIds((current) => {
+        const next = updater(current);
+        persistCollapsedNodeIdsToSessionStorage(next);
+        return next;
+      });
+    },
+    [],
+  );
+
   const toggleNodeCollapsed = useCallback((nodeId: string) => {
-    setCollapsedNodeIds((current) => {
+    updateCollapsedNodeIds((current) => {
       const next = new Set(current);
       if (next.has(nodeId)) {
         next.delete(nodeId);
@@ -2521,7 +2544,7 @@ function ConfiguredWorkspace({
       }
       return next;
     });
-  }, []);
+  }, [updateCollapsedNodeIds]);
 
   const switchPaletteMode = useCallback((mode: PaletteMode) => {
     lastPaletteModeRef.current = mode;
@@ -2621,7 +2644,7 @@ function ConfiguredWorkspace({
       return;
     }
 
-    setCollapsedNodeIds((current) => {
+    updateCollapsedNodeIds((current) => {
       const next = new Set(current);
       for (const nodeId of collapsiblePageNodeIds) {
         next.add(nodeId);
@@ -2629,7 +2652,7 @@ function ConfiguredWorkspace({
       return next;
     });
     setPaletteOpen(false);
-  }, [collapsiblePageNodeIds, selectedPage]);
+  }, [collapsiblePageNodeIds, selectedPage, updateCollapsedNodeIds]);
   const nodeMap = new Map(
     (activePageTree?.nodes ?? []).map((node) => [node._id as string, node]),
   );
@@ -3375,10 +3398,16 @@ function ConfiguredWorkspace({
     } catch {
       setCollapsedNodeIds(new Set());
     }
+
+    hasHydratedSessionUiStateRef.current = true;
   }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!hasHydratedSessionUiStateRef.current) {
       return;
     }
 
@@ -3393,6 +3422,10 @@ function ConfiguredWorkspace({
       return;
     }
 
+    if (!hasHydratedSessionUiStateRef.current) {
+      return;
+    }
+
     window.sessionStorage.setItem(
       UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY,
       isUncategorizedSectionCollapsed ? "true" : "false",
@@ -3401,6 +3434,10 @@ function ConfiguredWorkspace({
 
   useEffect(() => {
     if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!hasHydratedSessionUiStateRef.current) {
       return;
     }
 
@@ -3415,6 +3452,10 @@ function ConfiguredWorkspace({
       return;
     }
 
+    if (!hasHydratedSessionUiStateRef.current) {
+      return;
+    }
+
     window.sessionStorage.setItem(
       TAGS_SECTION_COLLAPSE_STORAGE_KEY,
       isTagsSectionCollapsed ? "true" : "false",
@@ -3423,6 +3464,10 @@ function ConfiguredWorkspace({
 
   useEffect(() => {
     if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!hasHydratedSessionUiStateRef.current) {
       return;
     }
 
@@ -3448,10 +3493,11 @@ function ConfiguredWorkspace({
       return;
     }
 
-    window.sessionStorage.setItem(
-      COLLAPSED_NODES_STORAGE_KEY,
-      JSON.stringify([...collapsedNodeIds]),
-    );
+    if (!hasHydratedSessionUiStateRef.current) {
+      return;
+    }
+
+    persistCollapsedNodeIdsToSessionStorage(collapsedNodeIds);
   }, [collapsedNodeIds]);
 
   useEffect(() => {
@@ -4777,7 +4823,7 @@ function ConfiguredWorkspace({
         return;
       }
 
-      setCollapsedNodeIds((current) => {
+      updateCollapsedNodeIds((current) => {
         const next = new Set(current);
         if (nextCollapsed) {
           next.add(nodeId);
@@ -4787,7 +4833,7 @@ function ConfiguredWorkspace({
         return next;
       });
     },
-    [selectedNodeIds, sidebarNodes, tree],
+    [selectedNodeIds, sidebarNodes, tree, updateCollapsedNodeIds],
   );
 
   const toggleHighlightedNodeKind = useCallback(async () => {
@@ -5415,14 +5461,14 @@ function ConfiguredWorkspace({
       return;
     }
 
-    setCollapsedNodeIds((current) => {
+    updateCollapsedNodeIds((current) => {
       const next = new Set(current);
       for (const ancestorNodeId of ancestorNodeIds) {
         next.delete(ancestorNodeId);
       }
       return next;
     });
-  }, [collapsedNodeIds, pendingRevealNodeId, revealNodes]);
+  }, [collapsedNodeIds, pendingRevealNodeId, revealNodes, updateCollapsedNodeIds]);
 
   useEffect(() => {
     if (
@@ -11609,13 +11655,25 @@ function OutlineNodeEditor({
             return;
           }
 
+          const isTextSelectionTarget = isTextEntryElement(event.target);
+          const activeEditorNodeId =
+            document.activeElement instanceof HTMLElement
+              ? document.activeElement.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId ??
+                null
+              : null;
+          const isShiftClickInsideActiveEditor =
+            isTextSelectionTarget && activeEditorNodeId === (node._id as string);
           if (
             event.shiftKey &&
+            !isShiftClickInsideActiveEditor &&
             !(event.target instanceof HTMLElement &&
               event.target.closest("button, a, [contenteditable='true']"))
           ) {
             event.preventDefault();
             event.stopPropagation();
+            if (document.activeElement instanceof HTMLElement) {
+              document.activeElement.blur();
+            }
             onSuppressTextEditingSelectionClear();
             onSelectNodeRange(getRangeSelectionAnchorNodeId(), node._id);
             return;
