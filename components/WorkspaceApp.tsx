@@ -7182,53 +7182,12 @@ function ConfiguredWorkspace({
                     ) : null}
                     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start">
                       <div className="min-w-0 space-y-1">
-                        <PageSection
-                          title="Focus"
-                          sectionNode={plannerFocusSection}
-                          ownerKey={ownerKey}
-                          pageId={selectedPage._id}
-                          nodeBacklinkCounts={pageNodeBacklinkCounts}
-                          nodeMap={nodeMap}
-                          createNodesBatch={createNodesBatch}
-                          insertOutlineClipboardNodes={insertOutlineClipboardNodes}
-                          updateNode={updateNode}
-                          moveNode={moveNode}
-                          splitNode={splitNode}
-                          replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
-                          setNodeTreeArchived={setNodeTreeArchived}
-                          isPageReadOnly={isPageArchived}
-                          collapsedNodeIds={collapsedNodeIds}
-                          selectedNodeIds={selectedNodeIds}
-                          selectionAnchorNodeId={selectionAnchorNodeId}
-                          onToggleNodeCollapsed={toggleNodeCollapsed}
-                          onSelectSingleNode={selectSingleNode}
-                          onSelectNodeRange={selectNodeRange}
-                          onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
-                          pendingInsertedComposer={pendingInsertedComposer}
-                          onOpenInsertedComposer={openInsertedComposer}
-                          onClearInsertedComposer={clearInsertedComposer}
-                          onBeginTextEditing={clearNodeSelection}
-                          activeDraggedNodeId={activeDraggedNodeId}
-                          activeDraggedNodePayload={activeDraggedNodePayload}
-                          onSetActiveDraggedNodeId={setActiveDraggedNodeId}
-                          onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
-                          onSetSelectedNodeIds={setExplicitSelectedNodeIds}
-                          buildDraggedNodePayload={buildDraggedNodePayload}
-                          onDropDraggedNodes={dropDraggedNodes}
-                          onSelectionStart={beginNodeSelection}
-                          onSelectionExtend={extendNodeSelection}
-                          availableTags={sortedTags}
-                          pagesByTitle={pagesByTitle}
-                          pagesById={pagesById}
-                          onOpenPage={handleSelectPage}
-                          onOpenNode={handleOpenLinkedNode}
-                          onOpenTag={openFindPaletteForQuery}
-                          onOpenFindQuery={openFindPaletteForQuery}
-                          recurringCompletionMode={recurringCompletionMode}
-                          depthOffset={sectionDepthOffset}
-                        />
                         <OutlineNodeList
-                          nodes={genericRoots}
+                          nodes={
+                            plannerFocusSection
+                              ? [plannerFocusSection, ...genericRoots]
+                              : genericRoots
+                          }
                           ownerKey={ownerKey}
                           pageId={selectedPage._id}
                           nodeBacklinkCounts={pageNodeBacklinkCounts}
