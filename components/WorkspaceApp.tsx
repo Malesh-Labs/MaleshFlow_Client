@@ -2343,7 +2343,8 @@ function ConfiguredWorkspace({
     "model" | "journalFeedback" | null
   >(null);
   const [embeddingRebuildStatus, setEmbeddingRebuildStatus] = useState("");
-  const [shouldTrackEmbeddingRebuild, setShouldTrackEmbeddingRebuild] = useState(true);
+  const [shouldTrackEmbeddingRebuild, setShouldTrackEmbeddingRebuild] = useState(false);
+  const [isEmbeddingErrorPanelDismissed, setIsEmbeddingErrorPanelDismissed] = useState(false);
   const [isCreatingPage, setIsCreatingPage] = useState<SidebarSection | null>(null);
   const [isCreatingPlannerPage, setIsCreatingPlannerPage] = useState(false);
   const [isSendingChat, setIsSendingChat] = useState(false);
@@ -2417,7 +2418,16 @@ function ConfiguredWorkspace({
   );
   const embeddingRebuildProgress = useQuery(
     api.workspace.getEmbeddingRebuildStatus,
-    ownerKey && isOwnerKeyValid && shouldTrackEmbeddingRebuild ? { ownerKey } : SKIP,
+    ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
+  );
+  const embeddingRebuildErrors = useQuery(
+    api.workspace.getRecentEmbeddingErrors,
+    ownerKey &&
+      isOwnerKeyValid &&
+      !isEmbeddingErrorPanelDismissed &&
+      (embeddingRebuildProgress?.error ?? 0) > 0
+      ? { ownerKey, limit: 6 }
+      : SKIP,
   );
   const tags = useQuery(
     api.workspace.listTags,
@@ -3343,6 +3353,12 @@ function ConfiguredWorkspace({
 
     return `Embeddings: ${embeddingRebuildProgress.completed}/${embeddingRebuildProgress.total} complete • ${embeddingRebuildProgress.pending} pending`;
   }, [embeddingRebuildProgress, shouldTrackEmbeddingRebuild]);
+
+  useEffect(() => {
+    if ((embeddingRebuildProgress?.error ?? 0) > 0) {
+      setIsEmbeddingErrorPanelDismissed(false);
+    }
+  }, [embeddingRebuildProgress?.error]);
   const embeddingRebuildTracker = useMemo(() => {
     if (!embeddingRebuildProgress) {
       return null;
@@ -3391,8 +3407,17 @@ function ConfiguredWorkspace({
       return;
     }
 
-    if (!embeddingRebuildProgress.idle) {
+    const hasActiveWork =
+      embeddingRebuildProgress.status === "running" ||
+      embeddingRebuildProgress.running > 0 ||
+      embeddingRebuildProgress.queued > 0;
+
+    if (hasActiveWork) {
       setShouldTrackEmbeddingRebuild(true);
+      return;
+    }
+
+    if (!shouldTrackEmbeddingRebuild) {
       return;
     }
 
@@ -3401,7 +3426,7 @@ function ConfiguredWorkspace({
     }, 2500);
 
     return () => window.clearTimeout(timeout);
-  }, [embeddingRebuildProgress]);
+  }, [embeddingRebuildProgress, shouldTrackEmbeddingRebuild]);
 
   useEffect(() => {
     pageTitleDraftRef.current = pageTitleDraft;
@@ -6696,6 +6721,55 @@ function ConfiguredWorkspace({
             <p className="mt-2 text-xs leading-5 text-[var(--workspace-text-subtle)]">
               {embeddingRebuildTracker.label}
             </p>
+          </div>
+        ) : null}
+        {!isEmbeddingErrorPanelDismissed &&
+        (embeddingRebuildProgress?.error ?? 0) > 0 &&
+        (embeddingRebuildErrors?.length ?? 0) > 0 ? (
+          <div className="pointer-events-auto w-[min(26rem,calc(100vw-2rem))] border border-[var(--workspace-danger)]/45 bg-[color-mix(in_srgb,var(--workspace-surface)_94%,transparent)] px-3 py-3 shadow-[0_18px_40px_-28px_rgba(0,0,0,0.5)] backdrop-blur-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-danger)]">
+                  Embedding Errors
+                </p>
+                <p className="mt-1 text-xs leading-5 text-[var(--workspace-text-subtle)]">
+                  Recent failures from the current embedding queue so we can debug what is breaking.
+                </p>
+              </div>
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => setIsEmbeddingErrorPanelDismissed(true)}
+                className="border border-[var(--workspace-border)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+              >
+                Dismiss
+              </button>
+            </div>
+            <div className="mt-3 max-h-64 space-y-2 overflow-y-auto">
+              {embeddingRebuildErrors?.map((entry) => (
+                <div
+                  key={entry.jobId}
+                  className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-3 py-2"
+                >
+                  <div className="text-[11px] uppercase tracking-[0.16em] text-[var(--workspace-accent)]">
+                    {entry.pageTitle ?? "Unknown Page"}
+                  </div>
+                  {entry.nodeText ? (
+                    <div className="mt-1 whitespace-pre-wrap text-sm leading-6 text-[var(--workspace-text)]">
+                      {entry.nodeText}
+                    </div>
+                  ) : null}
+                  <div className="mt-2 whitespace-pre-wrap text-xs leading-5 text-[var(--workspace-danger)]">
+                    {entry.error}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {embeddingRebuildProgress?.lastError ? (
+              <p className="mt-3 text-xs leading-5 text-[var(--workspace-text-faint)]">
+                Latest: {embeddingRebuildProgress.lastError}
+              </p>
+            ) : null}
           </div>
         ) : null}
       </div>

@@ -30,6 +30,7 @@ export function buildEmptyEmbeddingRebuildStatus() {
     updatedAt: null as number | null,
     scannedNodes: 0,
     skippedNodes: 0,
+    lastError: null as string | null,
   };
 }
 
@@ -70,6 +71,7 @@ export function buildEmbeddingRebuildStatus(
     updatedAt: state.updatedAt,
     scannedNodes: state.scannedNodes,
     skippedNodes: state.skippedNodes,
+    lastError: state.lastError ?? null,
   };
 }
 

@@ -898,6 +898,45 @@ export const getEmbeddingRebuildStatus = query({
   },
 });
 
+export const getRecentEmbeddingErrors = query({
+  args: {
+    ownerKey: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const limit = Math.max(1, Math.min(args.limit ?? 6, 20));
+    const jobs = await ctx.db
+      .query("embeddingJobs")
+      .withIndex("by_status_updatedAt", (query) => query.eq("status", "error"))
+      .order("desc")
+      .take(limit);
+
+    const nodes = await Promise.all(jobs.map((job) => ctx.db.get(job.nodeId)));
+    const pageIds = [...new Set(nodes.filter(Boolean).map((node) => node!.pageId))];
+    const pages = await Promise.all(pageIds.map((pageId) => ctx.db.get(pageId)));
+    const pageMap = new Map(
+      pages
+        .filter((page): page is Doc<"pages"> => page !== null)
+        .map((page) => [page._id as string, page]),
+    );
+
+    return jobs.map((job, index) => {
+      const node = nodes[index] ?? null;
+      const page = node ? pageMap.get(node.pageId as string) ?? null : null;
+      return {
+        jobId: job._id,
+        nodeId: job.nodeId,
+        pageId: page?._id ?? null,
+        pageTitle: page?.title ?? null,
+        nodeText: node?.text ?? null,
+        error: job.lastError ?? "Unknown embedding error.",
+        updatedAt: job.updatedAt,
+      };
+    });
+  },
+});
+
 export const listTags = query({
   args: {
     ownerKey: v.string(),
