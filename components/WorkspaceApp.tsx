@@ -11350,6 +11350,7 @@ function OutlineNodeEditor({
                   node.taskStatus === "done"
                     ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
                     : "border-[var(--workspace-border-hover)] bg-[var(--workspace-surface)] text-transparent hover:border-[var(--workspace-accent)]",
+                  hasChildren ? "ring-1 ring-[var(--workspace-border-hover)] ring-offset-1 ring-offset-[var(--workspace-bg)]" : "",
                   isDisabled ? "cursor-not-allowed opacity-70" : "",
                 )}
               >
@@ -11381,7 +11382,14 @@ function OutlineNodeEditor({
                   isDisabled ? "cursor-not-allowed opacity-60" : "",
                 )}
               >
-                <span className="h-2 w-2 rounded-full bg-current" />
+                <span
+                  className={clsx(
+                    "h-2 w-2 rounded-full bg-current",
+                    hasChildren
+                      ? "ring-1 ring-[var(--workspace-border-hover)] ring-offset-2 ring-offset-[var(--workspace-bg)]"
+                      : "",
+                  )}
+                />
               </button>
             )}
           </div>
