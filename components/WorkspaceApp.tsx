@@ -11171,25 +11171,26 @@ function OutlineNodeEditor({
         data-node-id={node._id}
         data-item-selection-surface="true"
         onMouseDownCapture={(event) => {
-          if (event.button !== 0 || !event.altKey) {
+          if (event.button !== 0) {
+            return;
+          }
+
+          if (
+            event.shiftKey &&
+            !(event.target instanceof HTMLElement &&
+              event.target.closest("button, a, [contenteditable='true']"))
+          ) {
+            event.preventDefault();
+            onSelectNodeRange(getRangeSelectionAnchorNodeId(), node._id);
+            return;
+          }
+
+          if (!event.altKey) {
             return;
           }
 
           event.preventDefault();
           onSelectionStart(node._id);
-        }}
-        onClick={(event) => {
-          if (
-            !event.shiftKey ||
-            event.defaultPrevented ||
-            event.target instanceof HTMLElement &&
-              (event.target.closest("textarea, input, button, a, [contenteditable='true']") !== null)
-          ) {
-            return;
-          }
-
-          event.preventDefault();
-          onSelectNodeRange(getRangeSelectionAnchorNodeId(), node._id);
         }}
         onMouseEnter={() => onSelectionExtend(node._id)}
         onDragEnter={handleDragOver}
