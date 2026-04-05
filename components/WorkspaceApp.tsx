@@ -57,8 +57,10 @@ import {
 import type { ScreenshotImportNode } from "@/lib/domain/screenshotImport";
 import { extractTagMatches } from "@/lib/domain/tags";
 import {
+  buildPageBacklinkFindQuery,
   buildNodeSelectionIds,
   filterPagesForCommandPalette,
+  splitFindQuerySegments,
 } from "@/lib/domain/workspaceUi";
 import {
   getEffectiveTaskDueDateRange,
@@ -161,6 +163,7 @@ type NodeSearchResult = {
   page: PageDoc | null;
   score?: number;
   content?: string;
+  resultKey?: string;
 };
 type ActionPaletteResult = {
   key: string;
@@ -1023,6 +1026,13 @@ function normalizeNodeSearchResults(results: unknown[]): NodeSearchResult[] {
   );
 }
 
+function withFindResultKeys(results: NodeSearchResult[], querySegment: string, segmentIndex: number) {
+  return results.map((result, resultIndex) => ({
+    ...result,
+    resultKey: `${segmentIndex}:${resultIndex}:${querySegment}:${result.node._id}`,
+  }));
+}
+
 function sanitizeLinkLabel(value: string) {
   return value.replace(/\|/g, "/").replace(/\]\]/g, "] ]").trim() || "Untitled node";
 }
@@ -1100,8 +1110,8 @@ function buildPageLinkInsertText(page: Pick<Doc<"pages">, "_id" | "title">) {
   return `[[${sanitizeLinkLabel(page.title)}|page:${page._id}]]`;
 }
 
-function buildPageBacklinkSearchQuery(page: Pick<Doc<"pages">, "_id">) {
-  return `page:${page._id}`;
+function buildPageBacklinkSearchQuery(page: Pick<Doc<"pages">, "_id" | "title">) {
+  return buildPageBacklinkFindQuery(page);
 }
 
 function buildNodeBacklinkSearchQuery(node: { _id: string }) {
@@ -5454,7 +5464,8 @@ function ConfiguredWorkspace({
     }
 
     const normalizedQuery = paletteQuery.trim();
-    if (normalizedQuery.length === 0) {
+    const querySegments = splitFindQuerySegments(normalizedQuery);
+    if (querySegments.length === 0) {
       setTextSearchResults([]);
       setIsTextSearchLoading(false);
       return;
@@ -5464,17 +5475,29 @@ function ConfiguredWorkspace({
     setIsTextSearchLoading(true);
     const timeoutId = window.setTimeout(async () => {
       try {
-        const results = (await findNodesText({
-          ownerKey,
-          query: normalizedQuery,
-          limit: 12,
-        })) as unknown[];
+        const resultGroups = await Promise.all(
+          querySegments.map(async (querySegment) =>
+            ((await findNodesText({
+              ownerKey,
+              query: querySegment,
+              limit: 12,
+            })) as unknown[]),
+          ),
+        );
 
         if (isCancelled) {
           return;
         }
 
-        setTextSearchResults(normalizeNodeSearchResults(results));
+        setTextSearchResults(
+          resultGroups.flatMap((results, segmentIndex) =>
+            withFindResultKeys(
+              normalizeNodeSearchResults(results),
+              querySegments[segmentIndex] ?? "",
+              segmentIndex,
+            ),
+          ),
+        );
       } catch {
         if (!isCancelled) {
           setTextSearchResults([]);
@@ -8374,7 +8397,7 @@ function ConfiguredWorkspace({
                       paletteMode === "pages"
                         ? "Search pages..."
                         : paletteMode === "find"
-                          ? "Find exact text in notes and tasks..."
+                          ? "Find exact text in notes and tasks... Use || for OR"
                           : paletteMode === "nodes"
                             ? "Search notes and tasks semantically across the workspace..."
                               : "Run a workspace action..."
@@ -8439,7 +8462,7 @@ function ConfiguredWorkspace({
                 )
               ) : paletteMode === "find" ? paletteQuery.trim().length === 0 ? (
                 <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">
-                  Find plain text across all active notes and tasks in all pages.
+                  Find plain text across all active notes and tasks in all pages. Use <span className="font-mono">||</span> for OR queries.
                 </p>
               ) : isTextSearchLoading ? (
                 <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">Finding text…</p>
@@ -8449,7 +8472,7 @@ function ConfiguredWorkspace({
                 textSearchResults.map((result, index) => {
                   return (
                     <button
-                      key={`${result.node._id}:${result.page?._id ?? "page"}:find`}
+                      key={result.resultKey ?? `${result.node._id}:${result.page?._id ?? "page"}:find`}
                       type="button"
                       data-palette-item-index={index}
                       onMouseEnter={() => setPaletteHighlightIndex(index)}

@@ -112,3 +112,15 @@ export function buildNodeSelectionIds(
   const end = Math.max(anchorIndex, currentIndex);
   return new Set(orderedNodeIds.slice(start, end + 1));
 }
+
+export function splitFindQuerySegments(query: string) {
+  return query
+    .split("||")
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0);
+}
+
+export function buildPageBacklinkFindQuery(page: Pick<CommandPalettePage, "_id" | "title">) {
+  const safeTitle = page.title.replace(/\|/g, "/").replace(/\]\]/g, "] ]").trim() || "Untitled";
+  return `page:${page._id} || [[${safeTitle}]]`;
+}

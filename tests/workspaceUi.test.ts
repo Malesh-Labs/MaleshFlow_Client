@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildPageBacklinkFindQuery,
   buildNodeSelectionIds,
   filterPagesForCommandPalette,
+  splitFindQuerySegments,
 } from "../lib/domain/workspaceUi";
 
 test("buildNodeSelectionIds returns the inclusive range between two nodes", () => {
@@ -153,5 +155,22 @@ test("filterPagesForCommandPalette prefers most recently updated or created page
   assert.deepEqual(
     results.map((page) => page._id),
     ["2", "3", "1"],
+  );
+});
+
+test("splitFindQuerySegments splits OR queries and ignores empty segments", () => {
+  assert.deepEqual(
+    splitFindQuerySegments(" page:abc || [[Launch Page]] ||  || [[Other]] "),
+    ["page:abc", "[[Launch Page]]", "[[Other]]"],
+  );
+});
+
+test("buildPageBacklinkFindQuery combines page id and wiki title", () => {
+  assert.equal(
+    buildPageBacklinkFindQuery({
+      _id: "page_123",
+      title: "Launch Page",
+    }),
+    "page:page_123 || [[Launch Page]]",
   );
 });
