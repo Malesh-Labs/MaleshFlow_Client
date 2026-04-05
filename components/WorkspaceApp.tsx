@@ -2110,7 +2110,7 @@ function readStoredBoolean(key: string, defaultValue: boolean) {
     return defaultValue;
   }
 
-  const storedValue = window.localStorage.getItem(key);
+  const storedValue = window.sessionStorage.getItem(key);
   if (storedValue === null) {
     return defaultValue;
   }
@@ -3354,7 +3354,7 @@ function ConfiguredWorkspace({
     );
     try {
       const storedCollapsedNodeIds = JSON.parse(
-        window.localStorage.getItem(COLLAPSED_NODES_STORAGE_KEY) ?? "[]",
+        window.sessionStorage.getItem(COLLAPSED_NODES_STORAGE_KEY) ?? "[]",
       );
       if (Array.isArray(storedCollapsedNodeIds)) {
         setCollapsedNodeIds(
@@ -3375,7 +3375,7 @@ function ConfiguredWorkspace({
       return;
     }
 
-    window.localStorage.setItem(
+    window.sessionStorage.setItem(
       SIDEBAR_COLLAPSE_STORAGE_KEY,
       isSidebarCollapsed ? "true" : "false",
     );
@@ -3386,7 +3386,7 @@ function ConfiguredWorkspace({
       return;
     }
 
-    window.localStorage.setItem(
+    window.sessionStorage.setItem(
       UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY,
       isUncategorizedSectionCollapsed ? "true" : "false",
     );
@@ -3397,7 +3397,7 @@ function ConfiguredWorkspace({
       return;
     }
 
-    window.localStorage.setItem(
+    window.sessionStorage.setItem(
       JOURNAL_SECTION_COLLAPSE_STORAGE_KEY,
       isJournalSectionCollapsed ? "true" : "false",
     );
@@ -3408,7 +3408,7 @@ function ConfiguredWorkspace({
       return;
     }
 
-    window.localStorage.setItem(
+    window.sessionStorage.setItem(
       TAGS_SECTION_COLLAPSE_STORAGE_KEY,
       isTagsSectionCollapsed ? "true" : "false",
     );
@@ -3419,7 +3419,7 @@ function ConfiguredWorkspace({
       return;
     }
 
-    window.localStorage.setItem(
+    window.sessionStorage.setItem(
       ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY,
       isArchiveSectionCollapsed ? "true" : "false",
     );
@@ -3441,7 +3441,7 @@ function ConfiguredWorkspace({
       return;
     }
 
-    window.localStorage.setItem(
+    window.sessionStorage.setItem(
       COLLAPSED_NODES_STORAGE_KEY,
       JSON.stringify([...collapsedNodeIds]),
     );
@@ -3797,8 +3797,15 @@ function ConfiguredWorkspace({
     }
 
     window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
+    window.sessionStorage.removeItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
+    window.sessionStorage.removeItem(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY);
+    window.sessionStorage.removeItem(JOURNAL_SECTION_COLLAPSE_STORAGE_KEY);
+    window.sessionStorage.removeItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY);
+    window.sessionStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
+    window.sessionStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
     window.localStorage.removeItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY);
+    window.localStorage.removeItem(JOURNAL_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
