@@ -3392,6 +3392,23 @@ function ConfiguredWorkspace({
   }, [paletteOpen]);
 
   useEffect(() => {
+    if (!plannerNextTaskSuggestion) {
+      return;
+    }
+
+    const handleDismissNextTaskSuggestion = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setPlannerNextTaskSuggestion(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleDismissNextTaskSuggestion);
+    return () => {
+      window.removeEventListener("keydown", handleDismissNextTaskSuggestion);
+    };
+  }, [plannerNextTaskSuggestion]);
+
+  useEffect(() => {
     setLocationPageId(readPageIdFromLocation());
 
     const handlePopState = () => {
@@ -6834,8 +6851,14 @@ function ConfiguredWorkspace({
                       <p className="text-sm text-[var(--workspace-text-subtle)]">{plannerStatus}</p>
                     ) : null}
                     {plannerNextTaskSuggestion ? (
-                      <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4">
-                        <div className="w-full max-w-lg border border-[var(--workspace-border)] bg-[var(--workspace-surface)] p-5 shadow-2xl">
+                      <div
+                        className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4"
+                        onClick={() => setPlannerNextTaskSuggestion(null)}
+                      >
+                        <div
+                          className="w-full max-w-lg border border-[var(--workspace-border)] bg-[var(--workspace-surface)] p-5 shadow-2xl"
+                          onClick={(event) => event.stopPropagation()}
+                        >
                           <div className="flex items-start justify-between gap-4">
                             <div>
                               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--workspace-accent)]">
@@ -6848,9 +6871,9 @@ function ConfiguredWorkspace({
                             <button
                               type="button"
                               onClick={() => setPlannerNextTaskSuggestion(null)}
-                              className="text-sm uppercase tracking-[0.18em] text-[var(--workspace-text-faint)] transition hover:text-[var(--workspace-text)]"
+                              className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
                             >
-                              Close
+                              Dismiss
                             </button>
                           </div>
                           <div className="mt-4 flex flex-wrap gap-2 text-xs uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
