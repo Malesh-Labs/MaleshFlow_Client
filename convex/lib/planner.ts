@@ -53,11 +53,13 @@ function sanitizePlannerLinkLabel(value: string, fallback = "Untitled") {
   return trimmed.length > 0 ? trimmed : fallback;
 }
 
-function isPlannerPlaceholderTaskText(text: string) {
+export function isPlannerPlaceholderTaskText(text: string) {
   return text.trim() === "__small__";
 }
 
-function isPlannerDerivedSourceTask(node: Pick<Doc<"nodes">, "sourceMeta"> | null | undefined) {
+export function isPlannerDerivedSourceTask(
+  node: Pick<Doc<"nodes">, "sourceMeta"> | null | undefined,
+) {
   const sourceMeta = getNodeSourceMeta(node);
   return (
     sourceMeta.sourceType === "planner" ||

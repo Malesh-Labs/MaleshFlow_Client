@@ -101,6 +101,15 @@ export default defineSchema({
     .index("by_thread_createdAt", ["threadId", "createdAt"])
     .index("by_status_createdAt", ["status", "createdAt"]),
 
+  calendarFeeds: defineTable({
+    kind: v.union(v.literal("task_ics")),
+    token: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_kind", ["kind"])
+    .index("by_token", ["token"]),
+
   imports: defineTable({
     sourceType: v.string(),
     status: v.union(

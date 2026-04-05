@@ -10,8 +10,10 @@
 
 import type * as ai from "../ai.js";
 import type * as aiData from "../aiData.js";
+import type * as calendar from "../calendar.js";
 import type * as chat from "../chat.js";
 import type * as chatData from "../chatData.js";
+import type * as http from "../http.js";
 import type * as importExport from "../importExport.js";
 import type * as importExportData from "../importExportData.js";
 import type * as lib_auth from "../lib/auth.js";
@@ -34,8 +36,10 @@ import type {
 declare const fullApi: ApiFromModules<{
   ai: typeof ai;
   aiData: typeof aiData;
+  calendar: typeof calendar;
   chat: typeof chat;
   chatData: typeof chatData;
+  http: typeof http;
   importExport: typeof importExport;
   importExportData: typeof importExportData;
   "lib/auth": typeof lib_auth;

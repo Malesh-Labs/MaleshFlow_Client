@@ -21,6 +21,10 @@ import {
   shouldGenerateEmbeddingForNodeText,
 } from "../lib/domain/embeddings";
 import {
+  buildTaskCalendarIcs,
+  normalizeCalendarTaskText,
+} from "../lib/domain/calendar";
+import {
   applySelectedInlineFormattingShortcut,
   hasRenderableInlineFormatting,
   splitTextForInlineFormatting,
@@ -85,6 +89,41 @@ test("extractLinks finds wiki links and node refs", () => {
       targetUrl: "openai.com",
     },
   ]);
+});
+
+test("normalizeCalendarTaskText removes link markup and inline formatting", () => {
+  assert.equal(
+    normalizeCalendarTaskText("**Pay** __[taxes](https://example.com)__ for [[Home|page:abc]]"),
+    "Pay taxes for Home",
+  );
+});
+
+test("buildTaskCalendarIcs emits all-day events with exclusive end dates", () => {
+  const start = dateInputValueToTimestamp("2026-08-20");
+  const end = dateInputValueToTimestamp("2026-08-22");
+  assert.ok(start);
+  assert.ok(end);
+
+  const ics = buildTaskCalendarIcs({
+    calendarName: "MaleshFlow Tasks",
+    events: [
+      {
+        uid: "task_1@maleshflow.tasks",
+        summary: "Pay property tax",
+        description: "Page: Home\nTags: #perm",
+        dueAt: start,
+        dueEndAt: end,
+        updatedAt: new Date("2026-04-04T10:00:00.000Z").getTime(),
+        categories: ["perm"],
+      },
+    ],
+  });
+
+  assert.match(ics, /BEGIN:VCALENDAR/);
+  assert.match(ics, /SUMMARY:Pay property tax/);
+  assert.match(ics, /DTSTART;VALUE=DATE:20260820/);
+  assert.match(ics, /DTEND;VALUE=DATE:20260823/);
+  assert.match(ics, /DESCRIPTION:Page: Home\\nTags: #perm/);
 });
 
 test("extractLinkMatches preserves ranges for inline rendering", () => {

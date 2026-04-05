@@ -731,6 +731,23 @@ function isTextEntryElement(target: EventTarget | null) {
   );
 }
 
+async function copyTextToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
+  }
+}
+
 function flattenTreeNodes(nodes: TreeNode[], collapsedNodeIds?: Set<string>): TreeNode[] {
   return nodes.flatMap((node) => [
     node,
@@ -2318,6 +2335,7 @@ function ConfiguredWorkspace({
   const [isSendingChat, setIsSendingChat] = useState(false);
   const [isGeneratingJournalFeedback, setIsGeneratingJournalFeedback] = useState(false);
   const [isRebuildingEmbeddings, setIsRebuildingEmbeddings] = useState(false);
+  const [isPreparingTaskCalendarFeed, setIsPreparingTaskCalendarFeed] = useState(false);
   const [isRefreshingSidebarLinks, setIsRefreshingSidebarLinks] = useState(false);
   const [isPlannerAppendingDay, setIsPlannerAppendingDay] = useState(false);
   const [isPlannerCompletingDay, setIsPlannerCompletingDay] = useState(false);
@@ -2422,6 +2440,7 @@ function ConfiguredWorkspace({
   const setPlannerScanExcluded = useMutation(api.workspace.setPlannerScanExcluded);
   const deletePageForever = useMutation(api.workspace.deletePageForever);
   const rebuildEmbeddings = useMutation(api.workspace.rebuildEmbeddings);
+  const ensureTaskCalendarFeed = useMutation(api.calendar.ensureTaskCalendarFeed);
   const refreshSidebarLinks = useMutation(api.workspace.refreshSidebarLinks);
   const createNodesBatch = useMutation(api.workspace.createNodesBatch);
   const updateNode = useMutation(api.workspace.updateNode);
@@ -2955,19 +2974,7 @@ function ConfiguredWorkspace({
     }
 
     const link = buildNodeClipboardLink(node);
-    try {
-      await navigator.clipboard.writeText(link);
-    } catch {
-      const textarea = document.createElement("textarea");
-      textarea.value = link;
-      textarea.style.position = "fixed";
-      textarea.style.opacity = "0";
-      document.body.appendChild(textarea);
-      textarea.focus();
-      textarea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textarea);
-    }
+    await copyTextToClipboard(link);
     setCopySnackbarMessage("Copied node link");
   }, [selectedNodeIds, workspaceNodeMap]);
   const copySelectedNodesToClipboard = useCallback((event: ClipboardEvent) => {
@@ -3773,6 +3780,26 @@ function ConfiguredWorkspace({
     }
   }, [ownerKey, rebuildEmbeddings]);
 
+  const handleCopyTaskCalendarFeed = useCallback(async () => {
+    setIsPreparingTaskCalendarFeed(true);
+    try {
+      const result = await ensureTaskCalendarFeed({
+        ownerKey,
+      });
+      await copyTextToClipboard(result.url);
+      setCopySnackbarMessage("Copied Google Calendar feed URL");
+      setPaletteOpen(false);
+    } catch (error) {
+      setCopySnackbarMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not create the Google Calendar feed URL.",
+      );
+    } finally {
+      setIsPreparingTaskCalendarFeed(false);
+    }
+  }, [ensureTaskCalendarFeed, ownerKey]);
+
   const handleRefreshSidebarLinks = async () => {
     setIsRefreshingSidebarLinks(true);
     try {
@@ -4064,6 +4091,30 @@ function ConfiguredWorkspace({
         },
       },
       {
+        key: "copy-task-calendar-feed",
+        title: isPreparingTaskCalendarFeed
+          ? "Preparing Google Calendar Feed…"
+          : "Copy Google Calendar Feed",
+        subtitle:
+          "Copy a private ICS URL for all incomplete tasks with due dates so you can subscribe from Google Calendar.",
+        keywords: [
+          "google",
+          "calendar",
+          "ics",
+          "ical",
+          "feed",
+          "export",
+          "due dates",
+          "tasks",
+          "sync",
+        ],
+        actionLabel: isPreparingTaskCalendarFeed ? "Preparing…" : "Copy",
+        disabled: isPreparingTaskCalendarFeed,
+        onSelect: () => {
+          void handleCopyTaskCalendarFeed();
+        },
+      },
+      {
         key: "search-archive",
         title: "Search Archive",
         subtitle: "Search archived pages and nodes without mixing them into active workspace results.",
@@ -4122,10 +4173,12 @@ function ConfiguredWorkspace({
     embeddingRebuildStatus,
     handleCreatePage,
     handleCreatePlannerPage,
+    handleCopyTaskCalendarFeed,
     handleRebuildEmbeddings,
     handleResetLocalState,
     isCreatingPage,
     isCreatingPlannerPage,
+    isPreparingTaskCalendarFeed,
     isRebuildingEmbeddings,
     canImportScreenshot,
     openTaskSchedulePalette,
