@@ -204,10 +204,79 @@ export const addRandomPlannerTask = mutation({
       afterNodeId,
     });
 
+    const insertedPlannerNode = await ctx.db.get(plannerNodeId);
+    if (!insertedPlannerNode) {
+      throw new Error("Could not create the suggested planner task.");
+    }
+    const summary = await buildPlannerTaskSelectionSummary(ctx, insertedPlannerNode);
+
     return {
-      plannerNodeId,
-      sourceTaskNodeId: sourceTask._id,
+      created: true,
+      dayNodeId: currentDay._id,
+      ...summary,
     };
+  },
+});
+
+export const reorderPlannerDay = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+    dayNodeId: v.id("nodes"),
+    orderedNodeIds: v.array(v.id("nodes")),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived || !isPlannerPage(page)) {
+      throw new Error("Planner page not found.");
+    }
+
+    const dayNode = await ctx.db.get(args.dayNodeId);
+    if (!dayNode || dayNode.archived || dayNode.pageId !== args.pageId) {
+      throw new Error("Planner day not found.");
+    }
+
+    const dayTree = await collectNodeTree(ctx.db, args.dayNodeId);
+    const directChildren = dayTree
+      .filter((node) => node.parentNodeId === args.dayNodeId && !node.archived)
+      .sort((left, right) => left.position - right.position);
+    const directChildIds = directChildren.map((node) => node._id as string);
+    if (directChildIds.length !== args.orderedNodeIds.length) {
+      throw new Error("Planner day order did not match the visible items.");
+    }
+
+    const expectedIds = new Set(directChildIds);
+    const seenIds = new Set<string>();
+    const isValid = args.orderedNodeIds.every((nodeId) => {
+      const key = nodeId as string;
+      if (!expectedIds.has(key) || seenIds.has(key)) {
+        return false;
+      }
+      seenIds.add(key);
+      return true;
+    });
+    if (!isValid || seenIds.size !== directChildren.length) {
+      throw new Error("Planner day order contained unexpected items.");
+    }
+
+    let afterNodeId: Id<"nodes"> | null = null;
+    for (const nodeId of args.orderedNodeIds) {
+      const nextPosition = await computeNodePosition(
+        ctx.db,
+        args.pageId,
+        args.dayNodeId,
+        afterNodeId,
+      );
+      await ctx.db.patch(nodeId, {
+        parentNodeId: args.dayNodeId,
+        position: nextPosition,
+        updatedAt: Date.now(),
+      });
+      afterNodeId = nodeId;
+    }
+
+    await enqueuePageRootEmbeddingRefresh(ctx, args.pageId);
   },
 });
 

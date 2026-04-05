@@ -168,3 +168,129 @@ export const completePlannerDayWithAi = action({
     });
   },
 });
+
+export const addRandomPlannerTaskWithAi = action({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+    seed: v.number(),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    plannerNodeId: Id<"nodes">;
+    text: string;
+    dueAt: number | null;
+    dueEndAt: number | null;
+    sourcePageId: Id<"pages"> | null;
+    sourcePageTitle: string | null;
+    linkedSourceTaskId: Id<"nodes"> | null;
+    created: boolean;
+  }> => {
+    assertOwnerKey(args.ownerKey);
+
+    const inserted = (await ctx.runMutation(api.planner.addRandomPlannerTask, {
+      ownerKey: args.ownerKey,
+      pageId: args.pageId,
+      seed: args.seed,
+    })) as {
+      plannerNodeId: Id<"nodes">;
+      text: string;
+      dueAt: number | null;
+      dueEndAt: number | null;
+      sourcePageId: Id<"pages"> | null;
+      sourcePageTitle: string | null;
+      linkedSourceTaskId: Id<"nodes"> | null;
+      created: boolean;
+      dayNodeId: Id<"nodes">;
+    };
+
+    const plannerContext = (await ctx.runQuery(getPlannerPageContextRef, {
+      pageId: args.pageId,
+    })) as
+      | {
+          page: Doc<"pages">;
+          nodes: Doc<"nodes">[];
+        }
+      | null;
+
+    if (!plannerContext) {
+      return inserted;
+    }
+
+    const dayNode = plannerContext.nodes.find((node) => node._id === inserted.dayNodeId) ?? null;
+    if (!dayNode) {
+      return inserted;
+    }
+
+    const dayChildren = plannerContext.nodes
+      .filter((node) => node.parentNodeId === dayNode._id && !node.archived)
+      .sort((left, right) => left.position - right.position);
+    if (dayChildren.length <= 1) {
+      return inserted;
+    }
+
+    let orderedNodeIds: Id<"nodes">[] | undefined;
+    const client = getOpenAIClient();
+    if (client) {
+      try {
+        const response = await client.responses.parse({
+          model: process.env.OPENAI_CHAT_MODEL ?? "gpt-5-mini",
+          input: [
+            {
+              role: "system",
+              content:
+                "You are arranging a single day's planner outline. Return a single ordered list of the provided root node ids. Keep every id exactly once, do not invent ids, and place the newly inserted task where it fits best among routines, sections, and related work. If uncertain, preserve the current order.",
+            },
+            {
+              role: "user",
+              content: [
+                `Planner page: ${plannerContext.page.title}`,
+                `Planner day: ${dayNode.text}`,
+                `Newly inserted task id: ${inserted.plannerNodeId}`,
+                "",
+                "Current day root items:",
+                dayChildren
+                  .map(
+                    (node) =>
+                      `- ${node._id}: ${node.text} [${node.kind}/${node.taskStatus ?? "n/a"}]`,
+                  )
+                  .join("\n"),
+              ].join("\n"),
+            },
+          ],
+          text: {
+            format: zodTextFormat(
+              plannerDayRollforwardPlanSchema,
+              "planner_day_insert_plan",
+            ),
+          },
+        });
+
+        const parsed = response.output_parsed;
+        const candidateIds = new Set(dayChildren.map((node) => node._id as string));
+        if (
+          parsed &&
+          parsed.orderedNodeIds.length === candidateIds.size &&
+          parsed.orderedNodeIds.every((nodeId) => candidateIds.has(nodeId))
+        ) {
+          orderedNodeIds = parsed.orderedNodeIds as Id<"nodes">[];
+        }
+      } catch {
+        orderedNodeIds = undefined;
+      }
+    }
+
+    if (orderedNodeIds) {
+      await ctx.runMutation(api.planner.reorderPlannerDay, {
+        ownerKey: args.ownerKey,
+        pageId: args.pageId,
+        dayNodeId: inserted.dayNodeId,
+        orderedNodeIds,
+      });
+    }
+
+    return inserted;
+  },
+});

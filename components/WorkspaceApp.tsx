@@ -2417,7 +2417,7 @@ function ConfiguredWorkspace({
   const applyApprovedPlannerPlan = useMutation(api.chatData.applyApprovedPlannerPlan);
   const appendPlannerDay = useMutation(api.planner.appendPlannerDay);
   const completePlannerDayWithAi = useAction(api.plannerAi.completePlannerDayWithAi);
-  const addRandomPlannerTask = useMutation(api.planner.addRandomPlannerTask);
+  const addRandomPlannerTaskWithAi = useAction(api.plannerAi.addRandomPlannerTaskWithAi);
   const resolveNextPlannerTask = useMutation(api.planner.resolveNextPlannerTask);
   const completePlannerTask = useMutation(api.planner.completePlannerTask);
   const findNodesText = useAction(api.ai.findNodesText);
@@ -5988,7 +5988,7 @@ function ConfiguredWorkspace({
     setIsPlannerAddingRandomTask(true);
     setPlannerStatus("");
     try {
-      const result = await addRandomPlannerTask({
+      const result = await addRandomPlannerTaskWithAi({
         ownerKey,
         pageId: selectedPageId,
         seed: Date.now(),
@@ -6004,7 +6004,7 @@ function ConfiguredWorkspace({
     } finally {
       setIsPlannerAddingRandomTask(false);
     }
-  }, [addRandomPlannerTask, focusPlannerNode, isPageArchived, ownerKey, pageMeta.pageType, selectedPageId]);
+  }, [addRandomPlannerTaskWithAi, focusPlannerNode, isPageArchived, ownerKey, pageMeta.pageType, selectedPageId]);
 
   const handleResolveNextPlannerTask = useCallback(async () => {
     if (!selectedPageId || pageMeta.pageType !== "planner" || isPageArchived) {
