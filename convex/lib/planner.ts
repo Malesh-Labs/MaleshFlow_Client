@@ -869,13 +869,13 @@ export async function appendPlannerDayCore(
   let afterChildId: Id<"nodes"> | null = null;
 
   if (weekdayRoot) {
-    const weekdaySubtree = await collectNodeTree(ctx.db, weekdayRoot._id);
-    const weekdayChildren = weekdaySubtree
+    const weekdayChildren = refreshedNodes
       .filter((node) => node.parentNodeId === weekdayRoot._id)
       .sort((left, right) => left.position - right.position);
     for (const child of weekdayChildren) {
+      const childSubtree = await collectNodeTree(ctx.db, child._id);
       afterChildId = await clonePlannerSubtree(ctx, {
-        sourceNodes: weekdaySubtree,
+        sourceNodes: [child, ...childSubtree],
         rootNodeId: child._id,
         targetPageId: args.page._id,
         targetParentNodeId: dayNodeId,
