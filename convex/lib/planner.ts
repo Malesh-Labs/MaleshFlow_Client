@@ -27,6 +27,15 @@ export const PLANNER_SIDEBAR_SLOT = "plannerSidebar";
 export const PLANNER_TEMPLATE_SLOT = "plannerTemplate";
 export const PLANNER_DAY_META_KIND = "plannerDay";
 export const PLANNER_LINKED_TASK_META_KIND = "plannerLinkedTask";
+const PLANNER_TEMPLATE_WEEKDAY_ORDER = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+] as const;
 export type PlannerSourceTask = Doc<"nodes"> & {
   dueAt: number | null;
   dueEndAt: number | null;
@@ -494,15 +503,7 @@ export async function ensurePlannerSections(
       templateChildren.length - 1
     ]?._id ?? null;
 
-  for (const weekday of [
-    "Monday",
-    "Tuesday",
-    "Wednesday",
-    "Thursday",
-    "Friday",
-    "Saturday",
-    "Sunday",
-  ]) {
+  for (const weekday of PLANNER_TEMPLATE_WEEKDAY_ORDER) {
     if (existingWeekdayNames.has(weekday)) {
       previousWeekdayId =
         templateChildren.find((node) => node.text.trim() === weekday)?._id ?? previousWeekdayId;
@@ -534,6 +535,29 @@ export async function ensurePlannerSections(
       updatedAt: now,
     });
     previousWeekdayId = weekdayId;
+  }
+
+  const reorderedTemplateChildren = (await listPageNodes(ctx.db, page._id)).filter(
+    (node) => node.parentNodeId === templateSection!._id,
+  );
+  let previousReorderedWeekdayId: Id<"nodes"> | null = null;
+  for (const weekday of PLANNER_TEMPLATE_WEEKDAY_ORDER) {
+    const weekdayNode =
+      reorderedTemplateChildren.find((node) => node.text.trim() === weekday) ?? null;
+    if (!weekdayNode) {
+      continue;
+    }
+
+    await ctx.db.patch(weekdayNode._id, {
+      position: await computeNodePosition(
+        ctx.db,
+        page._id,
+        templateSection._id,
+        previousReorderedWeekdayId,
+      ),
+      updatedAt: now,
+    });
+    previousReorderedWeekdayId = weekdayNode._id;
   }
 
   await enqueuePageRootEmbeddingRefresh(ctx, page._id);
