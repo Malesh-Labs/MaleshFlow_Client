@@ -31,7 +31,7 @@ import {
   MODEL_REGENERATE_REQUEST,
   MODEL_REWRITE_SYSTEM_PROMPT,
 } from "@/lib/domain/aiPrompts";
-import { parseHeadingSyntax } from "@/lib/domain/displaySyntax";
+import { cycleHeadingSyntax, parseHeadingSyntax } from "@/lib/domain/displaySyntax";
 import {
   applySelectedInlineFormattingShortcut,
   hasRenderableInlineFormatting,
@@ -11366,6 +11366,26 @@ function OutlineNodeEditor({
       return;
     }
 
+    if (isModifier && event.shiftKey && !event.altKey && normalizedKey === "h") {
+      event.preventDefault();
+      const replacement = cycleHeadingSyntax(
+        event.currentTarget.value,
+        event.currentTarget.selectionStart ?? 0,
+        event.currentTarget.selectionEnd ?? 0,
+      );
+      setDraft(replacement.value);
+      history.updateDraftValue(editorId, editorTarget, replacement.value);
+      setCaretPosition(replacement.selectionEnd);
+      window.requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+        textareaRef.current?.setSelectionRange(
+          replacement.selectionStart,
+          replacement.selectionEnd,
+        );
+      });
+      return;
+    }
+
     if (isModifier && event.shiftKey && !event.altKey && (event.key === "_" || event.key === "-")) {
       const replacement = applySelectedInlineFormattingShortcut(
         event.currentTarget.value,
@@ -12721,6 +12741,25 @@ function InlineComposer({
       }
 
       event.preventDefault();
+      return;
+    }
+
+    if (isModifier && event.shiftKey && !event.altKey && normalizedKey === "h") {
+      event.preventDefault();
+      const replacement = cycleHeadingSyntax(
+        event.currentTarget.value,
+        event.currentTarget.selectionStart ?? 0,
+        event.currentTarget.selectionEnd ?? 0,
+      );
+      setDraft(replacement.value);
+      setCaretPosition(replacement.selectionEnd);
+      window.requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+        textareaRef.current?.setSelectionRange(
+          replacement.selectionStart,
+          replacement.selectionEnd,
+        );
+      });
       return;
     }
 

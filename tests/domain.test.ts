@@ -6,7 +6,7 @@ import {
   extractLinks,
   rewriteMatchingPageWikiLinks,
 } from "../lib/domain/links";
-import { parseHeadingSyntax } from "../lib/domain/displaySyntax";
+import { cycleHeadingSyntax, parseHeadingSyntax } from "../lib/domain/displaySyntax";
 import {
   buildJournalFeedbackUserPrompt,
   buildModelRewriteUserPrompt,
@@ -283,6 +283,37 @@ test("parseHeadingSyntax recognizes markdown-style heading prefixes", () => {
   assert.deepEqual(parseHeadingSyntax("#not a heading"), {
     level: null,
     text: "#not a heading",
+  });
+});
+
+test("cycleHeadingSyntax cycles plain text through heading levels and back", () => {
+  assert.deepEqual(cycleHeadingSyntax("Plan today", 4, 4), {
+    value: "# Plan today",
+    selectionStart: 6,
+    selectionEnd: 6,
+  });
+  assert.deepEqual(cycleHeadingSyntax("# Plan today", 2, 2), {
+    value: "## Plan today",
+    selectionStart: 3,
+    selectionEnd: 3,
+  });
+  assert.deepEqual(cycleHeadingSyntax("## Plan today", 3, 3), {
+    value: "### Plan today",
+    selectionStart: 4,
+    selectionEnd: 4,
+  });
+  assert.deepEqual(cycleHeadingSyntax("### Plan today", 4, 4), {
+    value: "Plan today",
+    selectionStart: 0,
+    selectionEnd: 0,
+  });
+});
+
+test("cycleHeadingSyntax preserves selection relative to visible heading text", () => {
+  assert.deepEqual(cycleHeadingSyntax("# Big heading", 6, 13), {
+    value: "## Big heading",
+    selectionStart: 7,
+    selectionEnd: 14,
   });
 });
 

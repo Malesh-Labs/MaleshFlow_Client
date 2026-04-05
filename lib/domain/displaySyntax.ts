@@ -33,3 +33,28 @@ export function parseHeadingSyntax(value: string): ParsedHeadingSyntax {
     text,
   };
 }
+
+export function cycleHeadingSyntax(
+  value: string,
+  selectionStart: number,
+  selectionEnd: number,
+) {
+  const parsed = parseHeadingSyntax(value);
+  const currentPrefixLength = parsed.level === null ? 0 : parsed.level + 1;
+  const nextLevel =
+    parsed.level === null ? 1 : parsed.level === 1 ? 2 : parsed.level === 2 ? 3 : null;
+  const nextPrefix = nextLevel === null ? "" : `${"#".repeat(nextLevel)} `;
+  const nextValue = `${nextPrefix}${parsed.text}`;
+
+  const mapSelection = (position: number) =>
+    Math.min(
+      nextValue.length,
+      nextPrefix.length + Math.max(0, position - currentPrefixLength),
+    );
+
+  return {
+    value: nextValue,
+    selectionStart: mapSelection(Math.min(selectionStart, selectionEnd)),
+    selectionEnd: mapSelection(Math.max(selectionStart, selectionEnd)),
+  };
+}
