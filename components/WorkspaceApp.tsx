@@ -3342,6 +3342,42 @@ function ConfiguredWorkspace({
 
     return `Embeddings: ${embeddingRebuildProgress.completed}/${embeddingRebuildProgress.total} complete • ${embeddingRebuildProgress.pending} pending`;
   }, [embeddingRebuildProgress, shouldTrackEmbeddingRebuild]);
+  const embeddingRebuildTracker = useMemo(() => {
+    if (!embeddingRebuildProgress) {
+      return null;
+    }
+
+    const total = embeddingRebuildProgress.total;
+    const processed = Math.min(
+      total,
+      embeddingRebuildProgress.completed + embeddingRebuildProgress.error,
+    );
+    const percent = total > 0 ? Math.round((processed / total) * 100) : 0;
+    const shouldShow =
+      shouldTrackEmbeddingRebuild &&
+      (total > 0 ||
+        embeddingRebuildProgress.running > 0 ||
+        embeddingRebuildProgress.queued > 0 ||
+        embeddingRebuildProgress.error > 0 ||
+        embeddingRebuildProgress.updatedAt !== null);
+
+    if (!shouldShow) {
+      return null;
+    }
+
+    return {
+      total,
+      processed,
+      percent,
+      queued: embeddingRebuildProgress.queued,
+      running: embeddingRebuildProgress.running,
+      error: embeddingRebuildProgress.error,
+      complete: embeddingRebuildProgress.complete,
+      idle: embeddingRebuildProgress.idle,
+      status: embeddingRebuildProgress.status,
+      label: embeddingProgressLabel,
+    };
+  }, [embeddingProgressLabel, embeddingRebuildProgress, shouldTrackEmbeddingRebuild]);
 
   useEffect(() => {
     if (!embeddingRebuildProgress) {
@@ -6530,7 +6566,7 @@ function ConfiguredWorkspace({
           };
         }}
       >
-      <div className="pointer-events-none fixed right-4 top-4 z-40 md:right-6 md:top-6">
+      <div className="pointer-events-none fixed right-4 top-4 z-40 flex flex-col items-end gap-2 md:right-6 md:top-6">
         <div className="pointer-events-auto flex items-center gap-2 border border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface)_88%,transparent)] px-2 py-2 shadow-[0_18px_40px_-28px_rgba(0,0,0,0.5)] backdrop-blur-sm">
           <button
             type="button"
@@ -6559,6 +6595,64 @@ function ConfiguredWorkspace({
             Redo
           </button>
         </div>
+        {embeddingRebuildTracker ? (
+          <div className="pointer-events-auto w-[min(22rem,calc(100vw-2rem))] border border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface)_92%,transparent)] px-3 py-3 shadow-[0_18px_40px_-28px_rgba(0,0,0,0.5)] backdrop-blur-sm">
+            <div className="flex items-center justify-between gap-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+              <span>
+                {embeddingRebuildTracker.complete
+                  ? "Embeddings Ready"
+                  : embeddingRebuildTracker.running > 0 ||
+                      embeddingRebuildTracker.status === "running"
+                    ? "Rebuilding Embeddings"
+                    : "Embedding Queue"}
+              </span>
+              <span className="text-[var(--workspace-text)]">
+                {embeddingRebuildTracker.total > 0
+                  ? `${embeddingRebuildTracker.percent}%`
+                  : embeddingRebuildTracker.complete
+                    ? "Done"
+                    : "Idle"}
+              </span>
+            </div>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--workspace-surface-accent)]">
+              <div
+                className={clsx(
+                  "h-full rounded-full transition-[width] duration-300 ease-out",
+                  embeddingRebuildTracker.error > 0 && embeddingRebuildTracker.complete
+                    ? "bg-[var(--workspace-danger)]"
+                    : "bg-[var(--workspace-brand)]",
+                )}
+                style={{
+                  width:
+                    embeddingRebuildTracker.total > 0
+                      ? `${embeddingRebuildTracker.percent > 0 ? Math.max(6, embeddingRebuildTracker.percent) : 0}%`
+                      : embeddingRebuildTracker.complete
+                        ? "100%"
+                        : "0%",
+                }}
+              />
+            </div>
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]">
+              <span>
+                {embeddingRebuildTracker.processed}/{embeddingRebuildTracker.total || 0} processed
+              </span>
+              {embeddingRebuildTracker.queued > 0 ? (
+                <span>{embeddingRebuildTracker.queued} queued</span>
+              ) : null}
+              {embeddingRebuildTracker.running > 0 ? (
+                <span>{embeddingRebuildTracker.running} running</span>
+              ) : null}
+              {embeddingRebuildTracker.error > 0 ? (
+                <span className="text-[var(--workspace-danger)]">
+                  {embeddingRebuildTracker.error} errors
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-2 text-xs leading-5 text-[var(--workspace-text-subtle)]">
+              {embeddingRebuildTracker.label}
+            </p>
+          </div>
+        ) : null}
       </div>
       <div
         className={clsx(
