@@ -12,11 +12,13 @@ import {
   appendPlannerDayCore,
   appendPlannerLinkedTaskCopy,
   ensurePlannerSections,
+  findPlannerSectionNode,
   getCurrentPlannerDay,
   getPageSourceMeta,
   getPlannerDayRoots,
   getPlannerDayTimestamp,
   getPlannerLinkedSourceTaskId,
+  PLANNER_FOCUS_SLOT,
   isPlannerPage,
   listEligiblePlannerSourceTasks,
   completePlannerLinkedTask,
@@ -93,6 +95,14 @@ async function buildPlannerSourceTaskSummary(
 
 function isPlannerPlaceholderTaskText(text: string) {
   return text.trim() === "__small__";
+}
+
+function buildFocusShuffleScore(seed: number, nodeId: string) {
+  let hash = Math.abs(Math.trunc(seed)) || 1;
+  for (let index = 0; index < nodeId.length; index += 1) {
+    hash = (hash * 33 + nodeId.charCodeAt(index)) % 2147483647;
+  }
+  return hash;
 }
 
 async function updateMovedPlannerSubtreeDate(
@@ -187,6 +197,94 @@ export const appendPlannerDay = mutation({
       page,
       plannerDate: nextPlannerDate,
     });
+  },
+});
+
+export const updatePlannerFocus = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+    seed: v.number(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived || !isPlannerPage(page)) {
+      throw new Error("Planner page not found.");
+    }
+
+    const ensuredSections = await ensurePlannerSections(ctx, page);
+    const nodes = await listPageNodes(ctx.db, page._id);
+    const focusSection =
+      findPlannerSectionNode(nodes, PLANNER_FOCUS_SLOT) ??
+      (ensuredSections.focusSectionId
+        ? ((await ctx.db.get(ensuredSections.focusSectionId)) ?? null)
+        : null);
+    if (!focusSection) {
+      throw new Error("Could not prepare the Focus section.");
+    }
+
+    const currentDay = getCurrentPlannerDay(nodes);
+    if (!currentDay) {
+      throw new Error("Add the first planner day before updating Focus.");
+    }
+
+    const topDayTree = await collectNodeTree(ctx.db, currentDay._id);
+    const directChildren = topDayTree
+      .filter((node) => node.parentNodeId === currentDay._id && !node.archived)
+      .sort((left, right) => left.position - right.position);
+
+    const candidates = directChildren.filter((node) => {
+      if (isPlannerPlaceholderTaskText(node.text)) {
+        return false;
+      }
+      if (node.kind === "task") {
+        return node.taskStatus !== "done" && node.taskStatus !== "cancelled";
+      }
+      return true;
+    });
+    if (candidates.length === 0) {
+      throw new Error("No active items are available in the top day.");
+    }
+
+    const selectionCount = Math.min(3, candidates.length);
+    const selectedNodes = [...candidates]
+      .sort(
+        (left, right) =>
+          buildFocusShuffleScore(args.seed, left._id as string) -
+          buildFocusShuffleScore(args.seed, right._id as string),
+      )
+      .slice(0, selectionCount);
+
+    const focusTree = await collectNodeTree(ctx.db, focusSection._id);
+    const focusChildren = focusTree
+      .filter((node) => node.parentNodeId === focusSection._id && !node.archived)
+      .sort((left, right) => left.position - right.position);
+
+    let afterNodeId = focusChildren[focusChildren.length - 1]?._id ?? null;
+    const now = Date.now();
+    for (const node of selectedNodes) {
+      const nextPosition = await computeNodePosition(
+        ctx.db,
+        page._id,
+        focusSection._id,
+        afterNodeId,
+      );
+      await ctx.db.patch(node._id, {
+        parentNodeId: focusSection._id,
+        position: nextPosition,
+        updatedAt: now,
+      });
+      afterNodeId = node._id;
+    }
+
+    await enqueuePageRootEmbeddingRefresh(ctx, page._id);
+
+    return {
+      focusSectionId: focusSection._id,
+      movedNodeIds: selectedNodes.map((node) => node._id),
+      movedCount: selectedNodes.length,
+    };
   },
 });
 

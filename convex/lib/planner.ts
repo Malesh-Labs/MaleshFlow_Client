@@ -25,6 +25,7 @@ import {
 
 export const PLANNER_SIDEBAR_SLOT = "plannerSidebar";
 export const PLANNER_TEMPLATE_SLOT = "plannerTemplate";
+export const PLANNER_FOCUS_SLOT = "plannerFocus";
 export const PLANNER_DAY_META_KIND = "plannerDay";
 export const PLANNER_LINKED_TASK_META_KIND = "plannerLinkedTask";
 const PLANNER_TEMPLATE_WEEKDAY_ORDER = [
@@ -102,7 +103,10 @@ export function isPlannerScanExcludedPage(
 
 export function findPlannerSectionNode(
   nodes: Doc<"nodes">[],
-  slot: typeof PLANNER_SIDEBAR_SLOT | typeof PLANNER_TEMPLATE_SLOT,
+  slot:
+    | typeof PLANNER_SIDEBAR_SLOT
+    | typeof PLANNER_TEMPLATE_SLOT
+    | typeof PLANNER_FOCUS_SLOT,
 ) {
   return (
     nodes.find((node) => getNodeSourceMeta(node).sectionSlot === slot) ?? null
@@ -436,6 +440,7 @@ export async function ensurePlannerSections(
   const now = Date.now();
   let sidebarSection = findPlannerSectionNode(nodes, PLANNER_SIDEBAR_SLOT);
   let templateSection = findPlannerSectionNode(nodes, PLANNER_TEMPLATE_SLOT);
+  let focusSection = findPlannerSectionNode(nodes, PLANNER_FOCUS_SLOT);
 
   const rootNodes = nodes.filter((node) => node.parentNodeId === null);
   let afterNodeId: Id<"nodes"> | null =
@@ -487,6 +492,29 @@ export async function ensurePlannerSections(
       updatedAt: now,
     });
     templateSection = await ctx.db.get(nodeId);
+  }
+
+  if (!focusSection) {
+    const nodeId = await ctx.db.insert("nodes", {
+      pageId: page._id,
+      parentNodeId: null,
+      position: await computeNodePosition(ctx.db, page._id, null, null),
+      text: "Focus",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      dueEndAt: null,
+      archived: false,
+      sourceMeta: {
+        sourceType: "system",
+        sectionSlot: PLANNER_FOCUS_SLOT,
+        locked: true,
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+    focusSection = await ctx.db.get(nodeId);
   }
 
   if (!templateSection) {
@@ -563,6 +591,7 @@ export async function ensurePlannerSections(
   await enqueuePageRootEmbeddingRefresh(ctx, page._id);
 
   return {
+    focusSectionId: focusSection?._id ?? null,
     sidebarSectionId: sidebarSection?._id ?? null,
     templateSectionId: templateSection._id,
   };

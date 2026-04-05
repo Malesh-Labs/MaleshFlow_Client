@@ -368,6 +368,7 @@ type SectionSlot =
   | "taskSidebar"
   | "plannerSidebar"
   | "plannerRunningArchive"
+  | "plannerFocus"
   | "plannerTemplate"
   | "model"
   | "recentExamples"
@@ -2313,6 +2314,7 @@ function ConfiguredWorkspace({
   const [isPlannerAppendingDay, setIsPlannerAppendingDay] = useState(false);
   const [isPlannerCompletingDay, setIsPlannerCompletingDay] = useState(false);
   const [isPlannerAddingRandomTask, setIsPlannerAddingRandomTask] = useState(false);
+  const [isPlannerUpdatingFocus, setIsPlannerUpdatingFocus] = useState(false);
   const [isPlannerResolvingNextTask, setIsPlannerResolvingNextTask] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("pages");
@@ -2429,6 +2431,7 @@ function ConfiguredWorkspace({
   const runPlannerChat = useAction(api.chat.runPlannerChat);
   const applyApprovedPlannerPlan = useMutation(api.chatData.applyApprovedPlannerPlan);
   const appendPlannerDay = useMutation(api.planner.appendPlannerDay);
+  const updatePlannerFocus = useMutation(api.planner.updatePlannerFocus);
   const completePlannerDayWithAi = useAction(api.plannerAi.completePlannerDayWithAi);
   const suggestRandomPlannerTask = useAction(api.plannerAi.suggestRandomPlannerTask);
   const addRandomPlannerTaskWithAi = useAction(api.plannerAi.addRandomPlannerTaskWithAi);
@@ -2616,6 +2619,7 @@ function ConfiguredWorkspace({
   const taskSidebarSection = findSectionNode(tree, "taskSidebar");
   const plannerSidebarSection = findSectionNode(tree, "plannerSidebar");
   const plannerLegacyArchiveSection = findSectionNode(tree, "plannerRunningArchive");
+  const plannerFocusSection = findSectionNode(tree, "plannerFocus");
   const plannerTemplateSection = findSectionNode(tree, "plannerTemplate");
   const journalThoughtsSection = findSectionNode(tree, "journalThoughts");
   const journalFeedbackSection = findSectionNode(tree, "journalFeedback");
@@ -2685,6 +2689,7 @@ function ConfiguredWorkspace({
             [
               plannerSidebarSection?._id,
               plannerLegacyArchiveSection?._id,
+              plannerFocusSection?._id,
               plannerTemplateSection?._id,
             ].filter(Boolean) as string[],
           ),
@@ -2710,7 +2715,10 @@ function ConfiguredWorkspace({
             )
           : tree;
   const sectionDepthOffset = isMobileLayout ? 0 : 1;
-  const plannerVisibleRoots = [plannerTemplateSection].filter(
+  const plannerTopVisibleRoots = [plannerFocusSection].filter(
+    (node): node is TreeNode => Boolean(node),
+  );
+  const plannerBottomVisibleRoots = [plannerTemplateSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
   const modelVisibleRoots = [modelSection, recentExamplesSection].filter(
@@ -2726,7 +2734,10 @@ function ConfiguredWorkspace({
     pageMeta.pageType === "task"
       ? flattenTreeNodes(genericRoots, collapsedNodeIds)
       : pageMeta.pageType === "planner"
-      ? flattenTreeNodes([...genericRoots, ...plannerVisibleRoots], collapsedNodeIds)
+      ? flattenTreeNodes(
+          [...plannerTopVisibleRoots, ...genericRoots, ...plannerBottomVisibleRoots],
+          collapsedNodeIds,
+        )
       : pageMeta.pageType === "model"
       ? flattenTreeNodes([...modelVisibleRoots, ...genericRoots], collapsedNodeIds)
       : pageMeta.pageType === "journal"
@@ -5969,6 +5980,51 @@ function ConfiguredWorkspace({
     selectedPageId,
   ]);
 
+  const handleUpdatePlannerFocus = useCallback(async () => {
+    if (!selectedPageId || pageMeta.pageType !== "planner" || isPageArchived) {
+      return;
+    }
+
+    setIsPlannerUpdatingFocus(true);
+    setPlannerStatus("");
+    try {
+      const result = await updatePlannerFocus({
+        ownerKey,
+        pageId: selectedPageId,
+        seed: Date.now(),
+      });
+      const movedNodeIds = Array.isArray(result?.movedNodeIds)
+        ? result.movedNodeIds.map((value) => String(value))
+        : [];
+      const movedCount =
+        typeof result?.movedCount === "number" ? result.movedCount : movedNodeIds.length;
+      const focusTargetId =
+        movedNodeIds[0] ??
+        (typeof result?.focusSectionId === "string" ? result.focusSectionId : null);
+      if (focusTargetId) {
+        focusPlannerNode(focusTargetId);
+      }
+      setPlannerStatus(
+        movedCount > 0
+          ? `Updated Focus with ${movedCount} item${movedCount === 1 ? "" : "s"}.`
+          : "Focus is up to date. No eligible items were moved from the top day.",
+      );
+    } catch (error) {
+      setPlannerStatus(
+        error instanceof Error ? error.message : "Could not update Focus right now.",
+      );
+    } finally {
+      setIsPlannerUpdatingFocus(false);
+    }
+  }, [
+    focusPlannerNode,
+    isPageArchived,
+    ownerKey,
+    pageMeta.pageType,
+    selectedPageId,
+    updatePlannerFocus,
+  ]);
+
   const handleCompletePlannerDay = useCallback(async () => {
     if (!selectedPageId || pageMeta.pageType !== "planner" || isPageArchived) {
       return;
@@ -6957,6 +7013,14 @@ function ConfiguredWorkspace({
                       </button>
                       <button
                         type="button"
+                        onClick={() => void handleUpdatePlannerFocus()}
+                        disabled={isPlannerUpdatingFocus || isPageArchived}
+                        className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isPlannerUpdatingFocus ? "Updating…" : "Update Focus"}
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => void handleStartNextPlannerTask()}
                         disabled={isPlannerResolvingNextTask || isPageArchived}
                         className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-60"
@@ -7118,6 +7182,51 @@ function ConfiguredWorkspace({
                     ) : null}
                     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start">
                       <div className="min-w-0 space-y-1">
+                        <PageSection
+                          title="Focus"
+                          sectionNode={plannerFocusSection}
+                          ownerKey={ownerKey}
+                          pageId={selectedPage._id}
+                          nodeBacklinkCounts={pageNodeBacklinkCounts}
+                          nodeMap={nodeMap}
+                          createNodesBatch={createNodesBatch}
+                          insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+                          updateNode={updateNode}
+                          moveNode={moveNode}
+                          splitNode={splitNode}
+                          replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                          setNodeTreeArchived={setNodeTreeArchived}
+                          isPageReadOnly={isPageArchived}
+                          collapsedNodeIds={collapsedNodeIds}
+                          selectedNodeIds={selectedNodeIds}
+                          selectionAnchorNodeId={selectionAnchorNodeId}
+                          onToggleNodeCollapsed={toggleNodeCollapsed}
+                          onSelectSingleNode={selectSingleNode}
+                          onSelectNodeRange={selectNodeRange}
+                          onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
+                          pendingInsertedComposer={pendingInsertedComposer}
+                          onOpenInsertedComposer={openInsertedComposer}
+                          onClearInsertedComposer={clearInsertedComposer}
+                          onBeginTextEditing={clearNodeSelection}
+                          activeDraggedNodeId={activeDraggedNodeId}
+                          activeDraggedNodePayload={activeDraggedNodePayload}
+                          onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                          onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                          onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                          buildDraggedNodePayload={buildDraggedNodePayload}
+                          onDropDraggedNodes={dropDraggedNodes}
+                          onSelectionStart={beginNodeSelection}
+                          onSelectionExtend={extendNodeSelection}
+                          availableTags={sortedTags}
+                          pagesByTitle={pagesByTitle}
+                          pagesById={pagesById}
+                          onOpenPage={handleSelectPage}
+                          onOpenNode={handleOpenLinkedNode}
+                          onOpenTag={openFindPaletteForQuery}
+                          onOpenFindQuery={openFindPaletteForQuery}
+                          recurringCompletionMode={recurringCompletionMode}
+                          depthOffset={sectionDepthOffset}
+                        />
                         <OutlineNodeList
                           nodes={genericRoots}
                           ownerKey={ownerKey}
