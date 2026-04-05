@@ -1,5 +1,11 @@
 import { v } from "convex/values";
-import { mutation, query, type MutationCtx } from "./_generated/server";
+import {
+  internalQuery,
+  mutation,
+  query,
+  type DatabaseReader,
+  type MutationCtx,
+} from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { assertOwnerKey } from "./lib/auth";
 import {
@@ -48,6 +54,22 @@ async function buildPlannerTaskSelectionSummary(ctx: MutationCtx, plannerNode: D
     sourcePageId: sourcePage?._id ?? null,
     sourcePageTitle: sourcePage?.title ?? null,
     linkedSourceTaskId: linkedSourceTask?._id ?? linkedSourceTaskId ?? null,
+  };
+}
+
+async function buildPlannerSourceTaskSummary(
+  db: DatabaseReader,
+  sourceTask: Doc<"nodes">,
+) {
+  const sourcePage = await db.get(sourceTask.pageId);
+
+  return {
+    sourceTaskId: sourceTask._id,
+    text: sourceTask.text,
+    dueAt: sourceTask.dueAt ?? null,
+    dueEndAt: sourceTask.dueEndAt ?? null,
+    sourcePageId: sourcePage?._id ?? null,
+    sourcePageTitle: sourcePage?.title ?? null,
   };
 }
 
@@ -196,6 +218,126 @@ export const addRandomPlannerTask = mutation({
     const afterNodeId = dayChildren[dayChildren.length - 1]?._id ?? null;
     const index = Math.abs(Math.trunc(args.seed)) % candidates.length;
     const sourceTask = candidates[index]!;
+    const plannerNodeId = await appendPlannerLinkedTaskCopy(ctx, {
+      plannerPageId: page._id,
+      dayNodeId: currentDay._id,
+      plannerDate,
+      sourceTask,
+      afterNodeId,
+    });
+
+    const insertedPlannerNode = await ctx.db.get(plannerNodeId);
+    if (!insertedPlannerNode) {
+      throw new Error("Could not create the suggested planner task.");
+    }
+    const summary = await buildPlannerTaskSelectionSummary(ctx, insertedPlannerNode);
+
+    return {
+      created: true,
+      dayNodeId: currentDay._id,
+      ...summary,
+    };
+  },
+});
+
+export const suggestRandomPlannerTaskCandidate = internalQuery({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+    seed: v.number(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived || !isPlannerPage(page)) {
+      throw new Error("Planner page not found.");
+    }
+
+    const nodes = await listPageNodes(ctx.db, page._id);
+    const currentDay = getCurrentPlannerDay(nodes);
+    if (!currentDay) {
+      throw new Error("Add the first planner day before pulling in tasks.");
+    }
+
+    const plannerDate = getPlannerDayTimestamp(currentDay);
+    if (!plannerDate) {
+      throw new Error("Current planner day is missing its date.");
+    }
+
+    const currentDayTree = await collectNodeTree(ctx.db, currentDay._id);
+    const existingSourceIds = new Set(
+      currentDayTree
+        .map((node) => getPlannerLinkedSourceTaskId(node))
+        .filter((value): value is Id<"nodes"> => value !== null)
+        .map((value) => value as string),
+    );
+
+    const candidates = await listEligiblePlannerSourceTasks(ctx.db, {
+      excludeSourceTaskIds: existingSourceIds,
+      dueByDate: plannerDate,
+    });
+    if (candidates.length === 0) {
+      throw new Error("No remaining open tasks are available for today.");
+    }
+
+    const index = Math.abs(Math.trunc(args.seed)) % candidates.length;
+    const sourceTask = candidates[index]!;
+    return {
+      dayNodeId: currentDay._id,
+      ...(await buildPlannerSourceTaskSummary(ctx.db, sourceTask)),
+    };
+  },
+});
+
+export const addPlannerSourceTask = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+    sourceTaskId: v.id("nodes"),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived || !isPlannerPage(page)) {
+      throw new Error("Planner page not found.");
+    }
+
+    const nodes = await listPageNodes(ctx.db, page._id);
+    const currentDay = getCurrentPlannerDay(nodes);
+    if (!currentDay) {
+      throw new Error("Add the first planner day before pulling in tasks.");
+    }
+
+    const plannerDate = getPlannerDayTimestamp(currentDay);
+    if (!plannerDate) {
+      throw new Error("Current planner day is missing its date.");
+    }
+
+    const currentDayTree = await collectNodeTree(ctx.db, currentDay._id);
+    const existingSourceIds = new Set(
+      currentDayTree
+        .map((node) => getPlannerLinkedSourceTaskId(node))
+        .filter((value): value is Id<"nodes"> => value !== null)
+        .map((value) => value as string),
+    );
+    if (existingSourceIds.has(args.sourceTaskId as string)) {
+      throw new Error("That task is already in today's plan.");
+    }
+
+    const candidates = await listEligiblePlannerSourceTasks(ctx.db, {
+      excludeSourceTaskIds: existingSourceIds,
+      dueByDate: plannerDate,
+    });
+    const sourceTask =
+      candidates.find((candidate) => candidate._id === args.sourceTaskId) ?? null;
+    if (!sourceTask) {
+      throw new Error("That task is no longer eligible for today.");
+    }
+
+    const dayChildren = currentDayTree
+      .filter((node) => node.parentNodeId === currentDay._id)
+      .sort((left, right) => left.position - right.position);
+    const afterNodeId = dayChildren[dayChildren.length - 1]?._id ?? null;
     const plannerNodeId = await appendPlannerLinkedTaskCopy(ctx, {
       plannerPageId: page._id,
       dayNodeId: currentDay._id,

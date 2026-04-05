@@ -288,10 +288,15 @@ type PendingInsertedComposer = {
 type PlannerNextTaskSuggestion = {
   plannerNodeId: string;
   text: string;
-  created: boolean;
+  sectionTitle: string;
+  dueAt: number | null;
+  dueEndAt: number | null;
+};
+type PlannerRandomTaskSuggestion = {
+  sourceTaskId: string;
+  text: string;
   sourcePageId: string | null;
   sourcePageTitle: string | null;
-  linkedSourceTaskId: string | null;
   dueAt: number | null;
   dueEndAt: number | null;
 };
@@ -1059,20 +1064,12 @@ function buildNodeLinkInsertText(node: Doc<"nodes">) {
   return `[[${sanitizeLinkLabel(node.text)}|node:${node._id}]]`;
 }
 
-function buildCompactNodeLinkInsertText(node: Doc<"nodes">) {
-  return `[[${sanitizeLinkLabel(node.text)}]]`;
-}
-
 function buildNodeClipboardLink(node: Pick<Doc<"nodes">, "_id" | "text">) {
   return `[[${sanitizeLinkLabel(node.text)}|node:${node._id}]]`;
 }
 
 function buildPageLinkInsertText(page: Pick<Doc<"pages">, "_id" | "title">) {
   return `[[${sanitizeLinkLabel(page.title)}|page:${page._id}]]`;
-}
-
-function buildCompactPageLinkInsertText(page: Pick<Doc<"pages">, "title">) {
-  return `[[${sanitizeLinkLabel(page.title)}]]`;
 }
 
 function buildPageBacklinkSearchQuery(page: Pick<Doc<"pages">, "_id">) {
@@ -2331,6 +2328,8 @@ function ConfiguredWorkspace({
   const [plannerChatDraft, setPlannerChatDraft] = useState("");
   const [plannerChatError, setPlannerChatError] = useState("");
   const [isPlannerChatLoading, setIsPlannerChatLoading] = useState(false);
+  const [plannerRandomTaskSuggestion, setPlannerRandomTaskSuggestion] =
+    useState<PlannerRandomTaskSuggestion | null>(null);
   const [plannerNextTaskSuggestion, setPlannerNextTaskSuggestion] =
     useState<PlannerNextTaskSuggestion | null>(null);
   const [lastResolvedPageTree, setLastResolvedPageTree] = useState<PageTreeResult | null>(null);
@@ -2425,8 +2424,9 @@ function ConfiguredWorkspace({
   const applyApprovedPlannerPlan = useMutation(api.chatData.applyApprovedPlannerPlan);
   const appendPlannerDay = useMutation(api.planner.appendPlannerDay);
   const completePlannerDayWithAi = useAction(api.plannerAi.completePlannerDayWithAi);
+  const suggestRandomPlannerTask = useAction(api.plannerAi.suggestRandomPlannerTask);
   const addRandomPlannerTaskWithAi = useAction(api.plannerAi.addRandomPlannerTaskWithAi);
-  const resolveNextPlannerTask = useMutation(api.planner.resolveNextPlannerTask);
+  const suggestNextPlannerTask = useAction(api.plannerAi.suggestNextPlannerTask);
   const completePlannerTask = useMutation(api.planner.completePlannerTask);
   const findNodesText = useAction(api.ai.findNodesText);
   const searchNodes = useAction(api.ai.searchNodes);
@@ -3418,13 +3418,14 @@ function ConfiguredWorkspace({
   }, [paletteOpen]);
 
   useEffect(() => {
-    if (!plannerNextTaskSuggestion) {
+    if (!plannerNextTaskSuggestion && !plannerRandomTaskSuggestion) {
       return;
     }
 
     const handleDismissNextTaskSuggestion = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setPlannerNextTaskSuggestion(null);
+        setPlannerRandomTaskSuggestion(null);
       }
     };
 
@@ -3432,7 +3433,7 @@ function ConfiguredWorkspace({
     return () => {
       window.removeEventListener("keydown", handleDismissNextTaskSuggestion);
     };
-  }, [plannerNextTaskSuggestion]);
+  }, [plannerNextTaskSuggestion, plannerRandomTaskSuggestion]);
 
   useEffect(() => {
     setLocationPageId(readPageIdFromLocation());
@@ -6003,8 +6004,52 @@ function ConfiguredWorkspace({
     selectedPageId,
   ]);
 
-  const handleAddRandomPlannerTask = useCallback(async () => {
+  const requestRandomPlannerTaskSuggestion = useCallback(async () => {
     if (!selectedPageId || pageMeta.pageType !== "planner" || isPageArchived) {
+      return;
+    }
+
+    setIsPlannerAddingRandomTask(true);
+    setPlannerStatus("");
+    try {
+      const result = await suggestRandomPlannerTask({
+        ownerKey,
+        pageId: selectedPageId,
+        seed: Date.now(),
+      });
+      if (result?.sourceTaskId) {
+        setPlannerRandomTaskSuggestion({
+          sourceTaskId: result.sourceTaskId as string,
+          text: typeof result.text === "string" ? result.text : "Untitled task",
+          sourcePageId:
+            typeof result.sourcePageId === "string" ? result.sourcePageId : null,
+          sourcePageTitle:
+            typeof result.sourcePageTitle === "string" ? result.sourcePageTitle : null,
+          dueAt: typeof result.dueAt === "number" ? result.dueAt : null,
+          dueEndAt: typeof result.dueEndAt === "number" ? result.dueEndAt : null,
+        });
+      }
+      setPlannerStatus("Suggested a random open task for today.");
+    } catch (error) {
+      setPlannerStatus(
+        error instanceof Error ? error.message : "Could not suggest a random task right now.",
+      );
+    } finally {
+      setIsPlannerAddingRandomTask(false);
+    }
+  }, [isPageArchived, ownerKey, pageMeta.pageType, selectedPageId, suggestRandomPlannerTask]);
+
+  const handleAddRandomPlannerTask = useCallback(async () => {
+    await requestRandomPlannerTaskSuggestion();
+  }, [requestRandomPlannerTaskSuggestion]);
+
+  const handleApproveRandomPlannerTask = useCallback(async () => {
+    if (
+      !selectedPageId ||
+      pageMeta.pageType !== "planner" ||
+      isPageArchived ||
+      !plannerRandomTaskSuggestion
+    ) {
       return;
     }
 
@@ -6015,19 +6060,29 @@ function ConfiguredWorkspace({
         ownerKey,
         pageId: selectedPageId,
         seed: Date.now(),
+        sourceTaskId: plannerRandomTaskSuggestion.sourceTaskId as Id<"nodes">,
       });
       if (result?.plannerNodeId) {
         focusPlannerNode(result.plannerNodeId as string);
       }
-      setPlannerStatus("Added a random open task to the current day.");
+      setPlannerRandomTaskSuggestion(null);
+      setPlannerStatus("Added the selected task to the top day.");
     } catch (error) {
       setPlannerStatus(
-        error instanceof Error ? error.message : "Could not add a random task right now.",
+        error instanceof Error ? error.message : "Could not add that task right now.",
       );
     } finally {
       setIsPlannerAddingRandomTask(false);
     }
-  }, [addRandomPlannerTaskWithAi, focusPlannerNode, isPageArchived, ownerKey, pageMeta.pageType, selectedPageId]);
+  }, [
+    addRandomPlannerTaskWithAi,
+    focusPlannerNode,
+    isPageArchived,
+    ownerKey,
+    pageMeta.pageType,
+    plannerRandomTaskSuggestion,
+    selectedPageId,
+  ]);
 
   const handleResolveNextPlannerTask = useCallback(async () => {
     if (!selectedPageId || pageMeta.pageType !== "planner" || isPageArchived) {
@@ -6037,7 +6092,7 @@ function ConfiguredWorkspace({
     setIsPlannerResolvingNextTask(true);
     setPlannerStatus("");
     try {
-      const result = await resolveNextPlannerTask({
+      const result = await suggestNextPlannerTask({
         ownerKey,
         pageId: selectedPageId,
       });
@@ -6045,22 +6100,13 @@ function ConfiguredWorkspace({
         setPlannerNextTaskSuggestion({
           plannerNodeId: result.plannerNodeId as string,
           text: typeof result.text === "string" ? result.text : "Untitled task",
-          created: result.created === true,
-          sourcePageId:
-            typeof result.sourcePageId === "string" ? result.sourcePageId : null,
-          sourcePageTitle:
-            typeof result.sourcePageTitle === "string" ? result.sourcePageTitle : null,
-          linkedSourceTaskId:
-            typeof result.linkedSourceTaskId === "string" ? result.linkedSourceTaskId : null,
+          sectionTitle:
+            typeof result.sectionTitle === "string" ? result.sectionTitle : "Today",
           dueAt: typeof result.dueAt === "number" ? result.dueAt : null,
           dueEndAt: typeof result.dueEndAt === "number" ? result.dueEndAt : null,
         });
       }
-      setPlannerStatus(
-        result?.created
-          ? "Suggested a new task for today."
-          : "Suggested the next task for today.",
-      );
+      setPlannerStatus("Suggested the next task to focus on.");
     } catch (error) {
       setPlannerStatus(
         error instanceof Error ? error.message : "Could not choose the next task right now.",
@@ -6068,7 +6114,7 @@ function ConfiguredWorkspace({
     } finally {
       setIsPlannerResolvingNextTask(false);
     }
-  }, [isPageArchived, ownerKey, pageMeta.pageType, resolveNextPlannerTask, selectedPageId]);
+  }, [isPageArchived, ownerKey, pageMeta.pageType, selectedPageId, suggestNextPlannerTask]);
 
   const handleSubmitPlannerChat = useCallback(async () => {
     if (
@@ -6878,6 +6924,81 @@ function ConfiguredWorkspace({
                     {plannerStatus ? (
                       <p className="text-sm text-[var(--workspace-text-subtle)]">{plannerStatus}</p>
                     ) : null}
+                    {plannerRandomTaskSuggestion ? (
+                      <div
+                        className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4"
+                        onClick={() => setPlannerRandomTaskSuggestion(null)}
+                      >
+                        <div
+                          className="w-full max-w-lg border border-[var(--workspace-border)] bg-[var(--workspace-surface)] p-5 shadow-2xl"
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <div className="flex items-start justify-between gap-4">
+                            <div>
+                              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--workspace-accent)]">
+                                Random Task Suggestion
+                              </p>
+                              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[var(--workspace-text)]">
+                                {plannerRandomTaskSuggestion.text}
+                              </h3>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => setPlannerRandomTaskSuggestion(null)}
+                              className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                            >
+                              Dismiss
+                            </button>
+                          </div>
+                          <div className="mt-4 flex flex-wrap gap-2 text-xs uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                            <span>Will add to the top day</span>
+                            {plannerRandomTaskSuggestion.sourcePageTitle ? (
+                              <span>From {plannerRandomTaskSuggestion.sourcePageTitle}</span>
+                            ) : null}
+                            {plannerRandomTaskSuggestion.dueAt ? (
+                              <span>
+                                {formatDueDateRange(
+                                  plannerRandomTaskSuggestion.dueAt,
+                                  plannerRandomTaskSuggestion.dueEndAt ?? null,
+                                )}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="mt-6 flex flex-wrap gap-3">
+                            <button
+                              type="button"
+                              onClick={() => void handleApproveRandomPlannerTask()}
+                              disabled={isPlannerAddingRandomTask}
+                              className="border border-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)] disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {isPlannerAddingRandomTask ? "Adding…" : "Approve"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void requestRandomPlannerTaskSuggestion()}
+                              disabled={isPlannerAddingRandomTask}
+                              className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              Try Again
+                            </button>
+                            {plannerRandomTaskSuggestion.sourcePageId ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  handleSelectPage(
+                                    plannerRandomTaskSuggestion.sourcePageId as Id<"pages">,
+                                  );
+                                  setPlannerRandomTaskSuggestion(null);
+                                }}
+                                className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                              >
+                                Open Source Page
+                              </button>
+                            ) : null}
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
                     {plannerNextTaskSuggestion ? (
                       <div
                         className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4"
@@ -6905,12 +7026,7 @@ function ConfiguredWorkspace({
                             </button>
                           </div>
                           <div className="mt-4 flex flex-wrap gap-2 text-xs uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                            <span>
-                              {plannerNextTaskSuggestion.created ? "Pulled into today" : "Already in today"}
-                            </span>
-                            {plannerNextTaskSuggestion.sourcePageTitle ? (
-                              <span>From {plannerNextTaskSuggestion.sourcePageTitle}</span>
-                            ) : null}
+                            <span>{plannerNextTaskSuggestion.sectionTitle}</span>
                             {plannerNextTaskSuggestion.dueAt ? (
                               <span>
                                 {formatDueDateRange(
@@ -6931,20 +7047,6 @@ function ConfiguredWorkspace({
                             >
                               Focus Task
                             </button>
-                            {plannerNextTaskSuggestion.sourcePageId ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  handleSelectPage(
-                                    plannerNextTaskSuggestion.sourcePageId as Id<"pages">,
-                                  );
-                                  setPlannerNextTaskSuggestion(null);
-                                }}
-                                className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                              >
-                                Open Source Page
-                              </button>
-                            ) : null}
                           </div>
                         </div>
                       </div>
