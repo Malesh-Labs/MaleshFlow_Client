@@ -1238,7 +1238,7 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
     kind: "page",
     title: page.title,
     subtitle: "Page",
-    insertText: buildCompactPageLinkInsertText(page),
+    insertText: buildPageLinkInsertText(page),
   }));
 
   const nodeSuggestions: LinkSuggestion[] = results.nodes
@@ -1248,7 +1248,7 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
       kind: "node",
       title: sanitizeLinkLabel(entry.node.text),
       subtitle: entry.page ? `Node • ${entry.page.title}` : "Node",
-      insertText: buildCompactNodeLinkInsertText(entry.node),
+      insertText: buildNodeLinkInsertText(entry.node),
     }));
 
   return [...pageSuggestions, ...nodeSuggestions];
