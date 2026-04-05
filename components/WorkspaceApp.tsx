@@ -2440,6 +2440,7 @@ function ConfiguredWorkspace({
   const hasRequestedSidebarPage = useRef(false);
   const hasRequestedTaskSidebarSection = useRef(new Set<string>());
   const hasRequestedPlannerSections = useRef(new Set<string>());
+  const suppressNodeSelectionClearRef = useRef(0);
   const textSelectionGestureRef = useRef<{
     anchorNodeId: string;
     lastNodeId: string;
@@ -2447,13 +2448,30 @@ function ConfiguredWorkspace({
     convertedToItemSelection: boolean;
   } | null>(null);
 
+  const [selectionAnchorNodeId, setSelectionAnchorNodeId] = useState<string | null>(null);
+
+  const suppressNextNodeSelectionClear = useCallback(() => {
+    suppressNodeSelectionClearRef.current += 1;
+    window.setTimeout(() => {
+      suppressNodeSelectionClearRef.current = Math.max(
+        0,
+        suppressNodeSelectionClearRef.current - 1,
+      );
+    }, 0);
+  }, []);
+
   const clearNodeSelection = useCallback(() => {
+    if (suppressNodeSelectionClearRef.current > 0) {
+      return;
+    }
     setSelectedNodeIds(new Set());
+    setSelectionAnchorNodeId(null);
     setDragSelection(null);
   }, []);
 
   const selectSingleNode = useCallback((nodeId: string) => {
     setSelectedNodeIds(new Set([nodeId]));
+    setSelectionAnchorNodeId(nodeId);
     setDragSelection(null);
   }, []);
 
@@ -4080,11 +4098,13 @@ function ConfiguredWorkspace({
     setSelectedNodeIds(
       buildNodeSelectionIds(visibleNodeOrder, anchorNodeId, currentNodeId),
     );
+    setSelectionAnchorNodeId(anchorNodeId);
     setDragSelection(null);
   }, [visibleNodeOrder]);
 
   const setExplicitSelectedNodeIds = useCallback((nodeIds: string[]) => {
     setSelectedNodeIds(new Set(nodeIds));
+    setSelectionAnchorNodeId(nodeIds[0] ?? null);
     setDragSelection(null);
   }, []);
 
@@ -6164,6 +6184,7 @@ function ConfiguredWorkspace({
       currentNodeId: nodeId,
     });
     setSelectedNodeIds(new Set([nodeId]));
+    setSelectionAnchorNodeId(nodeId);
   };
 
   const extendNodeSelection = (nodeId: string) => {
@@ -6312,9 +6333,11 @@ function ConfiguredWorkspace({
                       isPageReadOnly={false}
                       collapsedNodeIds={collapsedNodeIds}
                       selectedNodeIds={selectedNodeIds}
+                      selectionAnchorNodeId={selectionAnchorNodeId}
                       onToggleNodeCollapsed={toggleNodeCollapsed}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
+                      onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
@@ -6793,9 +6816,11 @@ function ConfiguredWorkspace({
                       isPageReadOnly={isPageArchived}
                       collapsedNodeIds={collapsedNodeIds}
                       selectedNodeIds={selectedNodeIds}
+                      selectionAnchorNodeId={selectionAnchorNodeId}
                       onToggleNodeCollapsed={toggleNodeCollapsed}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
+                      onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
@@ -6947,9 +6972,11 @@ function ConfiguredWorkspace({
                           isPageReadOnly={isPageArchived}
                           collapsedNodeIds={collapsedNodeIds}
                           selectedNodeIds={selectedNodeIds}
+                          selectionAnchorNodeId={selectionAnchorNodeId}
                           onToggleNodeCollapsed={toggleNodeCollapsed}
                           onSelectSingleNode={selectSingleNode}
                           onSelectNodeRange={selectNodeRange}
+                          onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
                           pendingInsertedComposer={pendingInsertedComposer}
                           onOpenInsertedComposer={openInsertedComposer}
                           onClearInsertedComposer={clearInsertedComposer}
@@ -6992,9 +7019,11 @@ function ConfiguredWorkspace({
                             isPageReadOnly={isPageArchived}
                             collapsedNodeIds={collapsedNodeIds}
                             selectedNodeIds={selectedNodeIds}
+                            selectionAnchorNodeId={selectionAnchorNodeId}
                             onToggleNodeCollapsed={toggleNodeCollapsed}
                             onSelectSingleNode={selectSingleNode}
                             onSelectNodeRange={selectNodeRange}
+                            onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
                             pendingInsertedComposer={pendingInsertedComposer}
                             onOpenInsertedComposer={openInsertedComposer}
                             onClearInsertedComposer={clearInsertedComposer}
@@ -7043,9 +7072,11 @@ function ConfiguredWorkspace({
                       isPageReadOnly={isPageArchived}
                       collapsedNodeIds={collapsedNodeIds}
                       selectedNodeIds={selectedNodeIds}
+                      selectionAnchorNodeId={selectionAnchorNodeId}
                       onToggleNodeCollapsed={toggleNodeCollapsed}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
+                      onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
@@ -7100,9 +7131,11 @@ function ConfiguredWorkspace({
                       isPageReadOnly={isPageArchived}
                       collapsedNodeIds={collapsedNodeIds}
                       selectedNodeIds={selectedNodeIds}
+                      selectionAnchorNodeId={selectionAnchorNodeId}
                       onToggleNodeCollapsed={toggleNodeCollapsed}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
+                      onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
@@ -7180,9 +7213,11 @@ function ConfiguredWorkspace({
                       isPageReadOnly={isPageArchived}
                       collapsedNodeIds={collapsedNodeIds}
                       selectedNodeIds={selectedNodeIds}
+                      selectionAnchorNodeId={selectionAnchorNodeId}
                       onToggleNodeCollapsed={toggleNodeCollapsed}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
+                      onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
@@ -7228,9 +7263,11 @@ function ConfiguredWorkspace({
                       isPageReadOnly={isPageArchived}
                       collapsedNodeIds={collapsedNodeIds}
                       selectedNodeIds={selectedNodeIds}
+                      selectionAnchorNodeId={selectionAnchorNodeId}
                       onToggleNodeCollapsed={toggleNodeCollapsed}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
+                      onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
@@ -7273,9 +7310,11 @@ function ConfiguredWorkspace({
                       isPageReadOnly={isPageArchived}
                       collapsedNodeIds={collapsedNodeIds}
                       selectedNodeIds={selectedNodeIds}
+                      selectionAnchorNodeId={selectionAnchorNodeId}
                       onToggleNodeCollapsed={toggleNodeCollapsed}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
+                      onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
@@ -7356,9 +7395,11 @@ function ConfiguredWorkspace({
                         isPageReadOnly={isPageArchived}
                         collapsedNodeIds={collapsedNodeIds}
                         selectedNodeIds={selectedNodeIds}
+                        selectionAnchorNodeId={selectionAnchorNodeId}
                         onToggleNodeCollapsed={toggleNodeCollapsed}
                         onSelectSingleNode={selectSingleNode}
                         onSelectNodeRange={selectNodeRange}
+                        onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
                         pendingInsertedComposer={pendingInsertedComposer}
                         onOpenInsertedComposer={openInsertedComposer}
                         onClearInsertedComposer={clearInsertedComposer}
@@ -7401,9 +7442,11 @@ function ConfiguredWorkspace({
                         isPageReadOnly={isPageArchived}
                         collapsedNodeIds={collapsedNodeIds}
                         selectedNodeIds={selectedNodeIds}
+                        selectionAnchorNodeId={selectionAnchorNodeId}
                         onToggleNodeCollapsed={toggleNodeCollapsed}
                         onSelectSingleNode={selectSingleNode}
                         onSelectNodeRange={selectNodeRange}
+                        onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
                         pendingInsertedComposer={pendingInsertedComposer}
                         onOpenInsertedComposer={openInsertedComposer}
                         onClearInsertedComposer={clearInsertedComposer}
@@ -7447,9 +7490,11 @@ function ConfiguredWorkspace({
                       isPageReadOnly={isPageArchived}
                       collapsedNodeIds={collapsedNodeIds}
                       selectedNodeIds={selectedNodeIds}
+                      selectionAnchorNodeId={selectionAnchorNodeId}
                       onToggleNodeCollapsed={toggleNodeCollapsed}
                       onSelectSingleNode={selectSingleNode}
                       onSelectNodeRange={selectNodeRange}
+                      onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
                       pendingInsertedComposer={pendingInsertedComposer}
                       onOpenInsertedComposer={openInsertedComposer}
                       onClearInsertedComposer={clearInsertedComposer}
@@ -8071,9 +8116,11 @@ function PageSection({
   isPageReadOnly,
   collapsedNodeIds,
   selectedNodeIds,
+  selectionAnchorNodeId,
   onToggleNodeCollapsed,
   onSelectSingleNode,
   onSelectNodeRange,
+  onSuppressTextEditingSelectionClear,
   pendingInsertedComposer,
   onOpenInsertedComposer,
   onClearInsertedComposer,
@@ -8119,9 +8166,11 @@ function PageSection({
   isPageReadOnly: boolean;
   collapsedNodeIds: Set<string>;
   selectedNodeIds: Set<string>;
+  selectionAnchorNodeId: string | null;
   onToggleNodeCollapsed: (nodeId: string) => void;
   onSelectSingleNode: (nodeId: string) => void;
   onSelectNodeRange: (anchorNodeId: string, currentNodeId: string) => void;
+  onSuppressTextEditingSelectionClear: () => void;
   pendingInsertedComposer: PendingInsertedComposer | null;
   onOpenInsertedComposer: (
     pageId: Id<"pages">,
@@ -8207,9 +8256,11 @@ function PageSection({
           isPageReadOnly={isPageReadOnly}
           collapsedNodeIds={collapsedNodeIds}
           selectedNodeIds={selectedNodeIds}
+          selectionAnchorNodeId={selectionAnchorNodeId}
           onToggleNodeCollapsed={onToggleNodeCollapsed}
           onSelectSingleNode={onSelectSingleNode}
           onSelectNodeRange={onSelectNodeRange}
+          onSuppressTextEditingSelectionClear={onSuppressTextEditingSelectionClear}
           pendingInsertedComposer={pendingInsertedComposer}
           onOpenInsertedComposer={onOpenInsertedComposer}
           onClearInsertedComposer={onClearInsertedComposer}
@@ -8256,9 +8307,11 @@ function OutlineNodeList({
   isPageReadOnly,
   collapsedNodeIds,
   selectedNodeIds,
+  selectionAnchorNodeId,
   onToggleNodeCollapsed,
   onSelectSingleNode,
   onSelectNodeRange,
+  onSuppressTextEditingSelectionClear,
   pendingInsertedComposer,
   onOpenInsertedComposer,
   onClearInsertedComposer,
@@ -8299,9 +8352,11 @@ function OutlineNodeList({
   isPageReadOnly: boolean;
   collapsedNodeIds: Set<string>;
   selectedNodeIds: Set<string>;
+  selectionAnchorNodeId: string | null;
   onToggleNodeCollapsed: (nodeId: string) => void;
   onSelectSingleNode: (nodeId: string) => void;
   onSelectNodeRange: (anchorNodeId: string, currentNodeId: string) => void;
+  onSuppressTextEditingSelectionClear: () => void;
   pendingInsertedComposer: PendingInsertedComposer | null;
   onOpenInsertedComposer: (
     pageId: Id<"pages">,
@@ -8387,9 +8442,11 @@ function OutlineNodeList({
           collapsedNodeIds={collapsedNodeIds}
           isSelected={isNodeWithinSelectedSubtree(node._id, selectedNodeIds, nodeMap)}
           selectedNodeIds={selectedNodeIds}
+          selectionAnchorNodeId={selectionAnchorNodeId}
           onToggleNodeCollapsed={onToggleNodeCollapsed}
           onSelectSingleNode={onSelectSingleNode}
           onSelectNodeRange={onSelectNodeRange}
+          onSuppressTextEditingSelectionClear={onSuppressTextEditingSelectionClear}
         pendingInsertedComposer={pendingInsertedComposer}
         onOpenInsertedComposer={onOpenInsertedComposer}
         onClearInsertedComposer={onClearInsertedComposer}
@@ -9462,9 +9519,11 @@ function OutlineNodeEditor({
   collapsedNodeIds,
   isSelected,
   selectedNodeIds,
+  selectionAnchorNodeId,
   onToggleNodeCollapsed,
   onSelectSingleNode,
   onSelectNodeRange,
+  onSuppressTextEditingSelectionClear,
   pendingInsertedComposer,
   onOpenInsertedComposer,
   onClearInsertedComposer,
@@ -9510,9 +9569,11 @@ function OutlineNodeEditor({
   collapsedNodeIds: Set<string>;
   isSelected: boolean;
   selectedNodeIds: Set<string>;
+  selectionAnchorNodeId: string | null;
   onToggleNodeCollapsed: (nodeId: string) => void;
   onSelectSingleNode: (nodeId: string) => void;
   onSelectNodeRange: (anchorNodeId: string, currentNodeId: string) => void;
+  onSuppressTextEditingSelectionClear: () => void;
   pendingInsertedComposer: PendingInsertedComposer | null;
   onOpenInsertedComposer: (
     pageId: Id<"pages">,
@@ -9891,6 +9952,10 @@ function OutlineNodeEditor({
   };
 
   const getRangeSelectionAnchorNodeId = () => {
+    if (selectionAnchorNodeId && selectedNodeIds.has(selectionAnchorNodeId)) {
+      return selectionAnchorNodeId;
+    }
+
     const orderedSelectedNodeIds = Array.from(selectedNodeIds);
     if (orderedSelectedNodeIds.length === 0) {
       return node._id;
@@ -11189,6 +11254,8 @@ function OutlineNodeEditor({
               event.target.closest("button, a, [contenteditable='true']"))
           ) {
             event.preventDefault();
+            event.stopPropagation();
+            onSuppressTextEditingSelectionClear();
             onSelectNodeRange(getRangeSelectionAnchorNodeId(), node._id);
             return;
           }
@@ -11578,9 +11645,11 @@ function OutlineNodeEditor({
               isPageReadOnly={isPageReadOnly}
               collapsedNodeIds={collapsedNodeIds}
               selectedNodeIds={selectedNodeIds}
+              selectionAnchorNodeId={selectionAnchorNodeId}
               onToggleNodeCollapsed={onToggleNodeCollapsed}
               onSelectSingleNode={onSelectSingleNode}
               onSelectNodeRange={onSelectNodeRange}
+              onSuppressTextEditingSelectionClear={onSuppressTextEditingSelectionClear}
               pendingInsertedComposer={pendingInsertedComposer}
               onOpenInsertedComposer={onOpenInsertedComposer}
               onClearInsertedComposer={onClearInsertedComposer}
