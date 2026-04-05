@@ -740,6 +740,13 @@ function flattenTreeNodes(nodes: TreeNode[], collapsedNodeIds?: Set<string>): Tr
   ]);
 }
 
+function collectExpandableNodeIds(nodes: TreeNode[]): string[] {
+  return nodes.flatMap((node) => [
+    ...(node.children.length > 0 ? [node._id] : []),
+    ...collectExpandableNodeIds(node.children),
+  ]);
+}
+
 function getNodeMeta(node: { sourceMeta?: unknown } | null | undefined) {
   if (!node || typeof node.sourceMeta !== "object" || !node.sourceMeta) {
     return {};
@@ -2589,6 +2596,21 @@ function ConfiguredWorkspace({
     () => (activePageTree ? toTreeNodes(activePageTree.nodes) : []),
     [activePageTree],
   );
+  const collapsiblePageNodeIds = useMemo(() => collectExpandableNodeIds(tree), [tree]);
+  const collapseAllNodesOnSelectedPage = useCallback(() => {
+    if (!selectedPage || collapsiblePageNodeIds.length === 0) {
+      return;
+    }
+
+    setCollapsedNodeIds((current) => {
+      const next = new Set(current);
+      for (const nodeId of collapsiblePageNodeIds) {
+        next.add(nodeId);
+      }
+      return next;
+    });
+    setPaletteOpen(false);
+  }, [collapsiblePageNodeIds, selectedPage]);
   const nodeMap = new Map(
     (activePageTree?.nodes ?? []).map((node) => [node._id as string, node]),
   );
@@ -3962,6 +3984,21 @@ function ConfiguredWorkspace({
         },
       },
       {
+        key: "collapse-all",
+        title: "Collapse All",
+        subtitle: selectedPage
+          ? collapsiblePageNodeIds.length > 0
+            ? `Collapse every expandable item on ${selectedPage.title}.`
+            : `${selectedPage.title} does not have any expandable items right now.`
+          : "Open a page to collapse every expandable item on it.",
+        keywords: ["collapse", "collapse all", "fold", "page", "outline", "children"],
+        actionLabel: "Collapse",
+        disabled: !selectedPage || collapsiblePageNodeIds.length === 0,
+        onSelect: () => {
+          collapseAllNodesOnSelectedPage();
+        },
+      },
+      {
         key: "task-schedule",
         title: "Set Task Schedule",
         subtitle: taskScheduleTargetNode
@@ -4072,6 +4109,8 @@ function ConfiguredWorkspace({
       ),
     );
   }, [
+    collapseAllNodesOnSelectedPage,
+    collapsiblePageNodeIds.length,
     embeddingProgressLabel,
     embeddingRebuildStatus,
     handleCreatePage,
