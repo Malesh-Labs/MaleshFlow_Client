@@ -275,6 +275,7 @@ export default defineSchema({
       v.literal("running"),
       v.literal("completed"),
       v.literal("error"),
+      v.literal("cancelled"),
     ),
     scanComplete: v.boolean(),
     scannedNodes: v.number(),

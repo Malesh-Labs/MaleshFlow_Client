@@ -2457,6 +2457,7 @@ function ConfiguredWorkspace({
   const rebuildEmbeddings = useMutation(api.workspace.rebuildEmbeddings);
   const ensureTaskCalendarFeed = useMutation(api.calendar.ensureTaskCalendarFeed);
   const refreshSidebarLinks = useMutation(api.workspace.refreshSidebarLinks);
+  const cancelEmbeddingRebuild = useMutation(api.workspace.cancelEmbeddingRebuild);
   const createNodesBatch = useMutation(api.workspace.createNodesBatch);
   const updateNode = useMutation(api.workspace.updateNode);
   const updateNodesBatch = useMutation(api.workspace.updateNodesBatch);
@@ -3352,7 +3353,12 @@ function ConfiguredWorkspace({
       total,
       embeddingRebuildProgress.completed + embeddingRebuildProgress.error,
     );
-    const percent = total > 0 ? Math.round((processed / total) * 100) : 0;
+    const percent =
+      total > 0
+        ? embeddingRebuildProgress.complete
+          ? 100
+          : Math.floor((processed / total) * 100)
+        : 0;
     const shouldShow =
       shouldTrackEmbeddingRebuild &&
       (total > 0 ||
@@ -3373,6 +3379,7 @@ function ConfiguredWorkspace({
       running: embeddingRebuildProgress.running,
       error: embeddingRebuildProgress.error,
       complete: embeddingRebuildProgress.complete,
+      cancelled: embeddingRebuildProgress.cancelled,
       idle: embeddingRebuildProgress.idle,
       status: embeddingRebuildProgress.status,
       label: embeddingProgressLabel,
@@ -3864,6 +3871,24 @@ function ConfiguredWorkspace({
       setIsRebuildingEmbeddings(false);
     }
   }, [ownerKey, rebuildEmbeddings]);
+
+  const handleCancelEmbeddingRebuild = useCallback(async () => {
+    setEmbeddingRebuildStatus("");
+    try {
+      const result = await cancelEmbeddingRebuild({ ownerKey });
+      setEmbeddingRebuildStatus(
+        result.cancelled
+          ? "Cancelled the embedding rebuild."
+          : result.message ?? "No embedding rebuild is currently running.",
+      );
+    } catch (error) {
+      setEmbeddingRebuildStatus(
+        error instanceof Error
+          ? error.message
+          : "Could not cancel the embedding rebuild right now.",
+      );
+    }
+  }, [cancelEmbeddingRebuild, ownerKey]);
 
   const handleCopyTaskCalendarFeed = useCallback(async () => {
     setIsPreparingTaskCalendarFeed(true);
@@ -6599,7 +6624,9 @@ function ConfiguredWorkspace({
           <div className="pointer-events-auto w-[min(22rem,calc(100vw-2rem))] border border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface)_92%,transparent)] px-3 py-3 shadow-[0_18px_40px_-28px_rgba(0,0,0,0.5)] backdrop-blur-sm">
             <div className="flex items-center justify-between gap-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
               <span>
-                {embeddingRebuildTracker.complete
+                {embeddingRebuildTracker.cancelled
+                  ? "Embedding Rebuild Cancelled"
+                  : embeddingRebuildTracker.complete
                   ? "Embeddings Ready"
                   : embeddingRebuildTracker.running > 0 ||
                       embeddingRebuildTracker.status === "running"
@@ -6611,6 +6638,8 @@ function ConfiguredWorkspace({
                   ? `${embeddingRebuildTracker.percent}%`
                   : embeddingRebuildTracker.complete
                     ? "Done"
+                    : embeddingRebuildTracker.cancelled
+                      ? "Stopped"
                     : "Idle"}
               </span>
             </div>
@@ -6648,6 +6677,22 @@ function ConfiguredWorkspace({
                 </span>
               ) : null}
             </div>
+            {!embeddingRebuildTracker.complete &&
+            !embeddingRebuildTracker.cancelled &&
+            (embeddingRebuildTracker.running > 0 ||
+              embeddingRebuildTracker.queued > 0 ||
+              embeddingRebuildTracker.status === "running") ? (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => void handleCancelEmbeddingRebuild()}
+                  className="border border-[var(--workspace-danger)] px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-danger)] transition hover:bg-[var(--workspace-danger)] hover:text-[var(--workspace-inverse-text)]"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : null}
             <p className="mt-2 text-xs leading-5 text-[var(--workspace-text-subtle)]">
               {embeddingRebuildTracker.label}
             </p>

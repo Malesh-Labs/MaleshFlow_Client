@@ -24,6 +24,7 @@ export function buildEmptyEmbeddingRebuildStatus() {
     pending: 0,
     idle: true,
     complete: true,
+    cancelled: false,
     lastQueuedAt: null as number | null,
     status: "idle" as const,
     updatedAt: null as number | null,
@@ -47,7 +48,7 @@ export function buildEmbeddingRebuildStatus(
   const idle = state.status !== "running" && state.queued === 0 && state.running === 0;
   const complete =
     total === 0
-      ? state.status !== "running"
+      ? state.status !== "running" && state.status !== "cancelled"
       : state.completed === total &&
         state.queued === 0 &&
         state.running === 0 &&
@@ -63,6 +64,7 @@ export function buildEmbeddingRebuildStatus(
     pending,
     idle,
     complete,
+    cancelled: state.status === "cancelled",
     lastQueuedAt: state.lastQueuedAt,
     status: state.status,
     updatedAt: state.updatedAt,

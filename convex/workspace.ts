@@ -755,6 +755,38 @@ export const rebuildEmbeddings = mutation({
   },
 });
 
+export const cancelEmbeddingRebuild = mutation({
+  args: {
+    ownerKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const state = await getEmbeddingRebuildState(ctx.db);
+    if (!state || state.status !== "running") {
+      return {
+        cancelled: false,
+        message: "No embedding rebuild is currently running.",
+      };
+    }
+
+    const now = getTimestamp();
+    await ctx.db.patch(state._id, {
+      status: "cancelled",
+      queued: 0,
+      running: 0,
+      scanComplete: true,
+      updatedAt: now,
+      finishedAt: now,
+      lastError: "Cancelled by user.",
+    });
+
+    return {
+      cancelled: true,
+      runId: state.runId,
+    };
+  },
+});
+
 export const rebuildEmbeddingsBatch = internalMutation({
   args: {
     runId: v.string(),
