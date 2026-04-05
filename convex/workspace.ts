@@ -44,7 +44,7 @@ import {
   collectRootSubtreeLines,
   shouldGenerateEmbeddingForNodeText,
 } from "../lib/domain/embeddings";
-import { rewriteMatchingPageWikiLinks } from "../lib/domain/links";
+import { extractLinks, rewriteMatchingPageWikiLinks } from "../lib/domain/links";
 import { extractTagMatches } from "../lib/domain/tags";
 
 function getTimestamp() {
@@ -456,6 +456,9 @@ async function listScopedFindReplaceNodes(
 async function buildVisibleNodeBacklinkCounts(
   ctx: QueryCtx,
   nodeIds: Id<"nodes">[],
+  options: {
+    excludeSourcePageId?: Id<"pages"> | null;
+  } = {},
 ) {
   if (nodeIds.length > MAX_BACKLINK_COUNT_NODE_BATCH) {
     return {};
@@ -464,7 +467,9 @@ async function buildVisibleNodeBacklinkCounts(
   const counts = await Promise.all(
     [...new Set(nodeIds)].map(async (nodeId) => {
       const links = await listNodeBacklinks(ctx, nodeId);
-      const visibleLinks = await filterVisibleLinks(ctx, links);
+      const visibleLinks = (await filterVisibleLinks(ctx, links)).filter(
+        (link) => link.sourcePageId !== options.excludeSourcePageId,
+      );
       return [nodeId as string, visibleLinks.length] as const;
     }),
   );
@@ -496,6 +501,39 @@ async function listNodeBacklinks(
       .filter((link) => link.kind === "node")
       .map((link) => [link._id, link]),
   ).values()];
+}
+
+function buildLocalNodeBacklinkCounts(nodes: Doc<"nodes">[]) {
+  const pageNodeIds = new Set(nodes.map((node) => node._id as string));
+  const counts = new Map<string, number>();
+
+  for (const node of nodes) {
+    for (const link of extractLinks(node.text)) {
+      if (link.kind !== "node" || !pageNodeIds.has(link.targetNodeRef)) {
+        continue;
+      }
+
+      counts.set(link.targetNodeRef, (counts.get(link.targetNodeRef) ?? 0) + 1);
+    }
+  }
+
+  return Object.fromEntries(
+    [...counts.entries()].filter(([, count]) => count > 0),
+  ) as Record<string, number>;
+}
+
+function mergeNodeBacklinkCounts(
+  ...countMaps: Array<Record<string, number>>
+) {
+  const merged = new Map<string, number>();
+
+  for (const countMap of countMaps) {
+    for (const [nodeId, count] of Object.entries(countMap)) {
+      merged.set(nodeId, (merged.get(nodeId) ?? 0) + count);
+    }
+  }
+
+  return Object.fromEntries(merged) as Record<string, number>;
 }
 
 export const listPages = query({
@@ -565,9 +603,13 @@ export const getSidebarTree = query({
     );
     let nodeBacklinkCounts: Record<string, number> = {};
     try {
-      nodeBacklinkCounts = await buildVisibleNodeBacklinkCounts(
-        ctx,
-        nodes.map((node) => node._id),
+      nodeBacklinkCounts = mergeNodeBacklinkCounts(
+        buildLocalNodeBacklinkCounts(nodes),
+        await buildVisibleNodeBacklinkCounts(
+          ctx,
+          nodes.map((node) => node._id),
+          { excludeSourcePageId: sidebarPage._id },
+        ),
       );
     } catch {
       nodeBacklinkCounts = {};
@@ -933,9 +975,13 @@ export const getPageTree = query({
     let nodeBacklinkCounts: Record<string, number> = {};
     if (!page.archived && nodes.length > 0 && !nodesTruncated) {
       try {
-        nodeBacklinkCounts = await buildVisibleNodeBacklinkCounts(
-          ctx,
-          nodes.map((node) => node._id),
+        nodeBacklinkCounts = mergeNodeBacklinkCounts(
+          buildLocalNodeBacklinkCounts(nodes),
+          await buildVisibleNodeBacklinkCounts(
+            ctx,
+            nodes.map((node) => node._id),
+            { excludeSourcePageId: args.pageId },
+          ),
         );
       } catch (error) {
         console.error("Failed to build page-tree node backlink counts", {
