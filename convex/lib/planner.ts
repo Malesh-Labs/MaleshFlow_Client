@@ -47,6 +47,16 @@ function isPlannerPlaceholderTaskText(text: string) {
   return text.trim() === "__small__";
 }
 
+function isPlannerDerivedSourceTask(node: Pick<Doc<"nodes">, "sourceMeta"> | null | undefined) {
+  const sourceMeta = getNodeSourceMeta(node);
+  return (
+    sourceMeta.sourceType === "planner" ||
+    sourceMeta.sourceType === "plannerTemplateClone" ||
+    sourceMeta.sourceType === "plannerArchive" ||
+    typeof sourceMeta.plannerKind === "string"
+  );
+}
+
 export function getPageSourceMeta(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
   return getRecordMeta(page?.sourceMeta ?? null);
 }
@@ -640,7 +650,8 @@ export async function listEligiblePlannerSourceTasks(
       !task.archived &&
       task.taskStatus !== "done" &&
       task.taskStatus !== "cancelled" &&
-      !isPlannerPlaceholderTaskText(task.text),
+      !isPlannerPlaceholderTaskText(task.text) &&
+      !isPlannerDerivedSourceTask(task),
   );
   const uniquePageIds = [...new Set(activeTasks.map((task) => task.pageId))];
   const pages = await Promise.all(uniquePageIds.map((pageId) => db.get(pageId)));
