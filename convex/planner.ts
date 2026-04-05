@@ -34,6 +34,24 @@ import {
   getEffectiveTaskDueDateRange,
 } from "../lib/domain/planner";
 
+const PURE_NODE_WIKI_LINK_PATTERN = /^\[\[(?:(.*?)\|)?node:([a-zA-Z0-9_-]+)\]\]$/;
+
+async function resolvePlannerSuggestionText(db: DatabaseReader, text: string) {
+  const trimmed = text.trim();
+  const match = trimmed.match(PURE_NODE_WIKI_LINK_PATTERN);
+  if (!match) {
+    return text;
+  }
+
+  const targetNodeId = match[2]?.trim();
+  if (!targetNodeId) {
+    return text;
+  }
+
+  const targetNode = await db.get(targetNodeId as Id<"nodes">);
+  return targetNode?.text?.trim() ? targetNode.text : text;
+}
+
 async function buildPlannerTaskSelectionSummary(ctx: MutationCtx, plannerNode: Doc<"nodes">) {
   const linkedSourceTaskId = getPlannerLinkedSourceTaskId(plannerNode);
   const linkedSourceTask = linkedSourceTaskId ? await ctx.db.get(linkedSourceTaskId) : null;
@@ -48,7 +66,7 @@ async function buildPlannerTaskSelectionSummary(ctx: MutationCtx, plannerNode: D
 
   return {
     plannerNodeId: plannerNode._id,
-    text: linkedSourceTask?.text ?? plannerNode.text,
+    text: await resolvePlannerSuggestionText(ctx.db, linkedSourceTask?.text ?? plannerNode.text),
     dueAt: linkedSourceTask?.dueAt ?? plannerNode.dueAt ?? null,
     dueEndAt: linkedSourceTask?.dueEndAt ?? plannerNode.dueEndAt ?? null,
     sourcePageId: sourcePage?._id ?? null,
@@ -65,7 +83,7 @@ async function buildPlannerSourceTaskSummary(
 
   return {
     sourceTaskId: sourceTask._id,
-    text: sourceTask.text,
+    text: await resolvePlannerSuggestionText(db, sourceTask.text),
     dueAt: sourceTask.dueAt ?? null,
     dueEndAt: sourceTask.dueEndAt ?? null,
     sourcePageId: sourcePage?._id ?? null,
@@ -245,6 +263,7 @@ export const suggestRandomPlannerTaskCandidate = internalQuery({
     ownerKey: v.string(),
     pageId: v.id("pages"),
     seed: v.number(),
+    excludeSourceTaskIds: v.optional(v.array(v.id("nodes"))),
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
@@ -273,7 +292,10 @@ export const suggestRandomPlannerTaskCandidate = internalQuery({
     );
 
     const candidates = await listEligiblePlannerSourceTasks(ctx.db, {
-      excludeSourceTaskIds: existingSourceIds,
+      excludeSourceTaskIds: new Set([
+        ...existingSourceIds,
+        ...(args.excludeSourceTaskIds ?? []).map((value) => value as string),
+      ]),
       dueByDate: plannerDate,
     });
     if (candidates.length === 0) {
@@ -286,6 +308,19 @@ export const suggestRandomPlannerTaskCandidate = internalQuery({
       dayNodeId: currentDay._id,
       ...(await buildPlannerSourceTaskSummary(ctx.db, sourceTask)),
     };
+  },
+});
+
+export const resolvePlannerSuggestionNodeText = internalQuery({
+  args: {
+    nodeId: v.id("nodes"),
+  },
+  handler: async (ctx, args) => {
+    const node = await ctx.db.get(args.nodeId);
+    if (!node) {
+      return null;
+    }
+    return await resolvePlannerSuggestionText(ctx.db, node.text);
   },
 });
 

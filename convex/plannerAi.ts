@@ -23,6 +23,8 @@ import {
 const getPlannerPageContextRef = internal.workspace.getPlannerPageContext as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const suggestRandomPlannerTaskCandidateRef = internal.planner.suggestRandomPlannerTaskCandidate as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const resolvePlannerSuggestionNodeTextRef = internal.planner.resolvePlannerSuggestionNodeText as any;
 
 const plannerTaskChoiceSchema = z.object({
   nodeId: z.string(),
@@ -226,6 +228,7 @@ export const suggestRandomPlannerTask = action({
     ownerKey: v.string(),
     pageId: v.id("pages"),
     seed: v.number(),
+    excludeSourceTaskIds: v.optional(v.array(v.id("nodes"))),
   },
   handler: async (
     ctx,
@@ -247,6 +250,7 @@ export const suggestNextPlannerTask = action({
   args: {
     ownerKey: v.string(),
     pageId: v.id("pages"),
+    excludeNodeIds: v.optional(v.array(v.id("nodes"))),
   },
   handler: async (
     ctx,
@@ -286,6 +290,7 @@ export const suggestNextPlannerTask = action({
       .filter((node) => node.kind === "task")
       .filter((node) => node.taskStatus !== "done" && node.taskStatus !== "cancelled")
       .filter((node) => node.text.trim() !== "__small__")
+      .filter((node) => !(args.excludeNodeIds ?? []).includes(node._id))
       .filter(
         (node) =>
           isNodeWithinRootSubtree(node, topDay._id, nodeMap) ||
@@ -368,7 +373,10 @@ export const suggestNextPlannerTask = action({
 
     return {
       plannerNodeId: chosenNode._id,
-      text: chosenNode.text,
+      text:
+        ((await ctx.runQuery(resolvePlannerSuggestionNodeTextRef, {
+          nodeId: chosenNode._id,
+        })) as string | null) ?? chosenNode.text,
       dueAt: chosenNode.dueAt,
       dueEndAt: chosenNode.dueEndAt ?? null,
       sectionTitle: chosenNode.sectionTitle,

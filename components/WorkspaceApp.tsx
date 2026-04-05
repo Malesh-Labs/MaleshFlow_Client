@@ -2328,6 +2328,12 @@ function ConfiguredWorkspace({
   const [plannerChatDraft, setPlannerChatDraft] = useState("");
   const [plannerChatError, setPlannerChatError] = useState("");
   const [isPlannerChatLoading, setIsPlannerChatLoading] = useState(false);
+  const [plannerRandomTaskExcludedSourceIds, setPlannerRandomTaskExcludedSourceIds] = useState<
+    string[]
+  >([]);
+  const [plannerNextTaskExcludedNodeIds, setPlannerNextTaskExcludedNodeIds] = useState<string[]>(
+    [],
+  );
   const [plannerRandomTaskSuggestion, setPlannerRandomTaskSuggestion] =
     useState<PlannerRandomTaskSuggestion | null>(null);
   const [plannerNextTaskSuggestion, setPlannerNextTaskSuggestion] =
@@ -3426,6 +3432,8 @@ function ConfiguredWorkspace({
       if (event.key === "Escape") {
         setPlannerNextTaskSuggestion(null);
         setPlannerRandomTaskSuggestion(null);
+        setPlannerNextTaskExcludedNodeIds([]);
+        setPlannerRandomTaskExcludedSourceIds([]);
       }
     };
 
@@ -6004,7 +6012,7 @@ function ConfiguredWorkspace({
     selectedPageId,
   ]);
 
-  const requestRandomPlannerTaskSuggestion = useCallback(async () => {
+  const requestRandomPlannerTaskSuggestion = useCallback(async (excludeSourceIds: string[] = []) => {
     if (!selectedPageId || pageMeta.pageType !== "planner" || isPageArchived) {
       return;
     }
@@ -6016,6 +6024,9 @@ function ConfiguredWorkspace({
         ownerKey,
         pageId: selectedPageId,
         seed: Date.now(),
+        excludeSourceTaskIds: excludeSourceIds.map(
+          (value) => value as Id<"nodes">,
+        ),
       });
       if (result?.sourceTaskId) {
         setPlannerRandomTaskSuggestion({
@@ -6040,8 +6051,21 @@ function ConfiguredWorkspace({
   }, [isPageArchived, ownerKey, pageMeta.pageType, selectedPageId, suggestRandomPlannerTask]);
 
   const handleAddRandomPlannerTask = useCallback(async () => {
+    setPlannerRandomTaskExcludedSourceIds([]);
     await requestRandomPlannerTaskSuggestion();
   }, [requestRandomPlannerTaskSuggestion]);
+
+  const handleTryAgainRandomPlannerTask = useCallback(async () => {
+    const nextExcludedIds = plannerRandomTaskSuggestion
+      ? [...plannerRandomTaskExcludedSourceIds, plannerRandomTaskSuggestion.sourceTaskId]
+      : plannerRandomTaskExcludedSourceIds;
+    setPlannerRandomTaskExcludedSourceIds(nextExcludedIds);
+    await requestRandomPlannerTaskSuggestion(nextExcludedIds);
+  }, [
+    plannerRandomTaskExcludedSourceIds,
+    plannerRandomTaskSuggestion,
+    requestRandomPlannerTaskSuggestion,
+  ]);
 
   const handleApproveRandomPlannerTask = useCallback(async () => {
     if (
@@ -6066,6 +6090,7 @@ function ConfiguredWorkspace({
         focusPlannerNode(result.plannerNodeId as string);
       }
       setPlannerRandomTaskSuggestion(null);
+      setPlannerRandomTaskExcludedSourceIds([]);
       setPlannerStatus("Added the selected task to the top day.");
     } catch (error) {
       setPlannerStatus(
@@ -6084,7 +6109,7 @@ function ConfiguredWorkspace({
     selectedPageId,
   ]);
 
-  const handleResolveNextPlannerTask = useCallback(async () => {
+  const handleResolveNextPlannerTask = useCallback(async (excludeNodeIds: string[] = []) => {
     if (!selectedPageId || pageMeta.pageType !== "planner" || isPageArchived) {
       return;
     }
@@ -6095,6 +6120,7 @@ function ConfiguredWorkspace({
       const result = await suggestNextPlannerTask({
         ownerKey,
         pageId: selectedPageId,
+        excludeNodeIds: excludeNodeIds.map((value) => value as Id<"nodes">),
       });
       if (result?.plannerNodeId) {
         setPlannerNextTaskSuggestion({
@@ -6115,6 +6141,23 @@ function ConfiguredWorkspace({
       setIsPlannerResolvingNextTask(false);
     }
   }, [isPageArchived, ownerKey, pageMeta.pageType, selectedPageId, suggestNextPlannerTask]);
+
+  const handleTryAgainNextPlannerTask = useCallback(async () => {
+    const nextExcludedIds = plannerNextTaskSuggestion
+      ? [...plannerNextTaskExcludedNodeIds, plannerNextTaskSuggestion.plannerNodeId]
+      : plannerNextTaskExcludedNodeIds;
+    setPlannerNextTaskExcludedNodeIds(nextExcludedIds);
+    await handleResolveNextPlannerTask(nextExcludedIds);
+  }, [
+    handleResolveNextPlannerTask,
+    plannerNextTaskExcludedNodeIds,
+    plannerNextTaskSuggestion,
+  ]);
+
+  const handleStartNextPlannerTask = useCallback(async () => {
+    setPlannerNextTaskExcludedNodeIds([]);
+    await handleResolveNextPlannerTask();
+  }, [handleResolveNextPlannerTask]);
 
   const handleSubmitPlannerChat = useCallback(async () => {
     if (
@@ -6914,7 +6957,7 @@ function ConfiguredWorkspace({
                       </button>
                       <button
                         type="button"
-                        onClick={() => void handleResolveNextPlannerTask()}
+                        onClick={() => void handleStartNextPlannerTask()}
                         disabled={isPlannerResolvingNextTask || isPageArchived}
                         className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-60"
                       >
@@ -6927,10 +6970,13 @@ function ConfiguredWorkspace({
                     {plannerRandomTaskSuggestion ? (
                       <div
                         className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4"
-                        onClick={() => setPlannerRandomTaskSuggestion(null)}
+                        onClick={() => {
+                          setPlannerRandomTaskSuggestion(null);
+                          setPlannerRandomTaskExcludedSourceIds([]);
+                        }}
                       >
                         <div
-                          className="w-full max-w-lg border border-[var(--workspace-border)] bg-[var(--workspace-surface)] p-5 shadow-2xl"
+                          className="w-full max-w-2xl border border-[var(--workspace-border)] bg-[var(--workspace-surface)] p-5 shadow-2xl"
                           onClick={(event) => event.stopPropagation()}
                         >
                           <div className="flex items-start justify-between gap-4">
@@ -6938,13 +6984,16 @@ function ConfiguredWorkspace({
                               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--workspace-accent)]">
                                 Random Task Suggestion
                               </p>
-                              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[var(--workspace-text)]">
+                              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[var(--workspace-text)] [overflow-wrap:anywhere]">
                                 {plannerRandomTaskSuggestion.text}
                               </h3>
                             </div>
                             <button
                               type="button"
-                              onClick={() => setPlannerRandomTaskSuggestion(null)}
+                              onClick={() => {
+                                setPlannerRandomTaskSuggestion(null);
+                                setPlannerRandomTaskExcludedSourceIds([]);
+                              }}
                               className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
                             >
                               Dismiss
@@ -6975,7 +7024,7 @@ function ConfiguredWorkspace({
                             </button>
                             <button
                               type="button"
-                              onClick={() => void requestRandomPlannerTaskSuggestion()}
+                              onClick={() => void handleTryAgainRandomPlannerTask()}
                               disabled={isPlannerAddingRandomTask}
                               className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-60"
                             >
@@ -6989,6 +7038,7 @@ function ConfiguredWorkspace({
                                     plannerRandomTaskSuggestion.sourcePageId as Id<"pages">,
                                   );
                                   setPlannerRandomTaskSuggestion(null);
+                                  setPlannerRandomTaskExcludedSourceIds([]);
                                 }}
                                 className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
                               >
@@ -7002,10 +7052,13 @@ function ConfiguredWorkspace({
                     {plannerNextTaskSuggestion ? (
                       <div
                         className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4"
-                        onClick={() => setPlannerNextTaskSuggestion(null)}
+                        onClick={() => {
+                          setPlannerNextTaskSuggestion(null);
+                          setPlannerNextTaskExcludedNodeIds([]);
+                        }}
                       >
                         <div
-                          className="w-full max-w-lg border border-[var(--workspace-border)] bg-[var(--workspace-surface)] p-5 shadow-2xl"
+                          className="w-full max-w-2xl border border-[var(--workspace-border)] bg-[var(--workspace-surface)] p-5 shadow-2xl"
                           onClick={(event) => event.stopPropagation()}
                         >
                           <div className="flex items-start justify-between gap-4">
@@ -7013,13 +7066,16 @@ function ConfiguredWorkspace({
                               <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--workspace-accent)]">
                                 Next Suggested Task
                               </p>
-                              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[var(--workspace-text)]">
+                              <h3 className="mt-3 text-2xl font-semibold tracking-tight text-[var(--workspace-text)] [overflow-wrap:anywhere]">
                                 {plannerNextTaskSuggestion.text}
                               </h3>
                             </div>
                             <button
                               type="button"
-                              onClick={() => setPlannerNextTaskSuggestion(null)}
+                              onClick={() => {
+                                setPlannerNextTaskSuggestion(null);
+                                setPlannerNextTaskExcludedNodeIds([]);
+                              }}
                               className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
                             >
                               Dismiss
@@ -7039,9 +7095,18 @@ function ConfiguredWorkspace({
                           <div className="mt-6 flex flex-wrap gap-3">
                             <button
                               type="button"
+                              onClick={() => void handleTryAgainNextPlannerTask()}
+                              disabled={isPlannerResolvingNextTask}
+                              className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {isPlannerResolvingNextTask ? "Finding…" : "Try Again"}
+                            </button>
+                            <button
+                              type="button"
                               onClick={() => {
                                 focusPlannerNode(plannerNextTaskSuggestion.plannerNodeId);
                                 setPlannerNextTaskSuggestion(null);
+                                setPlannerNextTaskExcludedNodeIds([]);
                               }}
                               className="border border-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
                             >
