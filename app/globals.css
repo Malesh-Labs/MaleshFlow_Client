@@ -28,29 +28,29 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #161513;
+    --background: #12110f;
     --foreground: #ece7dc;
-    --workspace-bg: #161513;
-    --workspace-sidebar-bg: #1e1b17;
-    --workspace-surface: #221f1a;
-    --workspace-surface-muted: #2a261f;
-    --workspace-surface-accent: #2f2a22;
-    --workspace-surface-hover: #383126;
+    --workspace-bg: #12110f;
+    --workspace-sidebar-bg: #171410;
+    --workspace-surface: #1d1a16;
+    --workspace-surface-muted: #242019;
+    --workspace-surface-accent: #2a241c;
+    --workspace-surface-hover: #332b21;
     --workspace-text: #f4eee3;
     --workspace-text-strong: #ece0cf;
     --workspace-text-muted: #d3c5b1;
     --workspace-text-subtle: #b8ab98;
     --workspace-text-faint: #a99982;
-    --workspace-border: #4b4437;
-    --workspace-border-soft: #40392f;
-    --workspace-border-subtle: #383126;
-    --workspace-border-hover: #726550;
-    --workspace-border-control: #5f5647;
+    --workspace-border: #4a4134;
+    --workspace-border-soft: #3d362c;
+    --workspace-border-subtle: #312b22;
+    --workspace-border-hover: #76664f;
+    --workspace-border-control: #625746;
     --workspace-accent: #d3a347;
     --workspace-brand: #73b5ad;
     --workspace-brand-hover: #5da299;
     --workspace-danger: #f28a76;
-    --workspace-inverse-text: #161513;
+    --workspace-inverse-text: #12110f;
   }
 }
 
