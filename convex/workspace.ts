@@ -463,10 +463,7 @@ async function buildVisibleNodeBacklinkCounts(
 
   const counts = await Promise.all(
     [...new Set(nodeIds)].map(async (nodeId) => {
-      const links = await ctx.db
-        .query("links")
-        .withIndex("by_target_node", (query) => query.eq("targetNodeId", nodeId))
-        .collect();
+      const links = await listNodeBacklinks(ctx, nodeId);
       const visibleLinks = await filterVisibleLinks(ctx, links);
       return [nodeId as string, visibleLinks.length] as const;
     }),
@@ -475,6 +472,30 @@ async function buildVisibleNodeBacklinkCounts(
   return Object.fromEntries(
     counts.filter(([, count]) => count > 0),
   ) as Record<string, number>;
+}
+
+async function listNodeBacklinks(
+  ctx: QueryCtx,
+  nodeId: Id<"nodes">,
+) {
+  const [resolvedLinks, referencedLinks] = await Promise.all([
+    ctx.db
+      .query("links")
+      .withIndex("by_target_node", (query) => query.eq("targetNodeId", nodeId))
+      .collect(),
+    ctx.db
+      .query("links")
+      .withIndex("by_target_node_ref", (query) =>
+        query.eq("targetNodeRef", nodeId as string),
+      )
+      .collect(),
+  ]);
+
+  return [...new Map(
+    [...resolvedLinks, ...referencedLinks]
+      .filter((link) => link.kind === "node")
+      .map((link) => [link._id, link]),
+  ).values()];
 }
 
 export const listPages = query({
@@ -1286,12 +1307,7 @@ export const getBacklinks = query({
 
     if (args.nodeId) {
       const nodeId = args.nodeId;
-      const links = await ctx.db
-        .query("links")
-        .withIndex("by_target_node", (query) =>
-          query.eq("targetNodeId", nodeId),
-        )
-        .collect();
+      const links = await listNodeBacklinks(ctx, nodeId);
       return await filterVisibleLinks(ctx, links);
     }
 

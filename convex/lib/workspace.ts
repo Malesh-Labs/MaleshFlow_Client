@@ -169,13 +169,16 @@ export async function syncLinksForNode(
       continue;
     }
 
-    const targetNode =
-      link.targetNodeRef === node._id
-        ? node
-        : await db
-            .query("nodes")
-            .filter((query) => query.eq(query.field("_id"), link.targetNodeRef))
-            .first();
+    let targetNode: Doc<"nodes"> | null = null;
+    if (link.targetNodeRef === node._id) {
+      targetNode = node;
+    } else {
+      try {
+        targetNode = await db.get(link.targetNodeRef as Id<"nodes">);
+      } catch {
+        targetNode = null;
+      }
+    }
 
     await db.insert("links", {
       sourcePageId: node.pageId,

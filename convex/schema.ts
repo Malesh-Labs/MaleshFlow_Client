@@ -65,7 +65,8 @@ export default defineSchema({
     .index("by_source_page", ["sourcePageId"])
     .index("by_source_node", ["sourceNodeId"])
     .index("by_target_page", ["targetPageId"])
-    .index("by_target_node", ["targetNodeId"]),
+    .index("by_target_node", ["targetNodeId"])
+    .index("by_target_node_ref", ["targetNodeRef"]),
 
   chatThreads: defineTable({
     pageId: nullablePageIdValidator,
