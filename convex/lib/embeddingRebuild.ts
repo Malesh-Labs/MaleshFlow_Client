@@ -36,42 +36,52 @@ export function buildEmptyEmbeddingRebuildStatus() {
 
 export function buildEmbeddingRebuildStatus(
   state: Doc<"embeddingRebuildState"> | null,
+  overrides?: Partial<
+    Pick<Doc<"embeddingRebuildState">, "queued" | "running" | "completed" | "error" | "status"> & {
+      lastError: string | null;
+    }
+  >,
 ) {
   if (!state) {
     return buildEmptyEmbeddingRebuildStatus();
   }
 
   const total = state.eligibleNodes;
+  const queued = overrides?.queued ?? state.queued;
+  const running = overrides?.running ?? state.running;
+  const completed = overrides?.completed ?? state.completed;
+  const error = overrides?.error ?? state.error;
+  const status = overrides?.status ?? state.status;
   const pending = Math.max(
     0,
-    total - state.queued - state.running - state.completed - state.error,
+    total - queued - running - completed - error,
   );
-  const idle = state.status !== "running" && state.queued === 0 && state.running === 0;
+  const idle = status !== "running" && queued === 0 && running === 0;
   const complete =
     total === 0
-      ? state.status !== "running" && state.status !== "cancelled"
-      : state.completed === total &&
-        state.queued === 0 &&
-        state.running === 0 &&
+      ? status !== "running" && status !== "cancelled"
+      : completed === total &&
+        queued === 0 &&
+        running === 0 &&
         pending === 0 &&
-        state.error === 0;
+        error === 0;
 
   return {
     total,
-    queued: state.queued,
-    running: state.running,
-    completed: state.completed,
-    error: state.error,
+    queued,
+    running,
+    completed,
+    error,
     pending,
     idle,
     complete,
-    cancelled: state.status === "cancelled",
+    cancelled: status === "cancelled",
     lastQueuedAt: state.lastQueuedAt,
-    status: state.status,
+    status,
     updatedAt: state.updatedAt,
     scannedNodes: state.scannedNodes,
     skippedNodes: state.skippedNodes,
-    lastError: state.lastError ?? null,
+    lastError: overrides?.lastError ?? state.lastError ?? null,
   };
 }
 

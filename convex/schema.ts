@@ -265,7 +265,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_node", ["nodeId"])
-    .index("by_status_updatedAt", ["status", "updatedAt"]),
+    .index("by_status_updatedAt", ["status", "updatedAt"])
+    .index("by_rebuildRunId", ["rebuildRunId"]),
 
   embeddingRebuildState: defineTable({
     key: v.string(),

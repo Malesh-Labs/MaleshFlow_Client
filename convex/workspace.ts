@@ -64,6 +64,44 @@ const FIND_REPLACE_PREVIEW_LIMIT = 40;
 const FIND_REPLACE_BATCH_SIZE = 50;
 const EMBEDDING_REBUILD_BATCH_SIZE = 200;
 
+async function collectEmbeddingJobCountsForRun(
+  db: DatabaseReader,
+  runId: string,
+) {
+  let queued = 0;
+  let running = 0;
+  let completed = 0;
+  let error = 0;
+  let lastError: string | null = null;
+  let latestErrorUpdatedAt = -1;
+
+  for await (const job of db
+    .query("embeddingJobs")
+    .withIndex("by_rebuildRunId", (query) => query.eq("rebuildRunId", runId))) {
+    if (job.status === "queued") {
+      queued += 1;
+    } else if (job.status === "running") {
+      running += 1;
+    } else if (job.status === "completed") {
+      completed += 1;
+    } else if (job.status === "error") {
+      error += 1;
+      if (job.lastError && job.updatedAt >= latestErrorUpdatedAt) {
+        latestErrorUpdatedAt = job.updatedAt;
+        lastError = job.lastError;
+      }
+    }
+  }
+
+  return {
+    queued,
+    running,
+    completed,
+    error,
+    lastError,
+  };
+}
+
 async function collectNodeAncestorTexts(
   db: DatabaseReader,
   parentNodeId: Id<"nodes"> | null,
@@ -894,7 +932,24 @@ export const getEmbeddingRebuildStatus = query({
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
-    return buildEmbeddingRebuildStatus(await getEmbeddingRebuildState(ctx.db));
+    const state = await getEmbeddingRebuildState(ctx.db);
+    if (!state) {
+      return buildEmbeddingRebuildStatus(null);
+    }
+
+    const jobCounts = await collectEmbeddingJobCountsForRun(ctx.db, state.runId);
+    const derivedStatus =
+      state.status === "cancelled"
+        ? "cancelled"
+        : state.scanComplete && jobCounts.queued === 0 && jobCounts.running === 0
+          ? jobCounts.error > 0
+            ? "error"
+            : "completed"
+          : "running";
+    return buildEmbeddingRebuildStatus(state, {
+      ...jobCounts,
+      status: derivedStatus,
+    });
   },
 });
 

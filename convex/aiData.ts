@@ -1,12 +1,7 @@
 import { v } from "convex/values";
-import { internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
+import { internalMutation, internalQuery } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { priorityValidator, taskStatusValidator } from "./lib/validators";
-import {
-  applyEmbeddingJobStatusTransition,
-  getEmbeddingRebuildState,
-  shouldFinalizeEmbeddingRebuild,
-} from "./lib/embeddingRebuild";
 
 function buildEmbeddingJobReplacement(
   job: Doc<"embeddingJobs">,
@@ -206,15 +201,6 @@ export const upsertEmbeddingJob = internalMutation({
     const nextRebuildRunId = args.rebuildRunId ?? existing?.rebuildRunId;
 
     if (existing) {
-      await updateTrackedEmbeddingRebuildState(ctx, {
-        previousStatus: existing.status,
-        previousRunId: existing.rebuildRunId ?? null,
-        nextStatus: args.status,
-        nextRunId: nextRebuildRunId ?? null,
-        now,
-        error: nextLastError,
-      });
-
       const shouldPatch =
         existing.status !== args.status ||
         existing.attempts !== nextAttempts ||
@@ -311,14 +297,6 @@ export const saveNodeEmbedding = internalMutation({
       .withIndex("by_node", (query) => query.eq("nodeId", args.nodeId))
       .first();
     if (existingJob) {
-      await updateTrackedEmbeddingRebuildState(ctx, {
-        previousStatus: existingJob.status,
-        previousRunId: existingJob.rebuildRunId ?? null,
-        nextStatus: "completed",
-        nextRunId: existingJob.rebuildRunId ?? null,
-        now,
-      });
-
       const shouldPatchJob =
         existingJob.status !== "completed" ||
         existingJob.lastError !== undefined ||
@@ -377,14 +355,6 @@ export const clearNodeEmbedding = internalMutation({
     }
 
     for (const job of embeddingJobs) {
-      await updateTrackedEmbeddingRebuildState(ctx, {
-        previousStatus: job.status,
-        previousRunId: job.rebuildRunId ?? null,
-        nextStatus: "completed",
-        nextRunId: job.rebuildRunId ?? null,
-        now,
-      });
-
       const shouldPatchJob =
         job.status !== "completed" ||
         job.lastError !== undefined ||
@@ -437,50 +407,3 @@ export const applyTaskMetadata = internalMutation({
     });
   },
 });
-
-async function updateTrackedEmbeddingRebuildState(
-  ctx: MutationCtx,
-  args: {
-    previousStatus: "queued" | "running" | "completed" | "error" | null;
-    previousRunId: string | null;
-    nextStatus: "queued" | "running" | "completed" | "error";
-    nextRunId: string | null;
-    now: number;
-    error?: string;
-  },
-) {
-  const trackedRunId = args.nextRunId ?? args.previousRunId;
-  if (!trackedRunId) {
-    return;
-  }
-
-  const state = await getEmbeddingRebuildState(ctx.db);
-  if (!state || state.runId !== trackedRunId || state.status !== "running") {
-    return;
-  }
-
-  const nextCounts = applyEmbeddingJobStatusTransition(
-    state,
-    args.previousStatus,
-    args.nextStatus,
-  );
-  const shouldFinish = shouldFinalizeEmbeddingRebuild({
-    ...state,
-    ...nextCounts,
-  });
-  const nextStatus = shouldFinish
-    ? nextCounts.error > 0
-      ? "error"
-      : "completed"
-    : state.status;
-
-  await ctx.db.patch(state._id, {
-    ...nextCounts,
-    status: nextStatus,
-    updatedAt: args.now,
-    ...(args.nextStatus === "error" && args.error
-      ? { lastError: args.error }
-      : {}),
-    ...(shouldFinish ? { finishedAt: args.now } : {}),
-  });
-}
