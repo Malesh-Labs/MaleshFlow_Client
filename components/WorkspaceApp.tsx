@@ -9882,6 +9882,22 @@ function OutlineNodeEditor({
     return false;
   };
 
+  const getRangeSelectionAnchorNodeId = () => {
+    const orderedSelectedNodeIds = Array.from(selectedNodeIds);
+    if (orderedSelectedNodeIds.length === 0) {
+      return node._id;
+    }
+
+    const visibleSelection = siblings
+      .map((sibling) => sibling._id)
+      .filter((siblingId) => selectedNodeIds.has(siblingId));
+    if (visibleSelection.length > 0) {
+      return visibleSelection[visibleSelection.length - 1]!;
+    }
+
+    return orderedSelectedNodeIds[orderedSelectedNodeIds.length - 1]!;
+  };
+
   const handleToggleCollapsed = () => {
     if (!hasChildren) {
       return;
@@ -11161,6 +11177,19 @@ function OutlineNodeEditor({
 
           event.preventDefault();
           onSelectionStart(node._id);
+        }}
+        onClick={(event) => {
+          if (
+            !event.shiftKey ||
+            event.defaultPrevented ||
+            event.target instanceof HTMLElement &&
+              (event.target.closest("textarea, input, button, a, [contenteditable='true']") !== null)
+          ) {
+            return;
+          }
+
+          event.preventDefault();
+          onSelectNodeRange(getRangeSelectionAnchorNodeId(), node._id);
         }}
         onMouseEnter={() => onSelectionExtend(node._id)}
         onDragEnter={handleDragOver}
