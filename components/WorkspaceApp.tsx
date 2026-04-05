@@ -1059,12 +1059,20 @@ function buildNodeLinkInsertText(node: Doc<"nodes">) {
   return `[[${sanitizeLinkLabel(node.text)}|node:${node._id}]]`;
 }
 
+function buildCompactNodeLinkInsertText(node: Doc<"nodes">) {
+  return `[[${sanitizeLinkLabel(node.text)}]]`;
+}
+
 function buildNodeClipboardLink(node: Pick<Doc<"nodes">, "_id" | "text">) {
   return `[[${sanitizeLinkLabel(node.text)}|node:${node._id}]]`;
 }
 
 function buildPageLinkInsertText(page: Pick<Doc<"pages">, "_id" | "title">) {
   return `[[${sanitizeLinkLabel(page.title)}|page:${page._id}]]`;
+}
+
+function buildCompactPageLinkInsertText(page: Pick<Doc<"pages">, "title">) {
+  return `[[${sanitizeLinkLabel(page.title)}]]`;
 }
 
 function buildPageBacklinkSearchQuery(page: Pick<Doc<"pages">, "_id">) {
@@ -1230,7 +1238,7 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
     kind: "page",
     title: page.title,
     subtitle: "Page",
-    insertText: buildPageLinkInsertText(page),
+    insertText: buildCompactPageLinkInsertText(page),
   }));
 
   const nodeSuggestions: LinkSuggestion[] = results.nodes
@@ -1240,7 +1248,7 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
       kind: "node",
       title: sanitizeLinkLabel(entry.node.text),
       subtitle: entry.page ? `Node • ${entry.page.title}` : "Node",
-      insertText: buildNodeLinkInsertText(entry.node),
+      insertText: buildCompactNodeLinkInsertText(entry.node),
     }));
 
   return [...pageSuggestions, ...nodeSuggestions];
