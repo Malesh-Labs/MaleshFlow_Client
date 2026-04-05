@@ -11109,8 +11109,20 @@ function OutlineNodeEditor({
 
       if (isStartOfLineSplit) {
         window.requestAnimationFrame(() => {
-          textareaRef.current?.focus();
-          textareaRef.current?.setSelectionRange(0, 0);
+          const createdNodeEditorId = createEntry?.focusAfterRedoId ?? null;
+          if (!createdNodeEditorId) {
+            return;
+          }
+
+          const target = document.querySelector<HTMLElement>(
+            `[data-history-editor-id="${createdNodeEditorId}"]`,
+          );
+          if (!(target instanceof HTMLTextAreaElement) && !(target instanceof HTMLInputElement)) {
+            return;
+          }
+
+          target.focus();
+          target.setSelectionRange(0, 0);
         });
       }
       return;
