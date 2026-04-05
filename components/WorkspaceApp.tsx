@@ -3527,11 +3527,6 @@ function ConfiguredWorkspace({
       return;
     }
 
-    if (plannerSidebarSection && plannerTemplateSection) {
-      hasRequestedPlannerSections.current.delete(selectedPage._id as string);
-      return;
-    }
-
     const pageId = selectedPage._id as string;
     if (hasRequestedPlannerSections.current.has(pageId)) {
       return;
