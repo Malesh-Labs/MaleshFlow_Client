@@ -65,7 +65,6 @@ import {
 } from "@/lib/domain/workspaceUi";
 import {
   getEffectiveTaskDueDateRange,
-  plannerChatPlanSchema,
 } from "@/lib/domain/planner";
 import {
   WorkspaceHistoryProvider,
@@ -2378,9 +2377,6 @@ function ConfiguredWorkspace({
   const [workspaceChatDraft, setWorkspaceChatDraft] = useState("");
   const [workspaceChatError, setWorkspaceChatError] = useState("");
   const [isWorkspaceChatLoading, setIsWorkspaceChatLoading] = useState(false);
-  const [plannerChatDraft, setPlannerChatDraft] = useState("");
-  const [plannerChatError, setPlannerChatError] = useState("");
-  const [isPlannerChatLoading, setIsPlannerChatLoading] = useState(false);
   const [plannerRandomTaskExcludedSourceIds, setPlannerRandomTaskExcludedSourceIds] = useState<
     string[]
   >([]);
@@ -2447,12 +2443,6 @@ function ConfiguredWorkspace({
     api.chatData.getWorkspaceKnowledgeThread,
     ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
   );
-  const plannerChatThread = useQuery(
-    api.chatData.getChatThread,
-    ownerKey && isOwnerKeyValid && selectedPageId
-      ? { ownerKey, pageId: selectedPageId }
-      : SKIP,
-  );
   const pageTree = useQuery(
     api.workspace.getPageTree,
     ownerKey && isOwnerKeyValid && selectedPageId
@@ -2491,8 +2481,6 @@ function ConfiguredWorkspace({
   const setNodeTreesArchivedBatch = useMutation(api.workspace.setNodeTreesArchivedBatch);
   const rewriteModelSection = useAction(api.chat.rewriteModelSection);
   const generateJournalFeedback = useAction(api.chat.generateJournalFeedback);
-  const runPlannerChat = useAction(api.chat.runPlannerChat);
-  const applyApprovedPlannerPlan = useMutation(api.chatData.applyApprovedPlannerPlan);
   const appendPlannerDay = useMutation(api.planner.appendPlannerDay);
   const updatePlannerFocus = useMutation(api.planner.updatePlannerFocus);
   const completePlannerDayWithAi = useAction(api.plannerAi.completePlannerDayWithAi);
@@ -2656,7 +2644,6 @@ function ConfiguredWorkspace({
       : null;
   const isSelectedPageExcludedFromPlannerScan =
     selectedPageSourceMeta?.excludeFromPlannerScan === true;
-  const plannerChatMessages = plannerChatThread?.messages ?? [];
   const pageTitleEditorId = selectedPage ? getPageTitleEditorId(selectedPage._id) : null;
   const pageTitleTarget = useMemo(
     () =>
@@ -2771,8 +2758,6 @@ function ConfiguredWorkspace({
     setModelPromptNote("");
     setJournalFeedbackPromptNote("");
     setPlannerStatus("");
-    setPlannerChatDraft("");
-    setPlannerChatError("");
   }, [selectedPageId]);
 
   const genericRoots =
@@ -6107,24 +6092,6 @@ function ConfiguredWorkspace({
     clearNodeSelection();
   }, [clearNodeSelection, pagesById]);
 
-  const handleOpenWorkspaceKnowledgeSource = useCallback(
-    (source: WorkspaceKnowledgeSourceSnapshot) => {
-      if (!source.pageId) {
-        return;
-      }
-
-      setIsWorkspaceChatOpen(false);
-      setSelectedPageId(source.pageId as Id<"pages">);
-      setLocationPageId(source.pageId);
-      writePageIdToHistory(source.pageId, "push", source.pageTitle);
-      if (source.nodeId) {
-        setPendingRevealNodeId(source.nodeId);
-      }
-      clearNodeSelection();
-    },
-    [clearNodeSelection],
-  );
-
   const handleWorkspaceChatSubmit = useCallback(async () => {
     const question = workspaceChatDraft.trim();
     if (question.length === 0) {
@@ -6519,58 +6486,6 @@ function ConfiguredWorkspace({
     setPlannerNextTaskExcludedNodeIds([]);
     await handleResolveNextPlannerTask();
   }, [handleResolveNextPlannerTask]);
-
-  const handleSubmitPlannerChat = useCallback(async () => {
-    if (
-      !selectedPageId ||
-      pageMeta.pageType !== "planner" ||
-      isPageArchived ||
-      plannerChatDraft.trim().length === 0
-    ) {
-      return;
-    }
-
-    setIsPlannerChatLoading(true);
-    setPlannerChatError("");
-    try {
-      await runPlannerChat({
-        ownerKey,
-        pageId: selectedPageId,
-        prompt: plannerChatDraft.trim(),
-        threadId: plannerChatThread?.thread?._id,
-      });
-      setPlannerChatDraft("");
-    } catch (error) {
-      setPlannerChatError(
-        error instanceof Error ? error.message : "Planner AI could not respond right now.",
-      );
-    } finally {
-      setIsPlannerChatLoading(false);
-    }
-  }, [
-    isPageArchived,
-    ownerKey,
-    pageMeta.pageType,
-    plannerChatDraft,
-    plannerChatThread?.thread?._id,
-    runPlannerChat,
-    selectedPageId,
-  ]);
-
-  const handleApplyPlannerPlan = useCallback(async (messageId: Id<"chatMessages">) => {
-    try {
-      await applyApprovedPlannerPlan({
-        ownerKey,
-        messageId,
-        completionMode: recurringCompletionMode,
-      });
-      setPlannerChatError("");
-    } catch (error) {
-      setPlannerChatError(
-        error instanceof Error ? error.message : "Could not apply the planner changes.",
-      );
-    }
-  }, [applyApprovedPlannerPlan, ownerKey, recurringCompletionMode]);
 
   const handlePaletteKeyDown = (event: TextareaKeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
@@ -7796,16 +7711,6 @@ function ConfiguredWorkspace({
                       onOpenFindQuery={openFindPaletteForQuery}
                       recurringCompletionMode={recurringCompletionMode}
                       depthOffset={sectionDepthOffset}
-                    />
-                    <PlannerAiChatPanel
-                      draft={plannerChatDraft}
-                      onDraftChange={setPlannerChatDraft}
-                      onSubmit={() => void handleSubmitPlannerChat()}
-                      messages={plannerChatMessages}
-                      isLoading={isPlannerChatLoading}
-                      error={plannerChatError}
-                      onClearError={() => setPlannerChatError("")}
-                      onApplyPlan={(messageId) => void handleApplyPlannerPlan(messageId)}
                     />
                   </div>
                 ) : pageMeta.pageType === "model" ? (
@@ -9953,180 +9858,6 @@ function WorkspaceAiChatPanel({
           />
         ) : null}
         </div>
-      </div>
-    </div>
-  );
-}
-
-function PlannerAiChatPanel({
-  draft,
-  onDraftChange,
-  onSubmit,
-  messages,
-  isLoading,
-  error,
-  onClearError,
-  onApplyPlan,
-}: {
-  draft: string;
-  onDraftChange: (value: string) => void;
-  onSubmit: () => void;
-  messages: Doc<"chatMessages">[];
-  isLoading: boolean;
-  error: string;
-  onClearError: () => void;
-  onApplyPlan: (messageId: Id<"chatMessages">) => void;
-}) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const historyRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    autoResizeTextarea(textareaRef.current);
-  }, [draft]);
-
-  useEffect(() => {
-    const container = historyRef.current;
-    if (!container) {
-      return;
-    }
-
-    container.scrollTop = container.scrollHeight;
-  }, [messages, error, isLoading]);
-
-  return (
-    <div className="border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)]">
-      <div className="flex items-center justify-between gap-3 border-b border-[var(--workspace-border-subtle)] px-5 py-3">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
-            Planner AI
-          </p>
-          <p className="text-[11px] text-[var(--workspace-text-faint)]">
-            Preview planner changes before applying them.
-          </p>
-        </div>
-      </div>
-      <div
-        ref={historyRef}
-        className="max-h-[22rem] min-h-[10rem] overflow-y-auto border-b border-[var(--workspace-border-subtle)] px-5 py-4"
-      >
-        <div className="space-y-4">
-          {messages.length === 0 ? (
-            <p className="text-sm text-[var(--workspace-text-subtle)]">
-              Ask the planner AI to adjust today’s plan, finish a task, or clean up planner-only items.
-            </p>
-          ) : null}
-          {messages.map((message) => {
-            const isUser = message.role === "user";
-            const parsedPlan =
-              !isUser && message.proposedPlan
-                ? plannerChatPlanSchema.safeParse(message.proposedPlan)
-                : null;
-            return (
-              <div
-                key={message._id}
-                className={clsx("flex", isUser ? "justify-end" : "justify-start")}
-              >
-                <div
-                  className={clsx(
-                    "max-w-3xl border px-4 py-3",
-                    isUser
-                      ? "border-[var(--workspace-brand)] bg-[color-mix(in_srgb,var(--workspace-brand)_14%,transparent)]"
-                      : "border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface)]",
-                  )}
-                >
-                  <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
-                    {isUser ? "You" : "Planner AI"}
-                  </p>
-                  <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-[var(--workspace-text)]">
-                    {message.text}
-                  </p>
-                  {!isUser && parsedPlan?.success ? (
-                    <div className="mt-3 space-y-2 border-t border-[var(--workspace-border-subtle)] pt-3">
-                      {parsedPlan.data.preview.map((line, index) => (
-                        <p
-                          key={`${message._id}:preview:${index}`}
-                          className="text-sm text-[var(--workspace-text-subtle)]"
-                        >
-                          {line}
-                        </p>
-                      ))}
-                      {message.status === "pending_approval" ? (
-                        <div className="pt-1">
-                          <button
-                            type="button"
-                            onClick={() => onApplyPlan(message._id)}
-                            className="border border-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
-                          >
-                            Apply Changes
-                          </button>
-                        </div>
-                      ) : (
-                        <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                          {message.status === "applied" ? "Applied" : "Ready"}
-                        </p>
-                      )}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-            );
-          })}
-          {isLoading ? (
-            <div className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface)] px-4 py-3 text-sm text-[var(--workspace-text-subtle)]">
-              Planner AI is thinking…
-            </div>
-          ) : null}
-          {error ? (
-            <div className="border border-[var(--workspace-danger)]/40 bg-[color-mix(in_srgb,var(--workspace-danger)_10%,transparent)] px-4 py-3 text-sm text-[var(--workspace-text)]">
-              <div className="flex items-start justify-between gap-3">
-                <p className="whitespace-pre-wrap leading-6">{error}</p>
-                <button
-                  type="button"
-                  onClick={onClearError}
-                  className="border border-[var(--workspace-border-control)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.16em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                >
-                  Dismiss
-                </button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </div>
-      <div className="flex items-end gap-3 px-5 py-4">
-        <textarea
-          ref={textareaRef}
-          value={draft}
-          onChange={(event) => {
-            if (error) {
-              onClearError();
-            }
-            onDraftChange(event.target.value);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              onSubmit();
-            }
-          }}
-          rows={1}
-          placeholder="Plan with AI…"
-          className="min-h-[2.75rem] flex-1 resize-none overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface)] px-3 py-2 text-[15px] leading-6 outline-none"
-        />
-        <button
-          type="button"
-          onClick={onSubmit}
-          disabled={isLoading || draft.trim().length === 0}
-          className={clsx(
-            "border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition",
-            isLoading
-              ? "cursor-wait opacity-60"
-              : draft.trim().length === 0
-                ? "cursor-not-allowed opacity-60"
-                : "hover:bg-[var(--workspace-brand-hover)]",
-          )}
-        >
-          {isLoading ? "Thinking…" : "Plan with AI"}
-        </button>
       </div>
     </div>
   );
