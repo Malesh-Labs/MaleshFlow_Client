@@ -384,6 +384,22 @@ export const runPlannerChat = action({
                       .join("\n")
                   : "- none",
                 "",
+                "Anytime:",
+                plannerContext.anytimeLines.length > 0
+                  ? plannerContext.anytimeLines
+                      .map(
+                        (line: {
+                          nodeId: string;
+                          text: string;
+                          linkedSourceTaskId: string | null;
+                          status: string | null;
+                          depth: number;
+                        }) =>
+                          `${"  ".repeat(line.depth)}- ${line.nodeId}: ${line.text} [${line.status ?? "n/a"}]${line.linkedSourceTaskId ? ` -> ${line.linkedSourceTaskId}` : ""}`,
+                      )
+                      .join("\n")
+                  : "- none",
+                "",
                 "Open source tasks:",
                 plannerContext.openSourceTasks.length > 0
                   ? plannerContext.openSourceTasks

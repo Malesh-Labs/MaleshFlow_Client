@@ -30,6 +30,7 @@ import {
 } from "./lib/embeddingRebuild";
 import { nodeKindValidator, nullableNodeIdValidator, priorityValidator, recurrenceFrequencyValidator, taskStatusValidator } from "./lib/validators";
 import {
+  PLANNER_SIDEBAR_SLOT,
   PLANNER_TEMPLATE_SLOT,
   buildPlannerChatPromptContext,
   ensurePlannerSections,
@@ -522,7 +523,7 @@ async function buildPageKnowledgeContextEntry(
   page: Doc<"pages">,
   options?: {
     omitScheduledTaskSubtrees?: boolean;
-    section?: "linked" | "planner" | "backlog";
+    section?: "linked" | "planner" | "backlog" | "anytime";
   },
 ) {
   const nodes = await listPageNodes(ctx.db, page._id);
@@ -587,6 +588,117 @@ async function buildPageKnowledgeContextEntry(
     content,
     section: options?.section ?? "linked",
   };
+}
+
+async function buildPageKnowledgeContextEntries(
+  ctx: QueryCtx,
+  page: Doc<"pages">,
+  options?: {
+    omitScheduledTaskSubtrees?: boolean;
+    section?: "linked" | "planner" | "backlog";
+  },
+) {
+  const baseEntry = await buildPageKnowledgeContextEntry(ctx, page, options);
+  if (!isPlannerPage(page)) {
+    return [baseEntry];
+  }
+
+  const nodes = await listPageNodes(ctx.db, page._id);
+  const visibleNodes = filterNodesForKnowledgeContext(
+    page,
+    nodes.filter((node) => !node.archived),
+  );
+  const sidebarSection = findPlannerSectionNode(visibleNodes, PLANNER_SIDEBAR_SLOT);
+  if (!sidebarSection) {
+    return [baseEntry];
+  }
+
+  const childrenByParent = groupNodesByParent(visibleNodes);
+  const sidebarSubtreeIds = new Set<string>();
+  const queue: string[] = [sidebarSection._id as string];
+  while (queue.length > 0) {
+    const currentId = queue.shift()!;
+    if (sidebarSubtreeIds.has(currentId)) {
+      continue;
+    }
+    sidebarSubtreeIds.add(currentId);
+    for (const child of childrenByParent.get(currentId) ?? []) {
+      queue.push(child._id as string);
+    }
+  }
+
+  const resolvedNodeTextCache = new Map<string, string>();
+  const resolvedTextById = new Map<string, string>();
+  const visibleNodeMap = new Map(visibleNodes.map((node) => [node._id as string, node]));
+  for (const node of visibleNodes) {
+    resolvedTextById.set(
+      node._id as string,
+      await resolveKnowledgeContextText(
+        ctx.db,
+        node.text,
+        visibleNodeMap,
+        resolvedNodeTextCache,
+      ),
+    );
+  }
+
+  const anytimeContent = buildOutlineLines(
+    childrenByParent,
+    sidebarSection._id,
+    0,
+    resolvedTextById,
+  ).join("\n");
+
+  const anytimeRepresentativeNode =
+    (childrenByParent.get(sidebarSection._id as string) ?? []).find(
+      (node) =>
+        formatNodeForKnowledgeContext(node, resolvedTextById.get(node._id as string)).length > 0,
+    ) ?? null;
+
+  const plannerNodesWithoutSidebar = visibleNodes.filter(
+    (node) => !sidebarSubtreeIds.has(node._id as string),
+  );
+  const plannerNodeMap = new Map(
+    plannerNodesWithoutSidebar.map((node) => [node._id as string, node]),
+  );
+  const plannerResolvedTextById = new Map<string, string>();
+  for (const node of plannerNodesWithoutSidebar) {
+    plannerResolvedTextById.set(node._id as string, resolvedTextById.get(node._id as string) ?? "");
+  }
+  const plannerChildrenByParent = groupNodesByParent(plannerNodesWithoutSidebar);
+  const plannerContent = buildOutlineLines(
+    plannerChildrenByParent,
+    null,
+    0,
+    plannerResolvedTextById,
+  ).join("\n");
+  const plannerRepresentativeNode =
+    plannerNodesWithoutSidebar.find(
+      (node) =>
+        formatNodeForKnowledgeContext(node, plannerResolvedTextById.get(node._id as string))
+          .length > 0,
+    ) ??
+    plannerNodesWithoutSidebar[0] ??
+    null;
+
+  return [
+    {
+      ...baseEntry,
+      representativeNode: plannerRepresentativeNode,
+      content: plannerContent,
+      section: "planner" as const,
+    },
+    ...(anytimeContent.trim().length > 0
+      ? [
+          {
+            page,
+            representativeNode: anytimeRepresentativeNode,
+            content: anytimeContent,
+            section: "anytime" as const,
+          },
+        ]
+      : []),
+  ];
 }
 
 const nodeCreateInputValidator = v.object({
@@ -3265,9 +3377,9 @@ export const getLinkedKnowledgeContext = internalQuery({
       (page): page is Doc<"pages"> => page !== null && !page.archived && !isSidebarSpecialPage(page),
     );
 
-    const pageEntries = await Promise.all(
+    const pageEntryGroups = await Promise.all(
       visiblePages.map((page) =>
-        buildPageKnowledgeContextEntry(ctx, page, {
+        buildPageKnowledgeContextEntries(ctx, page, {
           omitScheduledTaskSubtrees:
             args.includeDefaultPlannerAndTaskPages === true && isTaskSourcePage(page),
           section: isPlannerPage(page)
@@ -3278,6 +3390,7 @@ export const getLinkedKnowledgeContext = internalQuery({
         }),
       ),
     );
+    const pageEntries = pageEntryGroups.flat();
 
     const nodes = await Promise.all(uniqueNodeIds.map((nodeId) => ctx.db.get(nodeId)));
     const visibleNodeEntries = await Promise.all(

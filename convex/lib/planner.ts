@@ -844,12 +844,42 @@ export function buildPlannerChatPromptContext(args: {
   sourceTasks: Doc<"nodes">[];
 }) {
   const sourceTaskMap = new Map(args.sourceTasks.map((task) => [task._id as string, task]));
+  const childrenByParent = buildChildrenByParent(args.plannerNodes);
   const currentDay = getCurrentPlannerDay(args.plannerNodes);
+  const sidebarSection = findPlannerSectionNode(args.plannerNodes, PLANNER_SIDEBAR_SLOT);
   const currentDayChildren = currentDay
     ? args.plannerNodes
         .filter((node) => node.parentNodeId === currentDay._id)
         .sort((left, right) => left.position - right.position)
     : [];
+  const anytimeLines: Array<{
+    nodeId: string;
+    text: string;
+    linkedSourceTaskId: Id<"nodes"> | null;
+    status: string | null;
+    depth: number;
+  }> = [];
+
+  const appendSectionLines = (parentNodeId: Id<"nodes">, depth: number) => {
+    const children = childrenByParent.get(parentNodeId as string) ?? [];
+    for (const node of children) {
+      const linkedSourceTaskId = getPlannerLinkedSourceTaskId(node);
+      anytimeLines.push({
+        nodeId: node._id as string,
+        text: linkedSourceTaskId
+          ? (sourceTaskMap.get(linkedSourceTaskId as string)?.text ?? node.text)
+          : node.text,
+        linkedSourceTaskId,
+        status: node.taskStatus,
+        depth,
+      });
+      appendSectionLines(node._id, depth + 1);
+    }
+  };
+
+  if (sidebarSection) {
+    appendSectionLines(sidebarSection._id, 0);
+  }
 
   return {
     currentDayTitle: currentDay?.text ?? null,
@@ -867,6 +897,7 @@ export function buildPlannerChatPromptContext(args: {
       linkedSourceTaskId: getPlannerLinkedSourceTaskId(node),
       status: node.taskStatus,
     })),
+    anytimeLines,
     openSourceTasks: args.sourceTasks
       .sort((left, right) => comparePlannerTaskOrder(left, right))
       .slice(0, 40)
