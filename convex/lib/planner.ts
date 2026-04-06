@@ -190,6 +190,15 @@ function isPlannerDayAncestorNode(node: Doc<"nodes"> | null | undefined) {
   return !!node && isPlannerDayNode(node);
 }
 
+function isPlannerArchiveBoundaryNode(node: Doc<"nodes"> | null | undefined) {
+  if (!node) {
+    return false;
+  }
+
+  const sourceMeta = getNodeSourceMeta(node);
+  return isPlannerDayNode(node) || sourceMeta.sectionSlot === PLANNER_FOCUS_SLOT;
+}
+
 function isPlannerSubtreeCompleted(
   nodeId: Id<"nodes">,
   nodeMap: Map<string, Doc<"nodes">>,
@@ -216,23 +225,21 @@ function findArchivablePlannerSubtreeRoot(
   childrenByParent: Map<string | null, Doc<"nodes">[]>,
 ) {
   let currentNode: Doc<"nodes"> | null = startNode;
-  let highestEligibleNode: Doc<"nodes"> | null = null;
   while (currentNode) {
     const parentNode: Doc<"nodes"> | null = currentNode.parentNodeId
       ? (nodeMap.get(currentNode.parentNodeId as string) ?? null)
       : null;
-    if (isPlannerDayAncestorNode(currentNode)) {
-      break;
+
+    if (isPlannerArchiveBoundaryNode(parentNode)) {
+      return isPlannerSubtreeCompleted(currentNode._id, nodeMap, childrenByParent)
+        ? currentNode
+        : null;
     }
-    if (isPlannerSubtreeCompleted(currentNode._id, nodeMap, childrenByParent)) {
-      highestEligibleNode = currentNode;
-    }
-    if (!parentNode || isPlannerDayAncestorNode(parentNode)) {
-      break;
-    }
+
     currentNode = parentNode;
   }
-  return highestEligibleNode;
+
+  return null;
 }
 
 async function syncPlannerLinkedSourceTaskCompletion(
