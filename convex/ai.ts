@@ -322,7 +322,7 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
       page: Doc<"pages">;
       representativeNode: Doc<"nodes"> | null;
       content: string;
-      section: "linked" | "planner" | "backlog";
+      section: "linked" | "planner" | "backlog" | "anytime";
     }>;
     nodes: Array<{
       node: Doc<"nodes">;
@@ -399,6 +399,14 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
         entry.content,
       ].join("\n"),
     );
+  const anytimePageContext = linkedContext.pages
+    .filter((entry) => entry.section === "anytime" && entry.content.trim().length > 0)
+    .map((entry, index) =>
+      [
+        `Anytime page [A${index + 1}]: ${entry.page.title}`,
+        entry.content,
+      ].join("\n"),
+    );
   const explicitlyLinkedPageContext = linkedContext.pages
     .filter((entry) => entry.section === "linked" && entry.content.trim().length > 0)
     .map((entry, index) =>
@@ -410,6 +418,9 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
 
   const explicitLinkedContext = [
     ...plannerPageContext,
+    ...(anytimePageContext.length > 0
+      ? [["# Anytime", ...anytimePageContext].join("\n\n")]
+      : []),
     ...(backlogPageContext.length > 0
       ? [["# Backlog", ...backlogPageContext].join("\n\n")]
       : []),
