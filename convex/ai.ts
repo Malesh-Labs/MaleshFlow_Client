@@ -92,6 +92,17 @@ function buildEmbeddingContentHash(text: string) {
   return createHash("sha256").update(text).digest("hex");
 }
 
+function buildTodayPromptLine() {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "Pacific/Honolulu",
+  });
+  return `Today is ${formatter.format(new Date())}.`;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function runSemanticSearch(ctx: any, args: {
   query: string;
@@ -434,7 +445,7 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
         {
           role: "system",
           content:
-            "Answer the user's question using only the provided knowledge base snippets. If the snippets are insufficient, say so clearly. Keep the answer concise and grounded. Cite source numbers like [1] when helpful. If no explicit question text is provided, summarize the linked context and surface the most important takeaways.",
+            `${buildTodayPromptLine()} Answer the user's question using only the provided knowledge base snippets. If the snippets are insufficient, say so clearly. Keep the answer concise and grounded. Cite source numbers like [1] when helpful. If no explicit question text is provided, summarize the linked context and surface the most important takeaways.`,
         },
         {
           role: "user",
