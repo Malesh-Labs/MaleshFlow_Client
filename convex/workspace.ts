@@ -47,7 +47,13 @@ import {
   collectRootSubtreeLines,
   shouldGenerateEmbeddingForNodeText,
 } from "../lib/domain/embeddings";
-import { extractLinks, rewriteMatchingPageWikiLinks } from "../lib/domain/links";
+import {
+  extractLinkMatches,
+  extractLinks,
+  getExplicitWikiLinkPreviewText,
+  replaceLinkMarkupWithLabels,
+  rewriteMatchingPageWikiLinks,
+} from "../lib/domain/links";
 import { extractTagMatches } from "../lib/domain/tags";
 
 function getTimestamp() {
@@ -293,8 +299,11 @@ function linkSearchScore(text: string, query: string) {
   return Number.POSITIVE_INFINITY;
 }
 
-function formatNodeForKnowledgeContext(node: Pick<Doc<"nodes">, "text" | "kind" | "taskStatus">) {
-  const text = node.text.trim();
+function formatNodeForKnowledgeContext(
+  node: Pick<Doc<"nodes">, "text" | "kind" | "taskStatus">,
+  textOverride?: string,
+) {
+  const text = (textOverride ?? node.text).trim();
   if (text.length === 0 || text === ".") {
     return "";
   }
@@ -304,6 +313,84 @@ function formatNodeForKnowledgeContext(node: Pick<Doc<"nodes">, "text" | "kind" 
   }
 
   return text;
+}
+
+async function resolveKnowledgeContextText(
+  db: DatabaseReader,
+  text: string,
+  nodeMap: Map<string, Doc<"nodes">>,
+  resolvedNodeTextCache: Map<string, string>,
+) {
+  async function getResolvedNodeText(nodeRef: string) {
+    const cached = resolvedNodeTextCache.get(nodeRef);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    const node =
+      nodeMap.get(nodeRef) ??
+      (await db.get(nodeRef as Id<"nodes">));
+    const resolved =
+      node
+        ? replaceLinkMarkupWithLabels(node.text).trim() || node.text.trim()
+        : `node:${nodeRef}`;
+    resolvedNodeTextCache.set(nodeRef, resolved);
+    return resolved;
+  }
+
+  const matches = extractLinkMatches(text);
+  let cursor = 0;
+  let nextText = "";
+
+  for (const match of matches) {
+    if (match.start > cursor) {
+      nextText += text.slice(cursor, match.start);
+    }
+
+    if (match.link.kind === "node") {
+      const previewText =
+        match.link.label.startsWith("[[")
+          ? getExplicitWikiLinkPreviewText(match.link.label)
+          : "";
+      nextText +=
+        previewText.length > 0
+          ? previewText
+          : await getResolvedNodeText(match.link.targetNodeRef);
+    } else {
+      nextText += text.slice(match.start, match.end);
+    }
+    cursor = match.end;
+  }
+
+  if (cursor < text.length) {
+    nextText += text.slice(cursor);
+  }
+
+  const normalizedLinkText = replaceLinkMarkupWithLabels(nextText);
+  const rawNodeReferencePattern = /(^|[^A-Za-z0-9_])(node:([a-zA-Z0-9_-]+))/g;
+  let rawCursor = 0;
+  let finalText = "";
+
+  for (const match of normalizedLinkText.matchAll(rawNodeReferencePattern)) {
+    const start = match.index ?? 0;
+    const prefix = match[1] ?? "";
+    const fullMatch = match[2] ?? "";
+    const nodeRef = match[3] ?? "";
+
+    if (start > rawCursor) {
+      finalText += normalizedLinkText.slice(rawCursor, start);
+    }
+
+    finalText += prefix;
+    finalText += nodeRef.length > 0 ? await getResolvedNodeText(nodeRef) : fullMatch;
+    rawCursor = start + prefix.length + fullMatch.length;
+  }
+
+  if (rawCursor < normalizedLinkText.length) {
+    finalText += normalizedLinkText.slice(rawCursor);
+  }
+
+  return finalText;
 }
 
 function groupNodesByParent(nodes: Doc<"nodes">[]) {
@@ -324,16 +411,22 @@ function buildOutlineLines(
   childrenByParent: Map<string | null, Doc<"nodes">[]>,
   parentNodeId: string | null,
   depth: number,
+  resolvedTextById?: Map<string, string>,
 ) {
   const lines: string[] = [];
   const children = childrenByParent.get(parentNodeId) ?? [];
 
   for (const child of children) {
-    const formatted = formatNodeForKnowledgeContext(child);
+    const formatted = formatNodeForKnowledgeContext(
+      child,
+      resolvedTextById?.get(child._id as string),
+    );
     if (formatted.length > 0) {
       lines.push(`${"  ".repeat(depth)}${formatted}`);
     }
-    lines.push(...buildOutlineLines(childrenByParent, child._id as string, depth + 1));
+    lines.push(
+      ...buildOutlineLines(childrenByParent, child._id as string, depth + 1, resolvedTextById),
+    );
   }
 
   return lines;
@@ -343,19 +436,23 @@ function buildNodeSubtreeLines(
   childrenByParent: Map<string | null, Doc<"nodes">[]>,
   currentNode: Doc<"nodes"> | null,
   depth: number,
+  resolvedTextById?: Map<string, string>,
 ) {
   if (!currentNode) {
     return [];
   }
 
   const lines: string[] = [];
-  const formatted = formatNodeForKnowledgeContext(currentNode);
+  const formatted = formatNodeForKnowledgeContext(
+    currentNode,
+    resolvedTextById?.get(currentNode._id as string),
+  );
   if (formatted.length > 0) {
     lines.push(`${"  ".repeat(depth)}${formatted}`);
   }
 
   for (const child of childrenByParent.get(currentNode._id as string) ?? []) {
-    lines.push(...buildNodeSubtreeLines(childrenByParent, child, depth + 1));
+    lines.push(...buildNodeSubtreeLines(childrenByParent, child, depth + 1, resolvedTextById));
   }
 
   return lines;
@@ -364,12 +461,16 @@ function buildNodeSubtreeLines(
 function buildNodeAncestorPath(
   node: Doc<"nodes">,
   nodeMap: Map<string, Doc<"nodes">>,
+  resolvedTextById?: Map<string, string>,
 ) {
   const labels: string[] = [];
   let currentNode: Doc<"nodes"> | null = node;
 
   while (currentNode) {
-    const formatted = formatNodeForKnowledgeContext(currentNode);
+    const formatted = formatNodeForKnowledgeContext(
+      currentNode,
+      resolvedTextById?.get(currentNode._id as string),
+    );
     if (formatted.length > 0) {
       labels.unshift(formatted);
     }
@@ -424,10 +525,22 @@ async function buildPageKnowledgeContextEntry(
     page,
     nodes.filter((node) => !node.archived),
   );
+  const nodeMap = new Map(visibleNodes.map((node) => [node._id as string, node]));
+  const resolvedNodeTextCache = new Map<string, string>();
+  const resolvedTextById = new Map<string, string>();
+  for (const node of visibleNodes) {
+    resolvedTextById.set(
+      node._id as string,
+      await resolveKnowledgeContextText(ctx.db, node.text, nodeMap, resolvedNodeTextCache),
+    );
+  }
   const childrenByParent = groupNodesByParent(visibleNodes);
-  const content = buildOutlineLines(childrenByParent, null, 0).join("\n");
+  const content = buildOutlineLines(childrenByParent, null, 0, resolvedTextById).join("\n");
   const representativeNode =
-    visibleNodes.find((node) => formatNodeForKnowledgeContext(node).length > 0) ??
+    visibleNodes.find(
+      (node) =>
+        formatNodeForKnowledgeContext(node, resolvedTextById.get(node._id as string)).length > 0,
+    ) ??
     visibleNodes[0] ??
     null;
 
@@ -3136,8 +3249,26 @@ export const getLinkedKnowledgeContext = internalQuery({
         const nodeMap = new Map(
           visiblePageNodes.map((entry) => [entry._id as string, entry]),
         );
-        const path = buildNodeAncestorPath(node, nodeMap);
-        const subtree = buildNodeSubtreeLines(childrenByParent, node, 0).join("\n");
+        const resolvedNodeTextCache = new Map<string, string>();
+        const resolvedTextById = new Map<string, string>();
+        for (const visibleNode of visiblePageNodes) {
+          resolvedTextById.set(
+            visibleNode._id as string,
+            await resolveKnowledgeContextText(
+              ctx.db,
+              visibleNode.text,
+              nodeMap,
+              resolvedNodeTextCache,
+            ),
+          );
+        }
+        const path = buildNodeAncestorPath(node, nodeMap, resolvedTextById);
+        const subtree = buildNodeSubtreeLines(
+          childrenByParent,
+          node,
+          0,
+          resolvedTextById,
+        ).join("\n");
         const content = [path.length > 0 ? `Path: ${path}` : "", subtree]
           .filter((value) => value.trim().length > 0)
           .join("\n");
