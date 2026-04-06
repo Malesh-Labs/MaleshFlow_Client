@@ -76,6 +76,8 @@ const getResolvedLinkedTargetsForNodesRef =
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const getLinkedKnowledgeContextRef = internal.workspace.getLinkedKnowledgeContext as any;
 
+const RECENT_CHAT_CONTEXT_MESSAGE_COUNT = 4;
+
 function getOpenAIClient() {
   if (!process.env.OPENAI_API_KEY) {
     return null;
@@ -220,7 +222,7 @@ export const runChatPlanner = action({
     })) as PlannerWorkspace;
     const priorMessages = await ctx.runQuery(getThreadMessagesRef, {
       threadId,
-      limit: 2,
+      limit: RECENT_CHAT_CONTEXT_MESSAGE_COUNT + 1,
     });
 
     let plan: ChatPlan = buildHeuristicPlan({
@@ -334,7 +336,7 @@ export const runPlannerChat = action({
 
     const priorMessages = await ctx.runQuery(getThreadMessagesRef, {
       threadId,
-      limit: 2,
+      limit: RECENT_CHAT_CONTEXT_MESSAGE_COUNT + 1,
     });
 
     const fallbackPlan: PlannerChatPlan = {
@@ -492,7 +494,7 @@ export const rewriteModelSection = action({
 
     const priorMessages = await ctx.runQuery(getThreadMessagesRef, {
       threadId,
-      limit: 2,
+      limit: RECENT_CHAT_CONTEXT_MESSAGE_COUNT + 1,
     });
 
     const existingModelLines = modelContext.modelLines.map(

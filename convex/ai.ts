@@ -64,6 +64,8 @@ const storeUserMessageRef = internal.chatData.storeUserMessage as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const storeAssistantMessageRef = internal.chatData.storeAssistantMessage as any;
 
+const RECENT_CHAT_CONTEXT_MESSAGE_COUNT = 4;
+
 function getOpenAIClient() {
   if (!process.env.OPENAI_API_KEY) {
     return null;
@@ -467,7 +469,7 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
   const conversationContext =
     args.conversation && args.conversation.length > 0
       ? args.conversation
-          .slice(-8)
+          .slice(-RECENT_CHAT_CONTEXT_MESSAGE_COUNT)
           .map((message) => `${message.role}: ${message.text}`)
           .join("\n")
       : "";
@@ -597,7 +599,7 @@ export const chatWithWorkspace = action({
 
     const priorMessages = (await ctx.runQuery(getThreadMessagesRef, {
       threadId,
-      limit: 2,
+      limit: RECENT_CHAT_CONTEXT_MESSAGE_COUNT + 1,
     })) as Array<{
       role: string;
       text: string;
