@@ -611,7 +611,21 @@ async function ensurePastWeeksPage(ctx: MutationCtx) {
     .query("pages")
     .withIndex("by_archived_position", (query) => query.eq("archived", true))
     .take(200);
-  const existing = archivedPages.find((page) => page.title === "Past Weeks") ?? null;
+  const existing = [...archivedPages]
+    .filter((page) => page.title === "Past Weeks")
+    .sort((left, right) => {
+      const leftTaskScore = isTaskSourcePage(left) ? 1 : 0;
+      const rightTaskScore = isTaskSourcePage(right) ? 1 : 0;
+      if (leftTaskScore !== rightTaskScore) {
+        return rightTaskScore - leftTaskScore;
+      }
+
+      if (left.updatedAt !== right.updatedAt) {
+        return right.updatedAt - left.updatedAt;
+      }
+
+      return right.createdAt - left.createdAt;
+    })[0] ?? null;
   if (existing) {
     return existing;
   }
