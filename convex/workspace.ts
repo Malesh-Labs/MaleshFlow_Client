@@ -30,12 +30,15 @@ import {
 } from "./lib/embeddingRebuild";
 import { nodeKindValidator, nullableNodeIdValidator, priorityValidator, recurrenceFrequencyValidator, taskStatusValidator } from "./lib/validators";
 import {
+  PLANNER_TEMPLATE_SLOT,
   buildPlannerChatPromptContext,
   ensurePlannerSections,
+  findPlannerSectionNode,
   getPlannerDayRoots,
   getPlannerLinkedSourceTaskId,
   getPlannerStartDate,
   isPlannerPage,
+  isPlannerScanExcludedPage,
   isTaskSourcePage,
   listEligiblePlannerSourceTasks,
 } from "./lib/planner";
@@ -379,6 +382,60 @@ function buildNodeAncestorPath(
   }
 
   return labels.join(" > ");
+}
+
+function filterNodesForKnowledgeContext(
+  page: Doc<"pages">,
+  nodes: Doc<"nodes">[],
+) {
+  if (!isPlannerPage(page)) {
+    return nodes;
+  }
+
+  const templateSection = findPlannerSectionNode(nodes, PLANNER_TEMPLATE_SLOT);
+  if (!templateSection) {
+    return nodes;
+  }
+
+  const childrenByParent = groupNodesByParent(nodes);
+  const excludedIds = new Set<string>();
+  const queue: string[] = [templateSection._id as string];
+
+  while (queue.length > 0) {
+    const currentId = queue.shift()!;
+    if (excludedIds.has(currentId)) {
+      continue;
+    }
+    excludedIds.add(currentId);
+    for (const child of childrenByParent.get(currentId) ?? []) {
+      queue.push(child._id as string);
+    }
+  }
+
+  return nodes.filter((node) => !excludedIds.has(node._id as string));
+}
+
+async function buildPageKnowledgeContextEntry(
+  ctx: QueryCtx,
+  page: Doc<"pages">,
+) {
+  const nodes = await listPageNodes(ctx.db, page._id);
+  const visibleNodes = filterNodesForKnowledgeContext(
+    page,
+    nodes.filter((node) => !node.archived),
+  );
+  const childrenByParent = groupNodesByParent(visibleNodes);
+  const content = buildOutlineLines(childrenByParent, null, 0).join("\n");
+  const representativeNode =
+    visibleNodes.find((node) => formatNodeForKnowledgeContext(node).length > 0) ??
+    visibleNodes[0] ??
+    null;
+
+  return {
+    page,
+    representativeNode,
+    content,
+  };
 }
 
 const nodeCreateInputValidator = v.object({
@@ -3026,33 +3083,39 @@ export const getLinkedKnowledgeContext = internalQuery({
   args: {
     pageIds: v.array(v.id("pages")),
     nodeIds: v.array(v.id("nodes")),
+    includeDefaultPlannerAndTaskPages: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const uniquePageIds = [...new Set(args.pageIds)];
     const uniqueNodeIds = [...new Set(args.nodeIds)];
 
-    const pages = await Promise.all(uniquePageIds.map((pageId) => ctx.db.get(pageId)));
+    const defaultContextPages = args.includeDefaultPlannerAndTaskPages
+      ? (await ctx.db.query("pages").collect()).filter((page) => {
+          if (page.archived || isSidebarSpecialPage(page)) {
+            return false;
+          }
+
+          if (isPlannerPage(page)) {
+            return true;
+          }
+
+          return isTaskSourcePage(page) && !isPlannerScanExcludedPage(page);
+        })
+      : [];
+    const allPageIds = [
+      ...new Set([
+        ...uniquePageIds.map((pageId) => pageId as string),
+        ...defaultContextPages.map((page) => page._id as string),
+      ]),
+    ] as Id<"pages">[];
+
+    const pages = await Promise.all(allPageIds.map((pageId) => ctx.db.get(pageId)));
     const visiblePages = pages.filter(
       (page): page is Doc<"pages"> => page !== null && !page.archived && !isSidebarSpecialPage(page),
     );
 
     const pageEntries = await Promise.all(
-      visiblePages.map(async (page) => {
-        const nodes = await listPageNodes(ctx.db, page._id);
-        const visibleNodes = nodes.filter((node) => !node.archived);
-        const childrenByParent = groupNodesByParent(visibleNodes);
-        const content = buildOutlineLines(childrenByParent, null, 0).join("\n");
-        const representativeNode =
-          visibleNodes.find((node) => formatNodeForKnowledgeContext(node).length > 0) ??
-          visibleNodes[0] ??
-          null;
-
-        return {
-          page,
-          representativeNode,
-          content,
-        };
-      }),
+      visiblePages.map((page) => buildPageKnowledgeContextEntry(ctx, page)),
     );
 
     const nodes = await Promise.all(uniqueNodeIds.map((nodeId) => ctx.db.get(nodeId)));

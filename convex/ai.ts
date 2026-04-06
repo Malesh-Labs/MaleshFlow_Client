@@ -305,6 +305,7 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
   const linkedContext = (await ctx.runQuery(getLinkedKnowledgeContextRef, {
     pageIds: args.linkedPageIds ?? [],
     nodeIds: args.linkedNodeIds ?? [],
+    includeDefaultPlannerAndTaskPages: true,
   })) as {
     pages: Array<{
       page: Doc<"pages">;
