@@ -30,6 +30,7 @@ import {
 } from "./lib/embeddingRebuild";
 import { nodeKindValidator, nullableNodeIdValidator, priorityValidator, recurrenceFrequencyValidator, taskStatusValidator } from "./lib/validators";
 import {
+  PLANNER_FOCUS_SLOT,
   PLANNER_SIDEBAR_SLOT,
   PLANNER_TEMPLATE_SLOT,
   buildPlannerChatPromptContext,
@@ -658,20 +659,57 @@ async function buildPageKnowledgeContextEntries(
   const plannerNodesWithoutSidebar = visibleNodes.filter(
     (node) => !sidebarSubtreeIds.has(node._id as string),
   );
-  const plannerNodeMap = new Map(
-    plannerNodesWithoutSidebar.map((node) => [node._id as string, node]),
-  );
   const plannerResolvedTextById = new Map<string, string>();
   for (const node of plannerNodesWithoutSidebar) {
     plannerResolvedTextById.set(node._id as string, resolvedTextById.get(node._id as string) ?? "");
   }
   const plannerChildrenByParent = groupNodesByParent(plannerNodesWithoutSidebar);
-  const plannerContent = buildOutlineLines(
-    plannerChildrenByParent,
-    null,
-    0,
-    plannerResolvedTextById,
-  ).join("\n");
+  const focusSection = findPlannerSectionNode(plannerNodesWithoutSidebar, PLANNER_FOCUS_SLOT);
+  const plannerDayRoots = getPlannerDayRoots(plannerNodesWithoutSidebar);
+  const currentDay = plannerDayRoots[0] ?? null;
+  const upcomingDays = plannerDayRoots.filter((node) => node._id !== currentDay?._id);
+
+  const focusLines = focusSection
+    ? buildOutlineLines(
+        plannerChildrenByParent,
+        focusSection._id as string,
+        0,
+        plannerResolvedTextById,
+      )
+    : [];
+  const todayDayLines = currentDay
+    ? buildNodeSubtreeLines(plannerChildrenByParent, currentDay, 0, plannerResolvedTextById)
+    : [];
+  const upcomingLines = upcomingDays.flatMap((node) =>
+    buildNodeSubtreeLines(plannerChildrenByParent, node, 0, plannerResolvedTextById),
+  );
+  const remainingRootLines = (plannerChildrenByParent.get(null) ?? [])
+    .filter((node) => node._id !== focusSection?._id && !plannerDayRoots.some((day) => day._id === node._id))
+    .flatMap((node) =>
+      buildNodeSubtreeLines(plannerChildrenByParent, node, 0, plannerResolvedTextById),
+    );
+
+  const plannerContent = [
+    ...(focusLines.length > 0 || todayDayLines.length > 0
+      ? [
+          "# Today",
+          ...focusLines,
+          ...todayDayLines,
+        ]
+      : []),
+    ...(upcomingLines.length > 0
+      ? [
+          "# Upcoming",
+          ...upcomingLines,
+        ]
+      : []),
+    ...(remainingRootLines.length > 0
+      ? [
+          "# Other",
+          ...remainingRootLines,
+        ]
+      : []),
+  ].join("\n");
   const plannerRepresentativeNode =
     plannerNodesWithoutSidebar.find(
       (node) =>
