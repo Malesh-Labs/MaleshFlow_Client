@@ -649,6 +649,8 @@ export const generateEmbeddingForNode = internalAction({
       const existingJob = await ctx.runQuery(getEmbeddingJobStateRef, {
         nodeId: args.nodeId,
       });
+      const activeRebuildRunId =
+        existingJob?.status === "queued" ? existingJob.rebuildRunId ?? undefined : undefined;
 
       if (
         existingJob?.lastEmbeddedHash === contentHash &&
@@ -657,6 +659,7 @@ export const generateEmbeddingForNode = internalAction({
         await ctx.runMutation(upsertEmbeddingJobRef, {
           nodeId: args.nodeId,
           status: "completed",
+          rebuildRunId: activeRebuildRunId,
         });
         return;
       }
@@ -664,6 +667,7 @@ export const generateEmbeddingForNode = internalAction({
       await ctx.runMutation(upsertEmbeddingJobRef, {
         nodeId: args.nodeId,
         status: "running",
+        rebuildRunId: activeRebuildRunId,
       });
 
       const vector = await createEmbedding(input);
@@ -676,10 +680,14 @@ export const generateEmbeddingForNode = internalAction({
         vector,
       });
     } catch (error) {
+      const existingJob = await ctx.runQuery(getEmbeddingJobStateRef, {
+        nodeId: args.nodeId,
+      });
       await ctx.runMutation(upsertEmbeddingJobRef, {
         nodeId: args.nodeId,
         status: "error",
         error: error instanceof Error ? error.message : "Embedding generation failed.",
+        rebuildRunId: existingJob?.rebuildRunId ?? undefined,
       });
     }
   },

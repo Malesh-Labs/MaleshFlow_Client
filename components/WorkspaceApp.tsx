@@ -2429,7 +2429,7 @@ function ConfiguredWorkspace({
   );
   const embeddingRebuildProgress = useQuery(
     api.workspace.getEmbeddingRebuildStatus,
-    ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
+    ownerKey && isOwnerKeyValid && shouldTrackEmbeddingRebuild ? { ownerKey } : SKIP,
   );
   const embeddingRebuildErrors = useQuery(
     api.workspace.getRecentEmbeddingErrors,

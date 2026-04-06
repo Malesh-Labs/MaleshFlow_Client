@@ -198,7 +198,7 @@ export const upsertEmbeddingJob = internalMutation({
     const nextLastQueuedAt =
       args.status === "queued" ? now : existing?.lastQueuedAt ?? now;
     const nextLastError = args.status === "error" ? args.error : undefined;
-    const nextRebuildRunId = args.rebuildRunId ?? existing?.rebuildRunId;
+    const nextRebuildRunId = args.rebuildRunId;
 
     if (existing) {
       const shouldPatch =
