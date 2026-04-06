@@ -6839,8 +6839,8 @@ function ConfiguredWorkspace({
         ) : null}
       </div>
       {isWorkspaceChatOpen ? (
-        <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 pb-10 pt-24 sm:px-8 sm:pt-28">
-          <div className="min-h-[calc(100vh-8rem)] overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]">
+        <div className="mx-auto flex h-screen w-full max-w-6xl flex-col px-4 pb-6 pt-24 sm:px-8 sm:pt-28">
+          <div className="min-h-0 flex-1 overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]">
             <WorkspaceAiChatPanel
               ownerKey={ownerKey}
               availableTags={sortedTags}
@@ -6851,7 +6851,6 @@ function ConfiguredWorkspace({
               isLoading={isWorkspaceChatLoading}
               error={workspaceChatError}
               onClearError={() => setWorkspaceChatError("")}
-              onOpenSource={handleOpenWorkspaceKnowledgeSource}
             />
           </div>
         </div>
@@ -9647,7 +9646,6 @@ function WorkspaceAiChatPanel({
   isLoading,
   error,
   onClearError,
-  onOpenSource,
 }: {
   ownerKey: string;
   availableTags: SidebarTagResult[];
@@ -9658,7 +9656,6 @@ function WorkspaceAiChatPanel({
   isLoading: boolean;
   error: string;
   onClearError: () => void;
-  onOpenSource: (source: WorkspaceKnowledgeSourceSnapshot) => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
@@ -9839,34 +9836,16 @@ function WorkspaceAiChatPanel({
                       {message.text}
                     </p>
                     {!isUser && metadata ? (
-                      <>
-                        <div className="mt-4 space-y-2">
-                          {metadata.sources.map((source, index) => (
-                            <button
-                              key={`${message._id}:${source.nodeId}:${index}`}
-                              type="button"
-                              onClick={() => onOpenSource(source)}
-                              className="block w-full border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface)] px-4 py-3 text-left transition hover:border-[var(--workspace-border-hover)] hover:bg-[var(--workspace-surface-hover)]"
-                            >
-                              <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
-                                {source.nodeText || "(empty line)"}
-                              </span>
-                              <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                                {source.pageTitle ?? "Unknown page"} • {source.nodeKind === "task" ? "Task" : "Note"}
-                              </span>
-                              {source.content && source.content.trim() !== source.nodeText.trim() ? (
-                                <span className="mt-2 block whitespace-pre-wrap text-xs leading-6 text-[var(--workspace-text-subtle)]">
-                                  {source.content}
-                                </span>
-                              ) : null}
-                            </button>
-                          ))}
-                        </div>
-                        <div className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--workspace-border-subtle)] pt-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                      <div className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--workspace-border-subtle)] pt-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
                           <span>{metadata.model}</span>
-                          <span>{metadata.error ? "OpenAI issue surfaced" : "Grounded with linked + semantic context"}</span>
+                          <span>
+                            {metadata.error
+                              ? "OpenAI issue surfaced"
+                              : metadata.sources.length > 0
+                                ? `Grounded with ${metadata.sources.length} source${metadata.sources.length === 1 ? "" : "s"}`
+                                : "Grounded with semantic context"}
+                          </span>
                         </div>
-                      </>
                     ) : null}
                   </div>
                 </div>
