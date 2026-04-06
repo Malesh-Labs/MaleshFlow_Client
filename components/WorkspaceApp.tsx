@@ -55,7 +55,6 @@ import {
   getExplicitWikiLinkPreviewText,
   replaceLinkMarkupWithLabels,
 } from "@/lib/domain/links";
-import type { ScreenshotImportNode } from "@/lib/domain/screenshotImport";
 import { extractTagMatches } from "@/lib/domain/tags";
 import {
   buildPageBacklinkFindQuery,
@@ -83,8 +82,6 @@ import {
 import { ArchiveSearchPanel } from "@/components/ArchiveSearchPanel";
 import { FindReplacePanel } from "@/components/FindReplacePanel";
 import { ImporterPanel } from "@/components/ImporterPanel";
-import { MigrationPanel } from "@/components/MigrationPanel";
-import { ScreenshotImportPanel } from "@/components/ScreenshotImportPanel";
 import { TaskSchedulePanel } from "@/components/TaskSchedulePanel";
 import type { ImportedOutlineNode } from "@/lib/domain/importer";
 
@@ -146,9 +143,7 @@ type PaletteMode =
   | "actions"
   | "replace"
   | "archive"
-  | "migration"
   | "importer"
-  | "screenshotImport"
   | "taskSchedule";
 const PALETTE_MODE_ORDER: PaletteMode[] = [
   "actions",
@@ -1206,6 +1201,16 @@ function readWorkspaceKnowledgeMessageMetadata(
     request: typeof record.request === "string" ? record.request : null,
     sources,
   };
+}
+
+function readAiRequestPreview(message: Doc<"chatMessages">) {
+  const metadata = message.metadata;
+  if (!metadata || typeof metadata !== "object") {
+    return null;
+  }
+
+  const record = metadata as Record<string, unknown>;
+  return typeof record.request === "string" ? record.request : null;
 }
 
 function getActiveLinkToken(value: string, caretPosition: number | null) {
@@ -3192,90 +3197,6 @@ function ConfiguredWorkspace({
     },
     [ownerKey, setNodeTreeArchived, setNodeTreesArchivedBatch],
   );
-  const canImportScreenshotWithoutSelection =
-    (
-      pageMeta.pageType === "default" ||
-      pageMeta.pageType === "note" ||
-      pageMeta.pageType === "task" ||
-      pageMeta.pageType === "planner"
-    ) &&
-    selectedPageId !== null;
-  const handleImportScreenshotNodes = useCallback(async (nodes: ScreenshotImportNode[]) => {
-    const outlineNodes: OutlineClipboardNode[] = nodes.map((node) => ({
-      text: node.text,
-      kind: node.kind,
-      taskStatus: node.kind === "task" ? node.taskStatus : null,
-      noteCompleted: node.kind === "note" ? node.noteCompleted : false,
-      lockKind: true,
-      children: node.children.map(function mapChild(child): OutlineClipboardNode {
-        return {
-          text: child.text,
-          kind: child.kind,
-          taskStatus: child.kind === "task" ? child.taskStatus : null,
-          noteCompleted: child.kind === "note" ? child.noteCompleted : false,
-          lockKind: true,
-          children: child.children.map(mapChild),
-        };
-      }),
-    }));
-    if (outlineNodes.length === 0) {
-      return;
-    }
-
-    let createdRootNodeIds: Id<"nodes">[] = [];
-    if (selectedNodeIds.size > 0) {
-      const selectedRootNodeIds = getSelectedRootNodeIds(
-        selectedNodeIds,
-        visibleNodeOrder,
-        workspaceNodeMap,
-      );
-      const anchorNodeId = selectedRootNodeIds[selectedRootNodeIds.length - 1] ?? null;
-      const anchorNode = anchorNodeId ? (workspaceNodeMap.get(anchorNodeId) ?? null) : null;
-      if (!anchorNode) {
-        throw new Error("Could not find the selected insertion point.");
-      }
-
-      const result = await insertOutlineClipboardNodes({
-        nodes: outlineNodes,
-        pageId: anchorNode.pageId,
-        parentNodeId: (anchorNode.parentNodeId as Id<"nodes"> | null) ?? null,
-        afterNodeId: anchorNode._id,
-      });
-      createdRootNodeIds = result.createdRootNodeIds;
-    } else if (canImportScreenshotWithoutSelection && selectedPageId) {
-      const anchorNode = pageVisibleRows[pageVisibleRows.length - 1] ?? null;
-      const result = await insertOutlineClipboardNodes({
-        nodes: outlineNodes,
-        pageId: selectedPageId,
-        parentNodeId: anchorNode
-          ? ((anchorNode.parentNodeId as Id<"nodes"> | null) ?? null)
-          : null,
-        afterNodeId: anchorNode ? (anchorNode._id as Id<"nodes">) : null,
-      });
-      createdRootNodeIds = result.createdRootNodeIds;
-    } else {
-      throw new Error("Highlight a target item first so the imported outline knows where to go.");
-    }
-
-    const firstCreatedRootNodeId = createdRootNodeIds[0] ?? null;
-    if (firstCreatedRootNodeId) {
-      selectSingleNode(firstCreatedRootNodeId);
-    }
-
-    setCopySnackbarMessage(
-      `Imported ${countNodesInClipboardPayload(outlineNodes)} node${countNodesInClipboardPayload(outlineNodes) === 1 ? "" : "s"}`,
-    );
-  }, [
-    canImportScreenshotWithoutSelection,
-    insertOutlineClipboardNodes,
-    pageVisibleRows,
-    selectSingleNode,
-    selectedNodeIds,
-    selectedPageId,
-    setCopySnackbarMessage,
-    visibleNodeOrder,
-    workspaceNodeMap,
-  ]);
   const handleImportTextNodes = useCallback(
     async ({
       pageId,
@@ -3318,13 +3239,6 @@ function ConfiguredWorkspace({
       setSelectedPageId,
     ],
   );
-  const canImportScreenshot = selectedNodeIds.size > 0 || canImportScreenshotWithoutSelection;
-  const screenshotImportTargetLabel =
-    selectedNodeIds.size > 0
-      ? "the selected location"
-      : selectedPage
-        ? `the end of ${selectedPage.title}`
-        : "your workspace";
   const paletteResults = filterPagesForCommandPalette(
     (pages ?? []).map((page) => ({
       ...page,
@@ -4190,16 +4104,6 @@ function ConfiguredWorkspace({
         },
       },
       {
-        key: "migration",
-        title: "Import From App",
-        subtitle: "Snapshot Dynalist, WorkFlowy, or Logseq and review chunk-by-chunk changes before applying them.",
-        keywords: ["migration", "import", "app", "dynalist", "workflowy", "logseq", "archive"],
-        actionLabel: "Open",
-        onSelect: () => {
-          switchPaletteMode("migration");
-        },
-      },
-      {
         key: "import-text",
         title: "Import From Text",
         subtitle: "Paste text, normalize Dynalist-style content, preview the parsed nodes, and import them into a chosen page.",
@@ -4218,18 +4122,6 @@ function ConfiguredWorkspace({
         actionLabel: "Open",
         onSelect: () => {
           switchPaletteMode("importer");
-        },
-      },
-      {
-        key: "import-screenshot",
-        title: "Import Screenshot",
-        subtitle: canImportScreenshot
-          ? "Paste an outliner screenshot, preview the translated hierarchy, and import it into the current workspace."
-          : "Paste an outliner screenshot and preview it. Open a page or highlight a target item before importing.",
-        keywords: ["import", "screenshot", "image", "ocr", "outline", "paste"],
-        actionLabel: "Open",
-        onSelect: () => {
-          switchPaletteMode("screenshotImport");
         },
       },
       {
@@ -4322,7 +4214,6 @@ function ConfiguredWorkspace({
     isCreatingPlannerPage,
     isPreparingTaskCalendarFeed,
     isRebuildingEmbeddings,
-    canImportScreenshot,
     openTaskSchedulePalette,
     paletteQuery,
     setOwnerKey,
@@ -5413,9 +5304,7 @@ function ConfiguredWorkspace({
     window.setTimeout(() => {
       if (
         paletteMode === "archive" ||
-        paletteMode === "migration" ||
-        paletteMode === "importer" ||
-        paletteMode === "screenshotImport"
+        paletteMode === "importer"
       ) {
         return;
       }
@@ -5440,9 +5329,7 @@ function ConfiguredWorkspace({
     if (
       !paletteOpen ||
       paletteMode === "archive" ||
-      paletteMode === "migration" ||
       paletteMode === "importer" ||
-      paletteMode === "screenshotImport" ||
       activePaletteResultsCount === 0
     ) {
       return;
@@ -8176,13 +8063,10 @@ function ConfiguredWorkspace({
           <div
             className={clsx(
               "mx-auto mt-16 flex h-[calc(100vh-8rem)] w-full flex-col overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]",
-              paletteMode === "migration"
-                ? "max-w-6xl"
-                : paletteMode === "replace" ||
-                    paletteMode === "archive" ||
-                    paletteMode === "importer" ||
-                    paletteMode === "screenshotImport" ||
-                    paletteMode === "taskSchedule"
+              paletteMode === "replace" ||
+                paletteMode === "archive" ||
+                paletteMode === "importer" ||
+                paletteMode === "taskSchedule"
                   ? "max-w-4xl"
                   : "max-w-2xl",
             )}
@@ -8268,17 +8152,6 @@ function ConfiguredWorkspace({
                     Find &amp; Replace
                   </button>
                 ) : null}
-                {paletteMode === "migration" ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      switchPaletteMode("migration");
-                    }}
-                    className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition"
-                  >
-                    Import From App
-                  </button>
-                ) : null}
                 {paletteMode === "importer" ? (
                   <button
                     type="button"
@@ -8288,17 +8161,6 @@ function ConfiguredWorkspace({
                     className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition"
                   >
                     Import From Text
-                  </button>
-                ) : null}
-                {paletteMode === "screenshotImport" ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      switchPaletteMode("screenshotImport");
-                    }}
-                    className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition"
-                  >
-                    Import Screenshot
                   </button>
                 ) : null}
                 {paletteMode === "taskSchedule" ? (
@@ -8315,21 +8177,15 @@ function ConfiguredWorkspace({
               </div>
               {paletteMode === "replace" ||
               paletteMode === "archive" ||
-              paletteMode === "migration" ||
               paletteMode === "importer" ||
-              paletteMode === "screenshotImport" ||
               paletteMode === "taskSchedule" ? (
                 <p className="text-sm text-[var(--workspace-text-subtle)]">
                   {paletteMode === "replace"
                     ? "Preview and replace exact text in the current page or across the active workspace."
                     : paletteMode === "archive"
                       ? "Search archived pages and nodes without mixing them into active workspace results."
-                      : paletteMode === "migration"
-                        ? "Snapshot imports, review suggested changes, and explicitly approve each chunk before it touches the workspace."
-                        : paletteMode === "importer"
+                      : paletteMode === "importer"
                           ? "Paste text, preview exactly what will be added, and import it into the page you choose."
-                        : paletteMode === "screenshotImport"
-                          ? "Paste an outliner screenshot, preview the translated structure, then import it as real nodes."
                           : "Set a due date, recurrence, and recurring completion rule for the current task."}
                 </p>
               ) : (
@@ -8362,9 +8218,7 @@ function ConfiguredWorkspace({
                 "min-h-0 h-full flex-1",
               paletteMode === "replace" ||
               paletteMode === "archive" ||
-              paletteMode === "migration" ||
               paletteMode === "importer" ||
-              paletteMode === "screenshotImport" ||
                   paletteMode === "taskSchedule"
                   ? "overflow-hidden"
                   : "overflow-y-auto py-2",
@@ -8541,28 +8395,12 @@ function ConfiguredWorkspace({
                   ownerKey={ownerKey}
                   onSelectResult={handleSelectNodeSearchResult}
                 />
-              ) : paletteMode === "migration" ? (
-                <MigrationPanel ownerKey={ownerKey} />
               ) : paletteMode === "importer" ? (
                 <ImporterPanel
                   ownerKey={ownerKey}
                   pages={pages ?? []}
                   initialPageId={selectedPage?._id ?? null}
                   onImport={handleImportTextNodes}
-                  onImported={() => {
-                    setPaletteOpen(false);
-                    setPaletteQuery("");
-                    setPaletteMode("pages");
-                    setTextSearchResults([]);
-                    setNodeSearchResults([]);
-                  }}
-                />
-              ) : paletteMode === "screenshotImport" ? (
-                <ScreenshotImportPanel
-                  ownerKey={ownerKey}
-                  canImport={canImportScreenshot}
-                  targetLabel={screenshotImportTargetLabel}
-                  onImport={handleImportScreenshotNodes}
                   onImported={() => {
                     setPaletteOpen(false);
                     setPaletteQuery("");
