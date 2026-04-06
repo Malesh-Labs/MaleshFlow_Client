@@ -722,7 +722,7 @@ export async function listEligiblePlannerSourceTasks(
   );
   const eligiblePageIds = uniquePageIds.filter((pageId) => {
     const page = pageMap.get(pageId);
-    if (!page || page.archived || !isTaskSourcePage(page)) {
+    if (!page || page.archived || !isTaskSourcePage(page) || isPlannerPage(page)) {
       return false;
     }
 
@@ -742,7 +742,13 @@ export async function listEligiblePlannerSourceTasks(
 
   return activeTasks.flatMap((task) => {
     const page = pageMap.get(task.pageId);
-    if (!page || page.archived || !isTaskSourcePage(page) || isPlannerScanExcludedPage(page)) {
+    if (
+      !page ||
+      page.archived ||
+      !isTaskSourcePage(page) ||
+      isPlannerPage(page) ||
+      isPlannerScanExcludedPage(page)
+    ) {
       return [];
     }
 
