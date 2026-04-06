@@ -99,9 +99,13 @@ const OWNER_KEY_EVENT = "maleshflow-owner-key-change";
 const LAST_PAGE_STORAGE_KEY = "maleshflow-last-page-id";
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "maleshflow-sidebar-collapsed";
 const COLLAPSED_NODES_STORAGE_KEY = "maleshflow-collapsed-node-ids";
+const SIDEBAR_TEXT_SECTION_COLLAPSE_STORAGE_KEY =
+  "maleshflow-sidebar-text-section-collapsed";
 const UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY =
   "maleshflow-uncategorized-section-collapsed";
-const JOURNAL_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-journal-section-collapsed";
+const ALL_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-all-section-collapsed";
+const ALL_PAGE_TYPE_SECTIONS_COLLAPSE_STORAGE_KEY =
+  "maleshflow-all-page-type-sections-collapsed";
 const TAGS_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-tags-section-collapsed";
 const ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-archive-section-collapsed";
 const RECURRING_TASK_COMPLETION_MODE_STORAGE_KEY =
@@ -111,6 +115,16 @@ const OUTLINE_CLIPBOARD_MIME_TYPE = "application/x-maleshflow-outline";
 const WORKSPACE_AI_CHAT_TEXTAREA_ID = "workspace-ai-chat-textarea";
 const WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY = "maleshflow-workspace-ai-chat-open";
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
+const ALL_PAGE_TYPE_GROUP_ORDER = [
+  "Planner",
+  "Task",
+  "Note",
+  "Template",
+  "Journal",
+  "Model",
+  "Scratchpad",
+  "Page",
+] as const;
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
 type PageType =
@@ -2407,8 +2421,12 @@ function ConfiguredWorkspace({
   const [recurringCompletionMode, setRecurringCompletionMode] =
     useState<RecurringCompletionMode>("dueDate");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isSidebarTextSectionCollapsed, setIsSidebarTextSectionCollapsed] = useState(false);
   const [isUncategorizedSectionCollapsed, setIsUncategorizedSectionCollapsed] = useState(false);
-  const [isJournalSectionCollapsed, setIsJournalSectionCollapsed] = useState(false);
+  const [isAllSectionCollapsed, setIsAllSectionCollapsed] = useState(false);
+  const [collapsedAllPageTypeSections, setCollapsedAllPageTypeSections] = useState<Set<string>>(
+    new Set(),
+  );
   const [isTagsSectionCollapsed, setIsTagsSectionCollapsed] = useState(false);
   const [isArchiveSectionCollapsed, setIsArchiveSectionCollapsed] = useState(false);
   const [showSidebarDiagnostics, setShowSidebarDiagnostics] = useState(false);
@@ -2862,7 +2880,7 @@ function ConfiguredWorkspace({
         .filter(
           (page) =>
             !page.archived &&
-            getPageMeta(page).pageType !== "journal" &&
+            !isSidebarSpecialPage(page) &&
             !sidebarLinkedPageIds.has(page._id as string),
         )
         .sort((left, right) =>
@@ -2870,19 +2888,42 @@ function ConfiguredWorkspace({
         ),
     [pages, sidebarLinkedPageIds],
   );
-  const journalPages = useMemo(
-    () =>
-      (pages ?? [])
-        .filter((page) => !page.archived && getPageMeta(page).pageType === "journal")
-        .sort((left, right) =>
-          left.title.localeCompare(right.title, undefined, { sensitivity: "base" }),
-        ),
-    [pages],
-  );
+  const allActivePagesByType = useMemo(() => {
+    const grouped = new Map<string, PageDoc[]>();
+    for (const page of pages ?? []) {
+      if (page.archived || isSidebarSpecialPage(page)) {
+        continue;
+      }
+
+      const label = getPageTypeLabel(page);
+      const bucket = grouped.get(label) ?? [];
+      bucket.push(page);
+      grouped.set(label, bucket);
+    }
+
+    for (const bucket of grouped.values()) {
+      bucket.sort((left, right) =>
+        left.title.localeCompare(right.title, undefined, { sensitivity: "base" }),
+      );
+    }
+
+    const orderedLabels = [
+      ...ALL_PAGE_TYPE_GROUP_ORDER.filter((label) => grouped.has(label)),
+      ...[...grouped.keys()]
+        .filter((label) => !ALL_PAGE_TYPE_GROUP_ORDER.includes(label as (typeof ALL_PAGE_TYPE_GROUP_ORDER)[number]))
+        .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: "base" })),
+    ];
+
+    return orderedLabels.map((label) => ({
+      label,
+      pages: grouped.get(label) ?? [],
+    }));
+  }, [pages]);
   const archivedPages = (pages ?? []).filter((page) => page.archived);
+  const showSidebarTextSectionContent = sidebarTree !== null && !isSidebarTextSectionCollapsed;
   const showUncategorizedSectionContent =
     uncategorizedPages.length > 0 && !isUncategorizedSectionCollapsed;
-  const showJournalSectionContent = !isJournalSectionCollapsed;
+  const showAllSectionContent = !isAllSectionCollapsed;
   const showTagsSectionContent = !isTagsSectionCollapsed;
   const showArchiveSectionContent = !isArchiveSectionCollapsed;
   const sortedTags: SidebarTagResult[] = tags ?? [];
@@ -3362,11 +3403,14 @@ function ConfiguredWorkspace({
     }
 
     setIsSidebarCollapsed(readStoredBoolean(SIDEBAR_COLLAPSE_STORAGE_KEY, false));
+    setIsSidebarTextSectionCollapsed(
+      readStoredBoolean(SIDEBAR_TEXT_SECTION_COLLAPSE_STORAGE_KEY, false),
+    );
     setIsUncategorizedSectionCollapsed(
       readStoredBoolean(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY, true),
     );
-    setIsJournalSectionCollapsed(
-      readStoredBoolean(JOURNAL_SECTION_COLLAPSE_STORAGE_KEY, true),
+    setIsAllSectionCollapsed(
+      readStoredBoolean(ALL_SECTION_COLLAPSE_STORAGE_KEY, true),
     );
     setIsTagsSectionCollapsed(
       readStoredBoolean(TAGS_SECTION_COLLAPSE_STORAGE_KEY, true),
@@ -3374,6 +3418,22 @@ function ConfiguredWorkspace({
     setIsArchiveSectionCollapsed(
       readStoredBoolean(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY, true),
     );
+    try {
+      const storedCollapsedAllPageTypeSections = JSON.parse(
+        window.sessionStorage.getItem(ALL_PAGE_TYPE_SECTIONS_COLLAPSE_STORAGE_KEY) ?? "[]",
+      );
+      if (Array.isArray(storedCollapsedAllPageTypeSections)) {
+        setCollapsedAllPageTypeSections(
+          new Set(
+            storedCollapsedAllPageTypeSections.filter(
+              (value): value is string => typeof value === "string" && value.length > 0,
+            ),
+          ),
+        );
+      }
+    } catch {
+      setCollapsedAllPageTypeSections(new Set());
+    }
     setRecurringCompletionMode(
       readStoredRecurringCompletionMode("dueDate"),
     );
@@ -3422,6 +3482,21 @@ function ConfiguredWorkspace({
     }
 
     window.sessionStorage.setItem(
+      SIDEBAR_TEXT_SECTION_COLLAPSE_STORAGE_KEY,
+      isSidebarTextSectionCollapsed ? "true" : "false",
+    );
+  }, [isSidebarTextSectionCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!hasHydratedSessionUiStateRef.current) {
+      return;
+    }
+
+    window.sessionStorage.setItem(
       UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY,
       isUncategorizedSectionCollapsed ? "true" : "false",
     );
@@ -3437,10 +3512,25 @@ function ConfiguredWorkspace({
     }
 
     window.sessionStorage.setItem(
-      JOURNAL_SECTION_COLLAPSE_STORAGE_KEY,
-      isJournalSectionCollapsed ? "true" : "false",
+      ALL_SECTION_COLLAPSE_STORAGE_KEY,
+      isAllSectionCollapsed ? "true" : "false",
     );
-  }, [isJournalSectionCollapsed]);
+  }, [isAllSectionCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!hasHydratedSessionUiStateRef.current) {
+      return;
+    }
+
+    window.sessionStorage.setItem(
+      ALL_PAGE_TYPE_SECTIONS_COLLAPSE_STORAGE_KEY,
+      JSON.stringify([...collapsedAllPageTypeSections]),
+    );
+  }, [collapsedAllPageTypeSections]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -3884,15 +3974,19 @@ function ConfiguredWorkspace({
 
     window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
     window.sessionStorage.removeItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
+    window.sessionStorage.removeItem(SIDEBAR_TEXT_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY);
-    window.sessionStorage.removeItem(JOURNAL_SECTION_COLLAPSE_STORAGE_KEY);
+    window.sessionStorage.removeItem(ALL_SECTION_COLLAPSE_STORAGE_KEY);
+    window.sessionStorage.removeItem(ALL_PAGE_TYPE_SECTIONS_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
     window.sessionStorage.removeItem(WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY);
     window.localStorage.removeItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
+    window.localStorage.removeItem(SIDEBAR_TEXT_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY);
-    window.localStorage.removeItem(JOURNAL_SECTION_COLLAPSE_STORAGE_KEY);
+    window.localStorage.removeItem(ALL_SECTION_COLLAPSE_STORAGE_KEY);
+    window.localStorage.removeItem(ALL_PAGE_TYPE_SECTIONS_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
@@ -6738,53 +6832,77 @@ function ConfiguredWorkspace({
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                     Sidebar
                   </p>
+                  {sidebarTree ? (
+                    <button
+                      type="button"
+                      onClick={() => setIsSidebarTextSectionCollapsed((current) => !current)}
+                      className="flex h-8 w-8 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold leading-none text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                      aria-label={showSidebarTextSectionContent ? "Collapse sidebar notes" : "Expand sidebar notes"}
+                    >
+                      {showSidebarTextSectionContent ? "−" : "+"}
+                    </button>
+                  ) : null}
                 </div>
                 {sidebarTree ? (
-                  <div className="space-y-1">
-                    <OutlineNodeList
-                      nodes={sidebarNodes}
-                      ownerKey={ownerKey}
-                      pageId={sidebarTree?.page._id as Id<"pages">}
-                      nodeBacklinkCounts={sidebarNodeBacklinkCounts}
-                      nodeMap={sidebarNodeMap}
-                      createNodesBatch={createNodesBatch}
-                      insertOutlineClipboardNodes={insertOutlineClipboardNodes}
-                      updateNode={updateNode}
-                      moveNode={moveNode}
-                      splitNode={splitNode}
-                      replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
-                      setNodeTreeArchived={setNodeTreeArchived}
-                      isPageReadOnly={false}
-                      collapsedNodeIds={collapsedNodeIds}
-                      selectedNodeIds={selectedNodeIds}
-                      selectionAnchorNodeId={selectionAnchorNodeId}
-                      onToggleNodeCollapsed={toggleNodeCollapsed}
-                      onSelectSingleNode={selectSingleNode}
-                      onSelectNodeRange={selectNodeRange}
-                      onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
-                      pendingInsertedComposer={pendingInsertedComposer}
-                      onOpenInsertedComposer={openInsertedComposer}
-                      onClearInsertedComposer={clearInsertedComposer}
-                      onBeginTextEditing={clearNodeSelection}
-                      activeDraggedNodeId={activeDraggedNodeId}
-                      activeDraggedNodePayload={activeDraggedNodePayload}
-                      onSetActiveDraggedNodeId={setActiveDraggedNodeId}
-                      onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
-                      onSetSelectedNodeIds={setExplicitSelectedNodeIds}
-                      buildDraggedNodePayload={buildDraggedNodePayload}
-                      onDropDraggedNodes={dropDraggedNodes}
-                      onSelectionStart={beginNodeSelection}
-                      onSelectionExtend={extendNodeSelection}
-                      availableTags={sortedTags}
-                      pagesByTitle={pagesByTitle}
-                      pagesById={pagesById}
-                      onOpenPage={handleSelectPage}
-                      onOpenNode={handleOpenLinkedNode}
-                      onOpenTag={openFindPaletteForQuery}
-                      onOpenFindQuery={openFindPaletteForQuery}
-                      recurringCompletionMode={recurringCompletionMode}
-                      mobileIndentStep={SIDEBAR_MOBILE_INDENT_STEP}
-                    />
+                  <div
+                    className={clsx(
+                      "grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out motion-reduce:transition-none",
+                      showSidebarTextSectionContent
+                        ? "mt-0 grid-rows-[1fr] opacity-100"
+                        : "pointer-events-none mt-0 grid-rows-[0fr] opacity-0",
+                    )}
+                  >
+                    <div
+                      aria-hidden={!showSidebarTextSectionContent}
+                      className="min-h-0 overflow-hidden"
+                    >
+                      <div className="space-y-1">
+                        <OutlineNodeList
+                          nodes={sidebarNodes}
+                          ownerKey={ownerKey}
+                          pageId={sidebarTree?.page._id as Id<"pages">}
+                          nodeBacklinkCounts={sidebarNodeBacklinkCounts}
+                          nodeMap={sidebarNodeMap}
+                          createNodesBatch={createNodesBatch}
+                          insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+                          updateNode={updateNode}
+                          moveNode={moveNode}
+                          splitNode={splitNode}
+                          replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                          setNodeTreeArchived={setNodeTreeArchived}
+                          isPageReadOnly={false}
+                          collapsedNodeIds={collapsedNodeIds}
+                          selectedNodeIds={selectedNodeIds}
+                          selectionAnchorNodeId={selectionAnchorNodeId}
+                          onToggleNodeCollapsed={toggleNodeCollapsed}
+                          onSelectSingleNode={selectSingleNode}
+                          onSelectNodeRange={selectNodeRange}
+                          onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
+                          pendingInsertedComposer={pendingInsertedComposer}
+                          onOpenInsertedComposer={openInsertedComposer}
+                          onClearInsertedComposer={clearInsertedComposer}
+                          onBeginTextEditing={clearNodeSelection}
+                          activeDraggedNodeId={activeDraggedNodeId}
+                          activeDraggedNodePayload={activeDraggedNodePayload}
+                          onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                          onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                          onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                          buildDraggedNodePayload={buildDraggedNodePayload}
+                          onDropDraggedNodes={dropDraggedNodes}
+                          onSelectionStart={beginNodeSelection}
+                          onSelectionExtend={extendNodeSelection}
+                          availableTags={sortedTags}
+                          pagesByTitle={pagesByTitle}
+                          pagesById={pagesById}
+                          onOpenPage={handleSelectPage}
+                          onOpenNode={handleOpenLinkedNode}
+                          onOpenTag={openFindPaletteForQuery}
+                          onOpenFindQuery={openFindPaletteForQuery}
+                          recurringCompletionMode={recurringCompletionMode}
+                          mobileIndentStep={SIDEBAR_MOBILE_INDENT_STEP}
+                        />
+                      </div>
+                    </div>
                   </div>
                 ) : (
                   <div className="space-y-3">
@@ -6941,53 +7059,100 @@ function ConfiguredWorkspace({
                 <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
-                      Journal
+                      All
                     </p>
                     <button
                       type="button"
-                      onClick={() => setIsJournalSectionCollapsed((current) => !current)}
+                      onClick={() => setIsAllSectionCollapsed((current) => !current)}
                       className="flex h-8 w-8 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold leading-none text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                      aria-label={showJournalSectionContent ? "Collapse journal pages" : "Expand journal pages"}
+                      aria-label={showAllSectionContent ? "Collapse all pages" : "Expand all pages"}
                     >
-                      {showJournalSectionContent ? "−" : "+"}
+                      {showAllSectionContent ? "−" : "+"}
                     </button>
                   </div>
                   <div
                     className={clsx(
                       "grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out motion-reduce:transition-none",
-                      showJournalSectionContent
+                      showAllSectionContent
                         ? "mt-3 grid-rows-[1fr] opacity-100"
                         : "pointer-events-none mt-0 grid-rows-[0fr] opacity-0",
                     )}
                   >
                     <div
-                      aria-hidden={!showJournalSectionContent}
+                      aria-hidden={!showAllSectionContent}
                       className="min-h-0 overflow-hidden"
                     >
-                      {journalPages.length === 0 ? (
+                      {allActivePagesByType.length === 0 ? (
                         <p className="text-sm text-[var(--workspace-text-faint)]">
-                          No journal pages.
+                          No active pages.
                         </p>
                       ) : (
-                        <div className="space-y-1">
-                          {journalPages.map((page) => (
-                            <button
-                              key={page._id}
-                              type="button"
-                              onClick={() => handleSelectPage(page._id)}
-                              className={clsx(
-                                "block w-full px-2 py-1.5 text-left text-sm transition",
-                                selectedPageId === page._id
-                                  ? "bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
-                                  : "text-[var(--workspace-text-strong)] hover:bg-[var(--workspace-surface-accent)]",
-                              )}
-                            >
-                              <span>{page.title}</span>
-                              <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none text-[var(--workspace-text-faint)]">
-                                {getPageTypeEmoji(page)}
-                              </span>
-                            </button>
-                          ))}
+                        <div className="space-y-3">
+                          {allActivePagesByType.map((group) => {
+                            const isGroupCollapsed = collapsedAllPageTypeSections.has(group.label);
+                            const showGroupContent = !isGroupCollapsed;
+                            return (
+                              <div key={group.label}>
+                                <div className="flex items-center justify-between gap-3">
+                                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                                    {group.label}
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setCollapsedAllPageTypeSections((current) => {
+                                        const next = new Set(current);
+                                        if (next.has(group.label)) {
+                                          next.delete(group.label);
+                                        } else {
+                                          next.add(group.label);
+                                        }
+                                        return next;
+                                      })
+                                    }
+                                    className="flex h-7 w-7 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold leading-none text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                                    aria-label={showGroupContent ? `Collapse ${group.label} pages` : `Expand ${group.label} pages`}
+                                  >
+                                    {showGroupContent ? "−" : "+"}
+                                  </button>
+                                </div>
+                                <div
+                                  className={clsx(
+                                    "grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out motion-reduce:transition-none",
+                                    showGroupContent
+                                      ? "mt-2 grid-rows-[1fr] opacity-100"
+                                      : "pointer-events-none mt-0 grid-rows-[0fr] opacity-0",
+                                  )}
+                                >
+                                  <div
+                                    aria-hidden={!showGroupContent}
+                                    className="min-h-0 overflow-hidden"
+                                  >
+                                    <div className="space-y-1">
+                                      {group.pages.map((page) => (
+                                        <button
+                                          key={page._id}
+                                          type="button"
+                                          onClick={() => handleSelectPage(page._id)}
+                                          className={clsx(
+                                            "block w-full px-2 py-1.5 text-left text-sm transition",
+                                            selectedPageId === page._id
+                                              ? "bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
+                                              : "text-[var(--workspace-text-strong)] hover:bg-[var(--workspace-surface-accent)]",
+                                          )}
+                                        >
+                                          <span>{page.title}</span>
+                                          <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none text-[var(--workspace-text-faint)]">
+                                            {getPageTypeEmoji(page)}
+                                          </span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
