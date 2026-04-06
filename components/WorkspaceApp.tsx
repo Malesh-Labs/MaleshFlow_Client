@@ -6658,7 +6658,7 @@ function ConfiguredWorkspace({
         ) : null}
       </div>
       {isWorkspaceChatOpen ? (
-        <div className="mx-auto flex h-screen w-full max-w-6xl flex-col px-4 pb-6 pt-24 sm:px-8 sm:pt-28">
+        <div className="mx-auto flex h-screen w-full max-w-6xl flex-col px-4 pb-[calc(env(safe-area-inset-bottom,0px)+7rem)] pt-24 sm:px-8 sm:pb-8 sm:pt-28">
           <div className="min-h-0 flex-1 overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]">
             <WorkspaceAiChatPanel
               ownerKey={ownerKey}
@@ -9738,7 +9738,7 @@ function WorkspaceAiChatPanel({
           Start a persistent workspace conversation.
         </div>
       )}
-      <div className="relative shrink-0 border-t border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-5 py-4">
+      <div className="relative shrink-0 border-t border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-5 pb-[calc(env(safe-area-inset-bottom,0px)+1.25rem)] pt-4 sm:pb-4">
         {isLoading ? (
           <div className="mb-3 flex items-center justify-between gap-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
             <span>AI is responding…</span>
