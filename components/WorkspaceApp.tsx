@@ -109,6 +109,7 @@ const RECURRING_TASK_COMPLETION_MODE_STORAGE_KEY =
 const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
 const OUTLINE_CLIPBOARD_MIME_TYPE = "application/x-maleshflow-outline";
 const WORKSPACE_AI_CHAT_TEXTAREA_ID = "workspace-ai-chat-textarea";
+const WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY = "maleshflow-workspace-ai-chat-open";
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
@@ -2372,7 +2373,9 @@ function ConfiguredWorkspace({
   const [isPlannerAddingRandomTask, setIsPlannerAddingRandomTask] = useState(false);
   const [isPlannerUpdatingFocus, setIsPlannerUpdatingFocus] = useState(false);
   const [isPlannerResolvingNextTask, setIsPlannerResolvingNextTask] = useState(false);
-  const [isWorkspaceChatOpen, setIsWorkspaceChatOpen] = useState(false);
+  const [isWorkspaceChatOpen, setIsWorkspaceChatOpen] = useState(() =>
+    readStoredBoolean(WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY, false),
+  );
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("pages");
   const [paletteQuery, setPaletteQuery] = useState("");
@@ -3886,6 +3889,7 @@ function ConfiguredWorkspace({
     window.sessionStorage.removeItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
+    window.sessionStorage.removeItem(WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY);
     window.localStorage.removeItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(JOURNAL_SECTION_COLLAPSE_STORAGE_KEY);
@@ -5326,6 +5330,17 @@ function ConfiguredWorkspace({
   }, [isWorkspaceChatOpen]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.sessionStorage.setItem(
+      WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY,
+      isWorkspaceChatOpen ? "true" : "false",
+    );
+  }, [isWorkspaceChatOpen]);
+
+  useEffect(() => {
     if (
       !paletteOpen ||
       paletteMode === "archive" ||
@@ -6477,6 +6492,19 @@ function ConfiguredWorkspace({
           <button
             type="button"
             onMouseDown={(event) => event.preventDefault()}
+            onClick={toggleWorkspaceChat}
+            className={clsx(
+              "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition",
+              isWorkspaceChatOpen
+                ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
+                : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+            )}
+          >
+            AI Chat
+          </button>
+          <button
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
             onClick={() => openPalette(lastPaletteModeRef.current)}
             className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
           >
@@ -6499,19 +6527,6 @@ function ConfiguredWorkspace({
             className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-40"
           >
             Redo
-          </button>
-          <button
-            type="button"
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={toggleWorkspaceChat}
-            className={clsx(
-              "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition",
-              isWorkspaceChatOpen
-                ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
-                : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
-            )}
-          >
-            AI Chat
           </button>
         </div>
         {embeddingRebuildTracker ? (
@@ -6655,6 +6670,7 @@ function ConfiguredWorkspace({
               isLoading={isWorkspaceChatLoading}
               error={workspaceChatError}
               onClearError={() => setWorkspaceChatError("")}
+              onDismiss={() => setIsWorkspaceChatOpen(false)}
             />
           </div>
         </div>
@@ -9391,6 +9407,7 @@ function WorkspaceAiChatPanel({
   isLoading,
   error,
   onClearError,
+  onDismiss,
 }: {
   ownerKey: string;
   availableTags: SidebarTagResult[];
@@ -9401,6 +9418,7 @@ function WorkspaceAiChatPanel({
   isLoading: boolean;
   error: string;
   onClearError: () => void;
+  onDismiss: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
@@ -9408,9 +9426,8 @@ function WorkspaceAiChatPanel({
   const shouldStickHistoryToBottomRef = useRef(true);
   const [caretPosition, setCaretPosition] = useState<number | null>(null);
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
-  const [expandedRequestMessageIds, setExpandedRequestMessageIds] = useState<Set<string>>(
-    () => new Set(),
-  );
+  const [isShowingRequest, setIsShowingRequest] = useState(false);
+  const [isShowingRequestStructure, setIsShowingRequestStructure] = useState(false);
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
   const activeTagToken = activeLinkToken ? null : getActiveTagToken(draft, caretPosition);
   const linkTargetResults = useQuery(
@@ -9439,6 +9456,44 @@ function WorkspaceAiChatPanel({
       ? 0
       : Math.min(linkHighlightIndex, autocompleteSuggestions.length - 1);
   const showHistoryPanel = messages.length > 0 || error.length > 0 || isLoading;
+  const latestAssistantMetadata = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (!message || message.role !== "assistant") {
+        continue;
+      }
+      const metadata = readWorkspaceKnowledgeMessageMetadata(message);
+      if (metadata?.request) {
+        return metadata;
+      }
+    }
+    return null;
+  }, [messages]);
+  const requestStructurePreview = useMemo(
+    () =>
+      [
+        "System prompt:",
+        "Today is ___ ___, ____.",
+        "Answer using only the provided knowledge snippets.",
+        "",
+        "User prompt structure:",
+        "Recent conversation",
+        "Question: ...",
+        "Explicitly linked context:",
+        "  # Today",
+        "    Focus section folded under the top day",
+        "    Top planner day items",
+        "  # Upcoming",
+        "    Later planner days",
+        "  # Anytime",
+        "    Planner sidebar",
+        "  # Backlog",
+        "    Other task pages that are not excluded and do not already have due-dated work",
+        "  Linked pages / linked nodes",
+        "Knowledge base snippets",
+      ].join("\n"),
+    [],
+  );
 
   useEffect(() => {
     autoResizeTextarea(textareaRef.current);
@@ -9530,7 +9585,8 @@ function WorkspaceAiChatPanel({
       data-workspace-ai-chat-panel="true"
       className="flex h-full min-h-0 flex-col overflow-hidden"
     >
-      <div className="flex items-center justify-between gap-3 border-b border-[var(--workspace-border-subtle)] px-5 py-3">
+      <div className="sticky top-0 z-10 border-b border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)]">
+      <div className="flex items-center justify-between gap-3 px-5 py-3">
         <div className="min-w-0">
           <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
             AI Chat
@@ -9541,6 +9597,55 @@ function WorkspaceAiChatPanel({
               : "Persistent workspace conversation"}
           </p>
         </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setIsShowingRequest((current) => !current);
+              if (!isShowingRequest) {
+                setIsShowingRequestStructure(false);
+              }
+            }}
+            disabled={!latestAssistantMetadata?.request}
+            className="border border-[var(--workspace-border)] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {isShowingRequest ? "Hide Request" : "Show Request"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsShowingRequestStructure((current) => !current);
+              if (!isShowingRequestStructure) {
+                setIsShowingRequest(false);
+              }
+            }}
+            className="border border-[var(--workspace-border)] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+          >
+            {isShowingRequestStructure ? "Hide Request Structure" : "Show Request Structure"}
+          </button>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="border border-[var(--workspace-border)] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+      {isShowingRequest && latestAssistantMetadata?.request ? (
+        <div className="border-t border-[var(--workspace-border-subtle)] px-5 py-4">
+          <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border border-[var(--workspace-border-subtle)] bg-[color-mix(in_srgb,var(--workspace-surface)_70%,black)] px-3 py-3 text-xs leading-6 text-[var(--workspace-text-subtle)]">
+            {latestAssistantMetadata.request}
+          </pre>
+        </div>
+      ) : null}
+      {isShowingRequestStructure ? (
+        <div className="border-t border-[var(--workspace-border-subtle)] px-5 py-4">
+          <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words border border-[var(--workspace-border-subtle)] bg-[color-mix(in_srgb,var(--workspace-surface)_70%,black)] px-3 py-3 text-xs leading-6 text-[var(--workspace-text-subtle)]">
+            {requestStructurePreview}
+          </pre>
+        </div>
+      ) : null}
       </div>
       {showHistoryPanel ? (
         <div
@@ -9583,34 +9688,6 @@ function WorkspaceAiChatPanel({
                     <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[var(--workspace-text)]">
                       {message.text}
                     </p>
-                    {!isUser && metadata?.request ? (
-                      <div className="mt-4 border-t border-[var(--workspace-border-subtle)] pt-3">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setExpandedRequestMessageIds((current) => {
-                              const next = new Set(current);
-                              if (next.has(message._id as string)) {
-                                next.delete(message._id as string);
-                              } else {
-                                next.add(message._id as string);
-                              }
-                              return next;
-                            });
-                          }}
-                          className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-accent)] transition hover:text-[var(--workspace-brand-hover)]"
-                        >
-                          {expandedRequestMessageIds.has(message._id as string)
-                            ? "Hide Request"
-                            : "Show Request"}
-                        </button>
-                        {expandedRequestMessageIds.has(message._id as string) ? (
-                          <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words border border-[var(--workspace-border-subtle)] bg-[color-mix(in_srgb,var(--workspace-surface)_70%,black)] px-3 py-3 text-xs leading-6 text-[var(--workspace-text-subtle)]">
-                            {metadata.request}
-                          </pre>
-                        ) : null}
-                      </div>
-                    ) : null}
                     {!isUser && metadata ? (
                       <div className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--workspace-border-subtle)] pt-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
                           <span>{metadata.model}</span>
