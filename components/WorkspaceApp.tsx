@@ -6671,6 +6671,7 @@ function ConfiguredWorkspace({
               error={workspaceChatError}
               onClearError={() => setWorkspaceChatError("")}
               onDismiss={() => setIsWorkspaceChatOpen(false)}
+              isMobileLayout={isMobileLayout}
             />
           </div>
         </div>
@@ -9408,6 +9409,7 @@ function WorkspaceAiChatPanel({
   error,
   onClearError,
   onDismiss,
+  isMobileLayout,
 }: {
   ownerKey: string;
   availableTags: SidebarTagResult[];
@@ -9419,6 +9421,7 @@ function WorkspaceAiChatPanel({
   error: string;
   onClearError: () => void;
   onDismiss: () => void;
+  isMobileLayout: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
@@ -9469,6 +9472,13 @@ function WorkspaceAiChatPanel({
     }
     return null;
   }, [messages]);
+  const requestButtonLabel = isShowingRequest
+    ? (isMobileLayout ? "Hide SR" : "Hide Request")
+    : (isMobileLayout ? "SR" : "Show Request");
+  const requestStructureButtonLabel = isShowingRequestStructure
+    ? (isMobileLayout ? "Hide SRC" : "Hide Request Structure")
+    : (isMobileLayout ? "SRC" : "Show Request Structure");
+  const dismissButtonLabel = isMobileLayout ? "DSM" : "Dismiss";
   const requestStructurePreview = useMemo(
     () =>
       [
@@ -9609,7 +9619,7 @@ function WorkspaceAiChatPanel({
             disabled={!latestAssistantMetadata?.request}
             className="border border-[var(--workspace-border)] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {isShowingRequest ? "Hide Request" : "Show Request"}
+            {requestButtonLabel}
           </button>
           <button
             type="button"
@@ -9621,14 +9631,14 @@ function WorkspaceAiChatPanel({
             }}
             className="border border-[var(--workspace-border)] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
           >
-            {isShowingRequestStructure ? "Hide Request Structure" : "Show Request Structure"}
+            {requestStructureButtonLabel}
           </button>
           <button
             type="button"
             onClick={onDismiss}
             className="border border-[var(--workspace-border)] px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
           >
-            Dismiss
+            {dismissButtonLabel}
           </button>
         </div>
       </div>
