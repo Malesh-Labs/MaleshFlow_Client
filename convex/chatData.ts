@@ -210,6 +210,7 @@ export const storeAssistantPlan = internalMutation({
     text: v.string(),
     preview: v.array(v.string()),
     proposedPlan: v.any(),
+    metadata: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -222,6 +223,7 @@ export const storeAssistantPlan = internalMutation({
       text: args.text,
       preview: args.preview,
       proposedPlan: args.proposedPlan,
+      metadata: args.metadata,
       status: "pending_approval",
       createdAt: now,
     });

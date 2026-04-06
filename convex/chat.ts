@@ -78,6 +78,13 @@ const getLinkedKnowledgeContextRef = internal.workspace.getLinkedKnowledgeContex
 
 const RECENT_CHAT_CONTEXT_MESSAGE_COUNT = 4;
 
+function buildAiRequestPreview(args: {
+  systemPrompt: string;
+  userPrompt: string;
+}) {
+  return `System:\n${args.systemPrompt}\n\nUser:\n${args.userPrompt}`;
+}
+
 function getOpenAIClient() {
   if (!process.env.OPENAI_API_KEY) {
     return null;
@@ -230,6 +237,39 @@ export const runChatPlanner = action({
       pageId: args.pageId as string | undefined,
       workspace: workspace as PlannerWorkspace,
     });
+    const systemPrompt =
+      "You are planning safe workspace edits for a personal outliner. Only propose operations using real pageId and nodeId values present in the provided context. Never invent ids. If the request is ambiguous, return zero operations and explain why. All edits require later human approval.";
+    const userPrompt = [
+      `Prompt: ${args.prompt}`,
+      "",
+      "Pages:",
+      workspace.pages
+        .slice(0, 40)
+        .map((page: { _id: string; title: string }) => `- ${page._id}: ${page.title}`)
+        .join("\n"),
+      "",
+      "Current page nodes:",
+      workspace.pageNodes
+        .slice(0, 80)
+        .map((node: { _id: string; text: string; kind: string; taskStatus: string | null }) => `- ${node._id}: ${node.text} [${node.kind}/${node.taskStatus ?? "n/a"}]`)
+        .join("\n"),
+      "",
+      "Open tasks:",
+      workspace.tasks
+        .slice(0, 40)
+        .map((node: { _id: string; text: string }) => `- ${node._id}: ${node.text}`)
+        .join("\n"),
+      "",
+      "Recent conversation:",
+      priorMessages
+        .slice(0, -1)
+        .map((message: { role: string; text: string }) => `${message.role}: ${message.text}`)
+        .join("\n"),
+    ].join("\n");
+    const requestPreview = buildAiRequestPreview({
+      systemPrompt,
+      userPrompt,
+    });
 
     const client = getOpenAIClient();
     if (client) {
@@ -239,38 +279,11 @@ export const runChatPlanner = action({
           input: [
             {
               role: "system",
-              content:
-                "You are planning safe workspace edits for a personal outliner. Only propose operations using real pageId and nodeId values present in the provided context. Never invent ids. If the request is ambiguous, return zero operations and explain why. All edits require later human approval.",
+              content: systemPrompt,
             },
             {
               role: "user",
-              content: [
-                `Prompt: ${args.prompt}`,
-                "",
-                "Pages:",
-                workspace.pages
-                  .slice(0, 40)
-                  .map((page: { _id: string; title: string }) => `- ${page._id}: ${page.title}`)
-                  .join("\n"),
-                "",
-                "Current page nodes:",
-                workspace.pageNodes
-                  .slice(0, 80)
-                  .map((node: { _id: string; text: string; kind: string; taskStatus: string | null }) => `- ${node._id}: ${node.text} [${node.kind}/${node.taskStatus ?? "n/a"}]`)
-                  .join("\n"),
-                "",
-                "Open tasks:",
-                workspace.tasks
-                  .slice(0, 40)
-                  .map((node: { _id: string; text: string }) => `- ${node._id}: ${node.text}`)
-                  .join("\n"),
-                "",
-                "Recent conversation:",
-                priorMessages
-                  .slice(0, -1)
-                  .map((message: { role: string; text: string }) => `${message.role}: ${message.text}`)
-                  .join("\n"),
-              ].join("\n"),
+              content: userPrompt,
             },
           ],
           text: {
@@ -291,6 +304,9 @@ export const runChatPlanner = action({
       text: plan.rationale,
       preview: plan.preview,
       proposedPlan: plan,
+      metadata: {
+        request: requestPreview,
+      },
     });
 
     return {
@@ -351,6 +367,71 @@ export const runPlannerChat = action({
     };
 
     let plan = fallbackPlan;
+    const systemPrompt =
+      "You plan safe edits for a personal daily planner. Only return operations using real planner node ids that appear in the provided context. Prefer complete_planner_task when the user clearly finished a linked planner task. Use delete_planner_node only for planner-local items. If the request is ambiguous, return zero operations and explain why. All changes require later human approval.";
+    const userPrompt = [
+      `Prompt: ${args.prompt}`,
+      "",
+      `Planner page: ${plannerContext.page.title}`,
+      `Current day: ${plannerContext.currentDayTitle ?? "(none)"}`,
+      `Current day node id: ${plannerContext.currentDayId ?? "(none)"}`,
+      "",
+      "Current day lines:",
+      plannerContext.currentDayLines.length > 0
+        ? plannerContext.currentDayLines
+            .map(
+              (line: {
+                nodeId: string;
+                text: string;
+                linkedSourceTaskId: string | null;
+                status: string | null;
+              }) =>
+                `- ${line.nodeId}: ${line.text} [${line.status ?? "n/a"}]${line.linkedSourceTaskId ? ` -> ${line.linkedSourceTaskId}` : ""}`,
+            )
+            .join("\n")
+        : "- none",
+      "",
+      "Anytime:",
+      plannerContext.anytimeLines.length > 0
+        ? plannerContext.anytimeLines
+            .map(
+              (line: {
+                nodeId: string;
+                text: string;
+                linkedSourceTaskId: string | null;
+                status: string | null;
+                depth: number;
+              }) =>
+                `${"  ".repeat(line.depth)}- ${line.nodeId}: ${line.text} [${line.status ?? "n/a"}]${line.linkedSourceTaskId ? ` -> ${line.linkedSourceTaskId}` : ""}`,
+            )
+            .join("\n")
+        : "- none",
+      "",
+      "Open source tasks:",
+      plannerContext.openSourceTasks.length > 0
+        ? plannerContext.openSourceTasks
+            .map(
+              (task: {
+                nodeId: string;
+                text: string;
+                dueAt: number | null;
+                dueEndAt: number | null;
+              }) =>
+                `- ${task.nodeId}: ${task.text} [${task.dueAt ?? "no due"}${task.dueEndAt ? ` -> ${task.dueEndAt}` : ""}]`,
+            )
+            .join("\n")
+        : "- none",
+      "",
+      "Recent conversation:",
+      priorMessages
+        .slice(0, -1)
+        .map((message: { role: string; text: string }) => `${message.role}: ${message.text}`)
+        .join("\n"),
+    ].join("\n");
+    const requestPreview = buildAiRequestPreview({
+      systemPrompt,
+      userPrompt,
+    });
     const client = getOpenAIClient();
     if (client) {
       try {
@@ -359,70 +440,11 @@ export const runPlannerChat = action({
           input: [
             {
               role: "system",
-              content:
-                "You plan safe edits for a personal daily planner. Only return operations using real planner node ids that appear in the provided context. Prefer complete_planner_task when the user clearly finished a linked planner task. Use delete_planner_node only for planner-local items. If the request is ambiguous, return zero operations and explain why. All changes require later human approval.",
+              content: systemPrompt,
             },
             {
               role: "user",
-              content: [
-                `Prompt: ${args.prompt}`,
-                "",
-                `Planner page: ${plannerContext.page.title}`,
-                `Current day: ${plannerContext.currentDayTitle ?? "(none)"}`,
-                `Current day node id: ${plannerContext.currentDayId ?? "(none)"}`,
-                "",
-                "Current day lines:",
-                plannerContext.currentDayLines.length > 0
-                  ? plannerContext.currentDayLines
-                      .map(
-                        (line: {
-                          nodeId: string;
-                          text: string;
-                          linkedSourceTaskId: string | null;
-                          status: string | null;
-                        }) =>
-                          `- ${line.nodeId}: ${line.text} [${line.status ?? "n/a"}]${line.linkedSourceTaskId ? ` -> ${line.linkedSourceTaskId}` : ""}`,
-                      )
-                      .join("\n")
-                  : "- none",
-                "",
-                "Anytime:",
-                plannerContext.anytimeLines.length > 0
-                  ? plannerContext.anytimeLines
-                      .map(
-                        (line: {
-                          nodeId: string;
-                          text: string;
-                          linkedSourceTaskId: string | null;
-                          status: string | null;
-                          depth: number;
-                        }) =>
-                          `${"  ".repeat(line.depth)}- ${line.nodeId}: ${line.text} [${line.status ?? "n/a"}]${line.linkedSourceTaskId ? ` -> ${line.linkedSourceTaskId}` : ""}`,
-                      )
-                      .join("\n")
-                  : "- none",
-                "",
-                "Open source tasks:",
-                plannerContext.openSourceTasks.length > 0
-                  ? plannerContext.openSourceTasks
-                      .map(
-                        (task: {
-                          nodeId: string;
-                          text: string;
-                          dueAt: number | null;
-                          dueEndAt: number | null;
-                        }) =>
-                          `- ${task.nodeId}: ${task.text} [${task.dueAt ?? "no due"}${task.dueEndAt ? ` -> ${task.dueEndAt}` : ""}]`,
-                      )
-                      .join("\n")
-                  : "- none",
-                "",
-                "Recent conversation:",
-                priorMessages
-                  .slice(0, -1)
-                  .map((message: { role: string; text: string }) => `${message.role}: ${message.text}`)
-                  .join("\n"),
-              ].join("\n"),
+              content: userPrompt,
             },
           ],
           text: {
@@ -443,6 +465,9 @@ export const runPlannerChat = action({
       text: plan.rationale,
       preview: plan.preview,
       proposedPlan: plan,
+      metadata: {
+        request: requestPreview,
+      },
     });
 
     return {
@@ -598,6 +623,12 @@ export const rewriteModelSection = action({
       {
         threadId,
         text: summary,
+        metadata: {
+          request: buildAiRequestPreview({
+            systemPrompt,
+            userPrompt,
+          }),
+        },
       },
     );
 
