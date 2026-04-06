@@ -114,6 +114,11 @@ export function hasRenderableInlineFormatting(text: string) {
   );
 }
 
+export function stripInlineFormattingMarkers(text: string) {
+  const { segments } = splitTextForInlineFormatting(text);
+  return segments.map((segment) => segment.text).join("");
+}
+
 export function applySelectedInlineFormattingShortcut(
   text: string,
   selectionStart: number,

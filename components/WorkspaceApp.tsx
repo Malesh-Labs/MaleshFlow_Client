@@ -35,6 +35,7 @@ import { cycleHeadingSyntax, parseHeadingSyntax } from "@/lib/domain/displaySynt
 import {
   applySelectedInlineFormattingShortcut,
   hasRenderableInlineFormatting,
+  stripInlineFormattingMarkers,
   splitTextForInlineFormatting,
 } from "@/lib/domain/inlineFormatting";
 import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
@@ -1498,7 +1499,7 @@ function buildLinkPreviewSegments(
       const targetNode = nodeTargetsById.get(match.link.targetNodeRef);
       const nodeLabel = getExplicitWikiLinkPreviewText(match.link.label);
       const renderedTargetNodeText = targetNode
-        ? replaceLinkMarkupWithLabels(targetNode.text).trim()
+        ? stripInlineFormattingMarkers(replaceLinkMarkupWithLabels(targetNode.text)).trim()
         : "";
       segments.push({
         key: `node:${match.start}`,

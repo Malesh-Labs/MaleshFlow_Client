@@ -27,6 +27,7 @@ import {
 import {
   applySelectedInlineFormattingShortcut,
   hasRenderableInlineFormatting,
+  stripInlineFormattingMarkers,
   splitTextForInlineFormatting,
 } from "../lib/domain/inlineFormatting";
 import {
@@ -698,6 +699,13 @@ test("hasRenderableInlineFormatting detects plain inline emphasis without requir
   assert.equal(hasRenderableInlineFormatting("~~gone~~ text"), true);
   assert.equal(hasRenderableInlineFormatting("`code` text"), true);
   assert.equal(hasRenderableInlineFormatting("__"), false);
+});
+
+test("stripInlineFormattingMarkers removes inline emphasis tokens but keeps text", () => {
+  assert.equal(
+    stripInlineFormattingMarkers("Before ~~gone~~ __soft__ **strong** `code` after"),
+    "Before gone soft strong code after",
+  );
 });
 
 test("applySelectedInlineFormattingShortcut wraps and unwraps selected text", () => {
