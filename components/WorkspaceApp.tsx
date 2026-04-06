@@ -9680,13 +9680,13 @@ function WorkspaceAiChatPanel({
                 <div
                   key={message._id}
                   className={clsx(
-                    "flex",
+                    "flex min-w-0",
                     isUser ? "justify-end" : "justify-start",
                   )}
                 >
                   <div
                     className={clsx(
-                      "max-w-3xl border px-4 py-3",
+                      "min-w-0 max-w-[min(48rem,100%)] border px-4 py-3",
                       isUser
                         ? "border-[var(--workspace-brand)] bg-[color-mix(in_srgb,var(--workspace-brand)_14%,transparent)]"
                         : "border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)]",
@@ -9695,13 +9695,13 @@ function WorkspaceAiChatPanel({
                     <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
                       {isUser ? "You" : "AI"}
                     </p>
-                    <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[var(--workspace-text)]">
+                    <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[var(--workspace-text)] [overflow-wrap:anywhere]">
                       {message.text}
                     </p>
                     {!isUser && metadata ? (
-                      <div className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--workspace-border-subtle)] pt-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                          <span>{metadata.model}</span>
-                          <span>
+                      <div className="mt-4 flex min-w-0 items-center justify-between gap-3 border-t border-[var(--workspace-border-subtle)] pt-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                          <span className="min-w-0 shrink-0">{metadata.model}</span>
+                          <span className="min-w-0 text-right [overflow-wrap:anywhere]">
                             {metadata.error
                               ? "OpenAI issue surfaced"
                               : metadata.sources.length > 0
