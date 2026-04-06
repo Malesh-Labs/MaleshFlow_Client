@@ -60,7 +60,11 @@ export function splitTextForInlineFormatting(
         }
       | null = null;
 
-    for (const marker of FORMAT_MARKERS) {
+    const allowedMarkers = state.code
+      ? FORMAT_MARKERS.filter((marker) => marker.field === "code")
+      : FORMAT_MARKERS;
+
+    for (const marker of allowedMarkers) {
       const markerIndex = remaining.indexOf(marker.token);
       if (markerIndex === -1) {
         continue;

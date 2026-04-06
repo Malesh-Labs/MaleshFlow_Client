@@ -28,6 +28,8 @@ const NODE_LINK_PATTERN = /\(\(([a-zA-Z0-9_-]+)\)\)/g;
 const MARKDOWN_LINK_PATTERN = /\[([^\]]+)\]\(([^)\s]+)\)/g;
 const PLAIN_URL_PATTERN =
   /(?:https?:\/\/[^\s<]+|www\.[^\s<]+|(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?:\/[^\s<]*)?)/g;
+const PLAIN_EMAIL_PATTERN =
+  /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const PAGE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?page:([a-zA-Z0-9_-]+)$/;
 const NODE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?node:([a-zA-Z0-9_-]+)$/;
 const COMPLETE_MARKDOWN_LINK_PATTERN = /^\[([^\]]+)\]\(([^)]*)\)$/;
@@ -58,6 +60,17 @@ function isValidPlainUrlBoundary(text: string, start: number) {
 
   const previousCharacter = text[start - 1];
   return previousCharacter ? !/[A-Za-z0-9_@]/.test(previousCharacter) : true;
+}
+
+function isValidPlainEmailBoundary(text: string, start: number, end: number) {
+  const previousCharacter = start > 0 ? text[start - 1] : "";
+  const nextCharacter = end < text.length ? text[end] : "";
+
+  const emailCharacterPattern = /[A-Za-z0-9._%+-]/;
+  return (
+    (!previousCharacter || !emailCharacterPattern.test(previousCharacter)) &&
+    (!nextCharacter || !emailCharacterPattern.test(nextCharacter))
+  );
 }
 
 export function extractLinkMatches(text: string) {
@@ -182,6 +195,41 @@ export function extractLinkMatches(text: string) {
         label: targetUrl,
         text: targetUrl,
         targetUrl,
+      },
+    });
+  }
+
+  for (const match of text.matchAll(PLAIN_EMAIL_PATTERN)) {
+    const rawEmail = match[0]?.trim();
+    const start = match.index ?? 0;
+    if (!rawEmail) {
+      continue;
+    }
+
+    const trimmedEmail = trimTrailingUrlPunctuation(rawEmail);
+    const end = start + trimmedEmail.length;
+    if (
+      trimmedEmail.length === 0 ||
+      !isValidPlainEmailBoundary(text, start, end)
+    ) {
+      continue;
+    }
+
+    const overlapsExistingMatch = matches.some((existingMatch) =>
+      rangesOverlap(existingMatch, { start, end }),
+    );
+    if (overlapsExistingMatch) {
+      continue;
+    }
+
+    matches.push({
+      start,
+      end,
+      link: {
+        kind: "external",
+        label: trimmedEmail,
+        text: trimmedEmail,
+        targetUrl: `mailto:${trimmedEmail}`,
       },
     });
   }

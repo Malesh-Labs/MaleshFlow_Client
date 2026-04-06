@@ -119,6 +119,27 @@ test("extractLinks finds plain external urls without swallowing punctuation", ()
   ]);
 });
 
+test("extractLinks finds plain email addresses", () => {
+  const links = extractLinks(
+    "Email sam@example.com or support@test.co.uk for details.",
+  );
+
+  assert.deepEqual(links, [
+    {
+      kind: "external",
+      label: "sam@example.com",
+      text: "sam@example.com",
+      targetUrl: "mailto:sam@example.com",
+    },
+    {
+      kind: "external",
+      label: "support@test.co.uk",
+      text: "support@test.co.uk",
+      targetUrl: "mailto:support@test.co.uk",
+    },
+  ]);
+});
+
 test("normalizeCalendarTaskText removes link markup and inline formatting", () => {
   assert.equal(
     normalizeCalendarTaskText("**Pay** __[taxes](https://example.com)__ for [[Home|page:abc]]"),
@@ -219,6 +240,35 @@ test("extractLinkMatches finds plain urls without duplicating markdown links", (
         end: 64,
         kind: "external",
         label: "https://example.com/path",
+      },
+    ],
+  );
+});
+
+test("extractLinkMatches finds plain email addresses without swallowing punctuation", () => {
+  const matches = extractLinkMatches(
+    "Reach me at sam@example.com, then use [docs](https://example.com).",
+  );
+
+  assert.deepEqual(
+    matches.map((match) => ({
+      start: match.start,
+      end: match.end,
+      kind: match.link.kind,
+      label: match.link.label,
+    })),
+    [
+      {
+        start: 12,
+        end: 27,
+        kind: "external",
+        label: "sam@example.com",
+      },
+      {
+        start: 38,
+        end: 65,
+        kind: "external",
+        label: "[docs](https://example.com)",
       },
     ],
   );
@@ -666,6 +716,51 @@ test("splitTextForInlineFormatting applies strike, italic, and bold markers", ()
     ],
   );
 
+  assert.deepEqual(nextState, {
+    strike: false,
+    italic: false,
+    bold: false,
+    code: false,
+  });
+});
+
+test("splitTextForInlineFormatting keeps markers literal inside inline code", () => {
+  const { segments, nextState } = splitTextForInlineFormatting(
+    "before `__test__ **bold** ~~gone~~` after",
+  );
+
+  assert.deepEqual(
+    segments.map((segment) => ({
+      text: segment.text,
+      strike: segment.strike,
+      italic: segment.italic,
+      bold: segment.bold,
+      code: segment.code,
+    })),
+    [
+      {
+        text: "before ",
+        strike: false,
+        italic: false,
+        bold: false,
+        code: false,
+      },
+      {
+        text: "__test__ **bold** ~~gone~~",
+        strike: false,
+        italic: false,
+        bold: false,
+        code: true,
+      },
+      {
+        text: " after",
+        strike: false,
+        italic: false,
+        bold: false,
+        code: false,
+      },
+    ],
+  );
   assert.deepEqual(nextState, {
     strike: false,
     italic: false,
