@@ -10833,7 +10833,8 @@ function OutlineNodeEditor({
         plannerNodeId: node._id as Id<"nodes">,
         completionMode: recurringCompletionMode,
       });
-      history.resetTrackedValue(editorId, editorTarget);
+      history.resetTrackedValue(editorId, editorTarget, saveResult.parsed.text);
+      setDraft(saveResult.parsed.text);
       return;
     }
 
@@ -10874,7 +10875,8 @@ function OutlineNodeEditor({
         plannerNodeId: node._id as Id<"nodes">,
         completionMode: recurringCompletionMode,
       });
-      history.resetTrackedValue(editorId, editorTarget);
+      history.resetTrackedValue(editorId, editorTarget, saveResult.parsed.text);
+      setDraft(saveResult.parsed.text);
       return;
     }
 
