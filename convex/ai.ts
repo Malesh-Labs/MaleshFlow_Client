@@ -284,6 +284,7 @@ type WorkspaceKnowledgeAnswer = {
   }>;
   model: string;
   error: string | null;
+  request: string | null;
 };
 
 type WorkspaceKnowledgeArgs = {
@@ -312,6 +313,7 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
       sources: [],
       model,
       error: null,
+      request: null,
     };
   }
 
@@ -441,6 +443,7 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
       sources: [],
       model,
       error: null,
+      request: null,
     };
   }
 
@@ -452,6 +455,7 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
       sources,
       model,
       error: "OPENAI_API_KEY is not configured in Convex.",
+      request: null,
     };
   }
 
@@ -474,31 +478,35 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
           .join("\n")
       : "";
 
+  const systemPrompt =
+    `${buildTodayPromptLine()} Answer the user's question using only the provided knowledge base snippets. If the snippets are insufficient, say so clearly. Keep the answer concise and grounded. Cite source numbers like [1] when helpful. If no explicit question text is provided, summarize the linked context and surface the most important takeaways.`;
+  const userPrompt = [
+    conversationContext.length > 0 ? "Recent conversation:" : null,
+    conversationContext.length > 0 ? conversationContext : null,
+    conversationContext.length > 0 ? "" : null,
+    messageOnlyQuestion.length > 0 ? `Question: ${semanticQuery}` : null,
+    explicitLinkedContext.trim().length > 0 ? "" : null,
+    explicitLinkedContext.trim().length > 0 ? "Explicitly linked context:" : null,
+    explicitLinkedContext.trim().length > 0 ? explicitLinkedContext : null,
+    sourceContext.trim().length > 0 ? "" : null,
+    sourceContext.trim().length > 0 ? "Knowledge base snippets:" : null,
+    sourceContext.trim().length > 0 ? sourceContext : null,
+  ]
+    .filter((value): value is string => value !== null)
+    .join("\n");
+  const requestPreview = `System:\n${systemPrompt}\n\nUser:\n${userPrompt}`;
+
   try {
     const response = await client.responses.parse({
       model,
       input: [
         {
           role: "system",
-          content:
-            `${buildTodayPromptLine()} Answer the user's question using only the provided knowledge base snippets. If the snippets are insufficient, say so clearly. Keep the answer concise and grounded. Cite source numbers like [1] when helpful. If no explicit question text is provided, summarize the linked context and surface the most important takeaways.`,
+          content: systemPrompt,
         },
         {
           role: "user",
-          content: [
-            conversationContext.length > 0 ? "Recent conversation:" : null,
-            conversationContext.length > 0 ? conversationContext : null,
-            conversationContext.length > 0 ? "" : null,
-            messageOnlyQuestion.length > 0 ? `Question: ${semanticQuery}` : null,
-            explicitLinkedContext.trim().length > 0 ? "" : null,
-            explicitLinkedContext.trim().length > 0 ? "Explicitly linked context:" : null,
-            explicitLinkedContext.trim().length > 0 ? explicitLinkedContext : null,
-            sourceContext.trim().length > 0 ? "" : null,
-            sourceContext.trim().length > 0 ? "Knowledge base snippets:" : null,
-            sourceContext.trim().length > 0 ? sourceContext : null,
-          ]
-            .filter((value): value is string => value !== null)
-            .join("\n"),
+          content: userPrompt,
         },
       ],
       text: {
@@ -513,6 +521,7 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
         sources,
         model,
         error: "OpenAI returned no parsed answer.",
+        request: requestPreview,
       };
     }
 
@@ -537,6 +546,7 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
       sources: chosenSources,
       model,
       error: null,
+      request: requestPreview,
     };
   } catch (error) {
     return {
@@ -547,6 +557,7 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
       sources,
       model,
       error: error instanceof Error ? error.message : "Unknown OpenAI error.",
+      request: requestPreview,
     };
   }
 }
@@ -622,6 +633,7 @@ export const chatWithWorkspace = action({
         sources: [],
         model,
         error: error instanceof Error ? error.message : "Unknown workspace chat error.",
+        request: null,
       };
     }
 
@@ -632,6 +644,7 @@ export const chatWithWorkspace = action({
         kind: "knowledge_response",
         model: response.model,
         error: response.error,
+        request: response.request,
         sources: response.sources.map((source) => ({
           nodeId: source.node._id,
           pageId: source.page?._id ?? null,

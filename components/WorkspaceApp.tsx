@@ -252,6 +252,7 @@ type WorkspaceKnowledgeMessageMetadata = {
   kind: "knowledge_response";
   model: string;
   error: string | null;
+  request: string | null;
   sources: WorkspaceKnowledgeSourceSnapshot[];
 };
 type SidebarTagResult = {
@@ -1202,6 +1203,7 @@ function readWorkspaceKnowledgeMessageMetadata(
     kind: "knowledge_response",
     model: typeof record.model === "string" ? record.model : "gpt-5-mini",
     error: typeof record.error === "string" ? record.error : null,
+    request: typeof record.request === "string" ? record.request : null,
     sources,
   };
 }
@@ -9568,6 +9570,9 @@ function WorkspaceAiChatPanel({
   const shouldStickHistoryToBottomRef = useRef(true);
   const [caretPosition, setCaretPosition] = useState<number | null>(null);
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
+  const [expandedRequestMessageIds, setExpandedRequestMessageIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
   const activeTagToken = activeLinkToken ? null : getActiveTagToken(draft, caretPosition);
   const linkTargetResults = useQuery(
@@ -9740,6 +9745,34 @@ function WorkspaceAiChatPanel({
                     <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[var(--workspace-text)]">
                       {message.text}
                     </p>
+                    {!isUser && metadata?.request ? (
+                      <div className="mt-4 border-t border-[var(--workspace-border-subtle)] pt-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExpandedRequestMessageIds((current) => {
+                              const next = new Set(current);
+                              if (next.has(message._id as string)) {
+                                next.delete(message._id as string);
+                              } else {
+                                next.add(message._id as string);
+                              }
+                              return next;
+                            });
+                          }}
+                          className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-accent)] transition hover:text-[var(--workspace-brand-hover)]"
+                        >
+                          {expandedRequestMessageIds.has(message._id as string)
+                            ? "Hide Request"
+                            : "Show Request"}
+                        </button>
+                        {expandedRequestMessageIds.has(message._id as string) ? (
+                          <pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words border border-[var(--workspace-border-subtle)] bg-[color-mix(in_srgb,var(--workspace-surface)_70%,black)] px-3 py-3 text-xs leading-6 text-[var(--workspace-text-subtle)]">
+                            {metadata.request}
+                          </pre>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {!isUser && metadata ? (
                       <div className="mt-4 flex items-center justify-between gap-3 border-t border-[var(--workspace-border-subtle)] pt-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
                           <span>{metadata.model}</span>
