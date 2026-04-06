@@ -220,6 +220,7 @@ export const runChatPlanner = action({
     })) as PlannerWorkspace;
     const priorMessages = await ctx.runQuery(getThreadMessagesRef, {
       threadId,
+      limit: 2,
     });
 
     let plan: ChatPlan = buildHeuristicPlan({
@@ -264,7 +265,7 @@ export const runChatPlanner = action({
                 "",
                 "Recent conversation:",
                 priorMessages
-                  .slice(-6)
+                  .slice(0, -1)
                   .map((message: { role: string; text: string }) => `${message.role}: ${message.text}`)
                   .join("\n"),
               ].join("\n"),
@@ -333,6 +334,7 @@ export const runPlannerChat = action({
 
     const priorMessages = await ctx.runQuery(getThreadMessagesRef, {
       threadId,
+      limit: 2,
     });
 
     const fallbackPlan: PlannerChatPlan = {
@@ -399,7 +401,7 @@ export const runPlannerChat = action({
                 "",
                 "Recent conversation:",
                 priorMessages
-                  .slice(-6)
+                  .slice(0, -1)
                   .map((message: { role: string; text: string }) => `${message.role}: ${message.text}`)
                   .join("\n"),
               ].join("\n"),
@@ -474,6 +476,7 @@ export const rewriteModelSection = action({
 
     const priorMessages = await ctx.runQuery(getThreadMessagesRef, {
       threadId,
+      limit: 2,
     });
 
     const existingModelLines = modelContext.modelLines.map(
@@ -508,7 +511,7 @@ export const rewriteModelSection = action({
       recentExampleLines,
       explicitLinkedContext,
       recentConversationLines: priorMessages
-        .slice(-6)
+        .slice(0, -1)
         .map((message: { role: string; text: string }) => `${message.role}: ${message.text}`),
     });
     const debug: ModelRewriteDebug = {

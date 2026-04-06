@@ -43,6 +43,7 @@ import {
   listEligiblePlannerSourceTasks,
 } from "./lib/planner";
 import { replaceLiteralOccurrences } from "../lib/domain/findReplace";
+import { getEffectiveTaskDueDateRange } from "../lib/domain/planner";
 import {
   collectRootSubtreeLines,
   shouldGenerateEmbeddingForNodeText,
@@ -519,12 +520,48 @@ function filterNodesForKnowledgeContext(
 async function buildPageKnowledgeContextEntry(
   ctx: QueryCtx,
   page: Doc<"pages">,
+  options?: {
+    omitScheduledTaskSubtrees?: boolean;
+    section?: "linked" | "planner" | "backlog";
+  },
 ) {
   const nodes = await listPageNodes(ctx.db, page._id);
-  const visibleNodes = filterNodesForKnowledgeContext(
+  let visibleNodes = filterNodesForKnowledgeContext(
     page,
     nodes.filter((node) => !node.archived),
   );
+  if (options?.omitScheduledTaskSubtrees) {
+    const nodeMap = new Map(visibleNodes.map((node) => [node._id as string, node]));
+    const childrenByParent = groupNodesByParent(visibleNodes);
+    const excludedIds = new Set<string>();
+    const queue: string[] = [];
+
+    for (const node of visibleNodes) {
+      if (node.kind !== "task") {
+        continue;
+      }
+
+      const effectiveDueDateRange = getEffectiveTaskDueDateRange(node, nodeMap);
+      if (!effectiveDueDateRange.dueAt) {
+        continue;
+      }
+
+      queue.push(node._id as string);
+    }
+
+    while (queue.length > 0) {
+      const currentId = queue.shift()!;
+      if (excludedIds.has(currentId)) {
+        continue;
+      }
+      excludedIds.add(currentId);
+      for (const child of childrenByParent.get(currentId) ?? []) {
+        queue.push(child._id as string);
+      }
+    }
+
+    visibleNodes = visibleNodes.filter((node) => !excludedIds.has(node._id as string));
+  }
   const nodeMap = new Map(visibleNodes.map((node) => [node._id as string, node]));
   const resolvedNodeTextCache = new Map<string, string>();
   const resolvedTextById = new Map<string, string>();
@@ -548,6 +585,7 @@ async function buildPageKnowledgeContextEntry(
     page,
     representativeNode,
     content,
+    section: options?.section ?? "linked",
   };
 }
 
@@ -3228,7 +3266,17 @@ export const getLinkedKnowledgeContext = internalQuery({
     );
 
     const pageEntries = await Promise.all(
-      visiblePages.map((page) => buildPageKnowledgeContextEntry(ctx, page)),
+      visiblePages.map((page) =>
+        buildPageKnowledgeContextEntry(ctx, page, {
+          omitScheduledTaskSubtrees:
+            args.includeDefaultPlannerAndTaskPages === true && isTaskSourcePage(page),
+          section: isPlannerPage(page)
+            ? "planner"
+            : isTaskSourcePage(page)
+              ? "backlog"
+              : "linked",
+        }),
+      ),
     );
 
     const nodes = await Promise.all(uniqueNodeIds.map((nodeId) => ctx.db.get(nodeId)));

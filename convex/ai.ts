@@ -322,6 +322,7 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
       page: Doc<"pages">;
       representativeNode: Doc<"nodes"> | null;
       content: string;
+      section: "linked" | "planner" | "backlog";
     }>;
     nodes: Array<{
       node: Doc<"nodes">;
@@ -382,15 +383,37 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
   }
   const sources = [...dedupedSources.values()].slice(0, 10);
 
+  const plannerPageContext = linkedContext.pages
+    .filter((entry) => entry.section === "planner" && entry.content.trim().length > 0)
+    .map((entry, index) =>
+      [
+        `Planner page [P${index + 1}]: ${entry.page.title}`,
+        entry.content,
+      ].join("\n"),
+    );
+  const backlogPageContext = linkedContext.pages
+    .filter((entry) => entry.section === "backlog" && entry.content.trim().length > 0)
+    .map((entry, index) =>
+      [
+        `Backlog page [B${index + 1}]: ${entry.page.title}`,
+        entry.content,
+      ].join("\n"),
+    );
+  const explicitlyLinkedPageContext = linkedContext.pages
+    .filter((entry) => entry.section === "linked" && entry.content.trim().length > 0)
+    .map((entry, index) =>
+      [
+        `Linked page [${index + 1}]: ${entry.page.title}`,
+        entry.content,
+      ].join("\n"),
+    );
+
   const explicitLinkedContext = [
-    ...linkedContext.pages
-      .filter((entry) => entry.content.trim().length > 0)
-      .map((entry, index) =>
-        [
-          `Linked page [${index + 1}]: ${entry.page.title}`,
-          entry.content,
-        ].join("\n"),
-      ),
+    ...plannerPageContext,
+    ...(backlogPageContext.length > 0
+      ? [["# Backlog", ...backlogPageContext].join("\n\n")]
+      : []),
+    ...explicitlyLinkedPageContext,
     ...linkedContext.nodes.map((entry, index) =>
       [
         `Linked node [N${index + 1}] on ${entry.page.title}`,
@@ -563,6 +586,7 @@ export const chatWithWorkspace = action({
 
     const priorMessages = (await ctx.runQuery(getThreadMessagesRef, {
       threadId,
+      limit: 2,
     })) as Array<{
       role: string;
       text: string;

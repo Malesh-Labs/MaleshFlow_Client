@@ -164,14 +164,23 @@ export const getWorkspaceKnowledgeThread = query({
 export const getThreadMessages = internalQuery({
   args: {
     threadId: v.id("chatThreads"),
+    limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const query = ctx.db
       .query("chatMessages")
       .withIndex("by_thread_createdAt", (query) =>
         query.eq("threadId", args.threadId),
-      )
-      .collect();
+      );
+
+    if (args.limit && args.limit > 0) {
+      const recentMessages = await query
+        .order("desc")
+        .take(Math.max(1, Math.floor(args.limit)));
+      return recentMessages.reverse();
+    }
+
+    return await query.collect();
   },
 });
 
