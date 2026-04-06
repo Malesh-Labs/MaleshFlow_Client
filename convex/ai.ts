@@ -489,7 +489,7 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
     explicitLinkedContext.trim().length > 0 ? "Explicitly linked context:" : null,
     explicitLinkedContext.trim().length > 0 ? explicitLinkedContext : null,
     sourceContext.trim().length > 0 ? "" : null,
-    sourceContext.trim().length > 0 ? "Knowledge base snippets:" : null,
+    sourceContext.trim().length > 0 ? "Knowledge base snippets via semantic search:" : null,
     sourceContext.trim().length > 0 ? sourceContext : null,
   ]
     .filter((value): value is string => value !== null)

@@ -9490,7 +9490,7 @@ function WorkspaceAiChatPanel({
         "  # Backlog",
         "    Other task pages that are not excluded and do not already have due-dated work",
         "  Linked pages / linked nodes",
-        "Knowledge base snippets",
+        "Knowledge base snippets via semantic search",
       ].join("\n"),
     [],
   );
