@@ -144,7 +144,6 @@ type PaletteMode =
   | "pages"
   | "find"
   | "nodes"
-  | "chat"
   | "actions"
   | "replace"
   | "archive"
@@ -157,7 +156,6 @@ const PALETTE_MODE_ORDER: PaletteMode[] = [
   "pages",
   "find",
   "nodes",
-  "chat",
 ];
 type NodeSearchResult = {
   node: Doc<"nodes">;
@@ -2368,6 +2366,7 @@ function ConfiguredWorkspace({
   const [isPlannerAddingRandomTask, setIsPlannerAddingRandomTask] = useState(false);
   const [isPlannerUpdatingFocus, setIsPlannerUpdatingFocus] = useState(false);
   const [isPlannerResolvingNextTask, setIsPlannerResolvingNextTask] = useState(false);
+  const [isWorkspaceChatOpen, setIsWorkspaceChatOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("pages");
   const [paletteQuery, setPaletteQuery] = useState("");
@@ -2616,6 +2615,16 @@ function ConfiguredWorkspace({
     setTextSearchResults([]);
     setNodeSearchResults([]);
     setPaletteOpen(true);
+  }, []);
+
+  const toggleWorkspaceChat = useCallback(() => {
+    setWorkspaceChatError("");
+    setPaletteOpen(false);
+    setPaletteQuery("");
+    setPaletteMode("pages");
+    setTextSearchResults([]);
+    setNodeSearchResults([]);
+    setIsWorkspaceChatOpen((current) => !current);
   }, []);
 
   const isSidebarQueryLoading =
@@ -5415,11 +5424,6 @@ function ConfiguredWorkspace({
 
     setPaletteHighlightIndex(0);
     window.setTimeout(() => {
-      if (paletteMode === "chat") {
-        focusWorkspaceAiChatInput();
-        return;
-      }
-
       if (
         paletteMode === "archive" ||
         paletteMode === "migration" ||
@@ -5434,9 +5438,20 @@ function ConfiguredWorkspace({
   }, [paletteOpen, paletteMode]);
 
   useEffect(() => {
+    if (!isWorkspaceChatOpen) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      focusWorkspaceAiChatInput();
+    }, 0);
+
+    return () => window.clearTimeout(timeout);
+  }, [isWorkspaceChatOpen]);
+
+  useEffect(() => {
     if (
       !paletteOpen ||
-      paletteMode === "chat" ||
       paletteMode === "archive" ||
       paletteMode === "migration" ||
       paletteMode === "importer" ||
@@ -5697,7 +5712,7 @@ function ConfiguredWorkspace({
 
       if (isModifier && event.shiftKey && normalizedKey === "l") {
         event.preventDefault();
-        openPalette("chat");
+        toggleWorkspaceChat();
         return;
       }
 
@@ -5754,6 +5769,13 @@ function ConfiguredWorkspace({
           setPaletteMode("pages");
           setTextSearchResults([]);
           setNodeSearchResults([]);
+          return;
+        }
+
+        if (isWorkspaceChatOpen) {
+          event.preventDefault();
+          setIsWorkspaceChatOpen(false);
+          setWorkspaceChatError("");
           return;
         }
 
@@ -5898,8 +5920,10 @@ function ConfiguredWorkspace({
     indentHighlightedNodeByKeyboard,
     moveHighlightedNodeByKeyboard,
     openPalette,
+    toggleWorkspaceChat,
     cyclePaletteMode,
     paletteOpen,
+    isWorkspaceChatOpen,
     clearNodeSelection,
     selectNodeRange,
     selectSingleNode,
@@ -6030,6 +6054,7 @@ function ConfiguredWorkspace({
 
   const handleSelectPage = useCallback((pageId: Id<"pages">) => {
     const page = pagesById.get(pageId as string);
+    setIsWorkspaceChatOpen(false);
     setSelectedPageId(pageId);
     setLocationPageId(pageId);
     writePageIdToHistory(pageId, "push", page?.title ?? null);
@@ -6048,6 +6073,7 @@ function ConfiguredWorkspace({
       return;
     }
 
+    setIsWorkspaceChatOpen(false);
     if (isSidebarSpecialPage(result.page)) {
       setIsSidebarCollapsed(false);
       setPendingRevealNodeId(result.node._id as string);
@@ -6073,6 +6099,7 @@ function ConfiguredWorkspace({
   }, [clearNodeSelection]);
 
   const handleOpenLinkedNode = useCallback((pageId: Id<"pages">, nodeId: Id<"nodes">) => {
+    setIsWorkspaceChatOpen(false);
     setSelectedPageId(pageId);
     setLocationPageId(pageId);
     writePageIdToHistory(pageId, "push", pagesById.get(pageId as string)?.title ?? null);
@@ -6086,6 +6113,7 @@ function ConfiguredWorkspace({
         return;
       }
 
+      setIsWorkspaceChatOpen(false);
       setSelectedPageId(source.pageId as Id<"pages">);
       setLocationPageId(source.pageId);
       writePageIdToHistory(source.pageId, "push", source.pageTitle);
@@ -6668,6 +6696,19 @@ function ConfiguredWorkspace({
           >
             Redo
           </button>
+          <button
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={toggleWorkspaceChat}
+            className={clsx(
+              "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition",
+              isWorkspaceChatOpen
+                ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
+                : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+            )}
+          >
+            AI Chat
+          </button>
         </div>
         {embeddingRebuildTracker ? (
           <div className="pointer-events-auto w-[min(22rem,calc(100vw-2rem))] border border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface)_92%,transparent)] px-3 py-3 shadow-[0_18px_40px_-28px_rgba(0,0,0,0.5)] backdrop-blur-sm">
@@ -6797,9 +6838,28 @@ function ConfiguredWorkspace({
           </div>
         ) : null}
       </div>
+      {isWorkspaceChatOpen ? (
+        <div className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 pb-10 pt-24 sm:px-8 sm:pt-28">
+          <div className="min-h-[calc(100vh-8rem)] overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]">
+            <WorkspaceAiChatPanel
+              ownerKey={ownerKey}
+              availableTags={sortedTags}
+              draft={workspaceChatDraft}
+              onDraftChange={setWorkspaceChatDraft}
+              onSubmit={() => void handleWorkspaceChatSubmit()}
+              messages={workspaceChatMessages}
+              isLoading={isWorkspaceChatLoading}
+              error={workspaceChatError}
+              onClearError={() => setWorkspaceChatError("")}
+              onOpenSource={handleOpenWorkspaceKnowledgeSource}
+            />
+          </div>
+        </div>
+      ) : null}
       <div
         className={clsx(
           "mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 pb-36 transition-[grid-template-columns] duration-200 ease-out motion-reduce:transition-none md:pb-44",
+          isWorkspaceChatOpen ? "hidden" : "",
         )}
         style={
           isMobileLayout
@@ -8212,8 +8272,7 @@ function ConfiguredWorkspace({
               "mx-auto mt-16 flex h-[calc(100vh-8rem)] w-full flex-col overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]",
               paletteMode === "migration"
                 ? "max-w-6xl"
-                : paletteMode === "chat" ||
-                    paletteMode === "replace" ||
+                : paletteMode === "replace" ||
                     paletteMode === "archive" ||
                     paletteMode === "importer" ||
                     paletteMode === "screenshotImport" ||
@@ -8280,20 +8339,6 @@ function ConfiguredWorkspace({
                   )}
                 >
                   Semantic
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    switchPaletteMode("chat");
-                  }}
-                  className={clsx(
-                    "border px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] transition",
-                    paletteMode === "chat"
-                      ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
-                      : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
-                  )}
-                >
-                  Chat
                 </button>
                 {paletteMode === "archive" ? (
                   <button
@@ -8362,18 +8407,15 @@ function ConfiguredWorkspace({
                   </button>
                 ) : null}
               </div>
-              {paletteMode === "chat" ||
-              paletteMode === "replace" ||
+              {paletteMode === "replace" ||
               paletteMode === "archive" ||
               paletteMode === "migration" ||
               paletteMode === "importer" ||
               paletteMode === "screenshotImport" ||
               paletteMode === "taskSchedule" ? (
                 <p className="text-sm text-[var(--workspace-text-subtle)]">
-                  {paletteMode === "chat"
-                    ? "Persistent workspace chat"
-                    : paletteMode === "replace"
-                      ? "Preview and replace exact text in the current page or across the active workspace."
+                  {paletteMode === "replace"
+                    ? "Preview and replace exact text in the current page or across the active workspace."
                     : paletteMode === "archive"
                       ? "Search archived pages and nodes without mixing them into active workspace results."
                       : paletteMode === "migration"
@@ -8412,7 +8454,6 @@ function ConfiguredWorkspace({
               ref={paletteResultsRef}
               className={clsx(
                 "min-h-0 h-full flex-1",
-              paletteMode === "chat" ||
               paletteMode === "replace" ||
               paletteMode === "archive" ||
               paletteMode === "migration" ||
@@ -8579,20 +8620,6 @@ function ConfiguredWorkspace({
                     ))}
                   </div>
                 )
-              ) : paletteMode === "chat" ? (
-                <WorkspaceAiChatPanel
-                  ownerKey={ownerKey}
-                  availableTags={sortedTags}
-                  draft={workspaceChatDraft}
-                  onDraftChange={setWorkspaceChatDraft}
-                  onSubmit={() => void handleWorkspaceChatSubmit()}
-                  messages={workspaceChatMessages}
-                  isLoading={isWorkspaceChatLoading}
-                  error={workspaceChatError}
-                  onClearError={() => setWorkspaceChatError("")}
-                  onOpenSource={handleOpenWorkspaceKnowledgeSource}
-                  onCycleMode={cyclePaletteMode}
-                />
               ) : paletteMode === "replace" ? (
                 <FindReplacePanel
                   ownerKey={ownerKey}
@@ -9621,7 +9648,6 @@ function WorkspaceAiChatPanel({
   error,
   onClearError,
   onOpenSource,
-  onCycleMode,
 }: {
   ownerKey: string;
   availableTags: SidebarTagResult[];
@@ -9633,7 +9659,6 @@ function WorkspaceAiChatPanel({
   error: string;
   onClearError: () => void;
   onOpenSource: (source: WorkspaceKnowledgeSourceSnapshot) => void;
-  onCycleMode: (direction: -1 | 1) => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
@@ -9714,12 +9739,6 @@ function WorkspaceAiChatPanel({
   };
 
   const handleKeyDown = (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-      event.preventDefault();
-      onCycleMode(event.key === "ArrowRight" ? 1 : -1);
-      return;
-    }
-
     if (autocompleteToken && autocompleteSuggestions.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
