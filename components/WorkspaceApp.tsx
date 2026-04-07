@@ -106,6 +106,7 @@ const UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY =
 const ALL_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-all-section-collapsed";
 const ALL_PAGE_TYPE_SECTIONS_COLLAPSE_STORAGE_KEY =
   "maleshflow-all-page-type-sections-collapsed";
+const PINNED_ALL_PAGES_STORAGE_KEY = "maleshflow-pinned-all-pages";
 const TAGS_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-tags-section-collapsed";
 const ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-archive-section-collapsed";
 const RECURRING_TASK_COMPLETION_MODE_STORAGE_KEY =
@@ -2436,6 +2437,7 @@ function ConfiguredWorkspace({
   const [collapsedAllPageTypeSections, setCollapsedAllPageTypeSections] = useState<Set<string>>(
     new Set(),
   );
+  const [pinnedAllPageIds, setPinnedAllPageIds] = useState<Set<string>>(new Set());
   const [isTagsSectionCollapsed, setIsTagsSectionCollapsed] = useState(false);
   const [isArchiveSectionCollapsed, setIsArchiveSectionCollapsed] = useState(false);
   const [showSidebarDiagnostics, setShowSidebarDiagnostics] = useState(false);
@@ -2949,7 +2951,11 @@ function ConfiguredWorkspace({
   const allActivePagesByType = useMemo(() => {
     const grouped = new Map<string, PageDoc[]>();
     for (const page of pages ?? []) {
-      if (page.archived || isSidebarSpecialPage(page)) {
+      if (
+        page.archived ||
+        isSidebarSpecialPage(page) ||
+        pinnedAllPageIds.has(page._id as string)
+      ) {
         continue;
       }
 
@@ -2976,7 +2982,31 @@ function ConfiguredWorkspace({
       label,
       pages: grouped.get(label) ?? [],
     }));
-  }, [pages]);
+  }, [pages, pinnedAllPageIds]);
+  const pinnedAllPages = useMemo(() => {
+    const pinnedPages = (pages ?? []).filter(
+      (page) =>
+        !page.archived &&
+        !isSidebarSpecialPage(page) &&
+        pinnedAllPageIds.has(page._id as string),
+    );
+
+    const getPageTypeRank = (page: PageDoc) => {
+      const label = getPageTypeLabel(page);
+      const index = ALL_PAGE_TYPE_GROUP_ORDER.indexOf(
+        label as (typeof ALL_PAGE_TYPE_GROUP_ORDER)[number],
+      );
+      return index === -1 ? ALL_PAGE_TYPE_GROUP_ORDER.length : index;
+    };
+
+    return pinnedPages.sort((left, right) => {
+      const rankDifference = getPageTypeRank(left) - getPageTypeRank(right);
+      if (rankDifference !== 0) {
+        return rankDifference;
+      }
+      return left.title.localeCompare(right.title, undefined, { sensitivity: "base" });
+    });
+  }, [pages, pinnedAllPageIds]);
   const archivedPages = (pages ?? []).filter((page) => page.archived);
   const showSidebarTextSectionContent = sidebarTree !== null && !isSidebarTextSectionCollapsed;
   const showUncategorizedSectionContent =
@@ -3497,6 +3527,22 @@ function ConfiguredWorkspace({
     } catch {
       setCollapsedAllPageTypeSections(new Set());
     }
+    try {
+      const storedPinnedAllPages = JSON.parse(
+        window.sessionStorage.getItem(PINNED_ALL_PAGES_STORAGE_KEY) ?? "[]",
+      );
+      if (Array.isArray(storedPinnedAllPages)) {
+        setPinnedAllPageIds(
+          new Set(
+            storedPinnedAllPages.filter(
+              (value): value is string => typeof value === "string" && value.length > 0,
+            ),
+          ),
+        );
+      }
+    } catch {
+      setPinnedAllPageIds(new Set());
+    }
     setRecurringCompletionMode(
       readStoredRecurringCompletionMode("dueDate"),
     );
@@ -3594,6 +3640,21 @@ function ConfiguredWorkspace({
       JSON.stringify([...collapsedAllPageTypeSections]),
     );
   }, [collapsedAllPageTypeSections]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!hasHydratedSessionUiStateRef.current) {
+      return;
+    }
+
+    window.sessionStorage.setItem(
+      PINNED_ALL_PAGES_STORAGE_KEY,
+      JSON.stringify([...pinnedAllPageIds]),
+    );
+  }, [pinnedAllPageIds]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -4041,6 +4102,7 @@ function ConfiguredWorkspace({
     window.sessionStorage.removeItem(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(ALL_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(ALL_PAGE_TYPE_SECTIONS_COLLAPSE_STORAGE_KEY);
+    window.sessionStorage.removeItem(PINNED_ALL_PAGES_STORAGE_KEY);
     window.sessionStorage.removeItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
@@ -4051,6 +4113,7 @@ function ConfiguredWorkspace({
     window.localStorage.removeItem(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(ALL_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(ALL_PAGE_TYPE_SECTIONS_COLLAPSE_STORAGE_KEY);
+    window.localStorage.removeItem(PINNED_ALL_PAGES_STORAGE_KEY);
     window.localStorage.removeItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
@@ -6631,6 +6694,19 @@ function ConfiguredWorkspace({
     );
   };
 
+  const togglePinnedAllPage = (pageId: Id<"pages">) => {
+    setPinnedAllPageIds((current) => {
+      const next = new Set(current);
+      const key = pageId as string;
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
   return (
     <WorkspaceHistoryProvider value={history}>
       <main
@@ -7279,12 +7355,55 @@ function ConfiguredWorkspace({
                       aria-hidden={!showAllSectionContent}
                       className="min-h-0 overflow-hidden"
                     >
-                      {allActivePagesByType.length === 0 ? (
+                      {pinnedAllPages.length === 0 && allActivePagesByType.length === 0 ? (
                         <p className="text-sm text-[var(--workspace-text-faint)]">
                           No active pages.
                         </p>
                       ) : (
                         <div className="space-y-3">
+                          {pinnedAllPages.length > 0 ? (
+                            <div>
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                                Pinned
+                              </p>
+                              <div className="mt-2 space-y-1">
+                                {pinnedAllPages.map((page) => (
+                                  <div
+                                    key={page._id}
+                                    className={clsx(
+                                      "flex items-center gap-2 px-2 py-1.5 transition",
+                                      selectedPageId === page._id
+                                        ? "bg-[var(--workspace-surface-accent)]"
+                                        : "hover:bg-[var(--workspace-surface-accent)]",
+                                    )}
+                                  >
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSelectPage(page._id)}
+                                      className={clsx(
+                                        "min-w-0 flex-1 text-left text-sm",
+                                        selectedPageId === page._id
+                                          ? "text-[var(--workspace-brand)]"
+                                          : "text-[var(--workspace-text-strong)]",
+                                      )}
+                                    >
+                                      <span className="truncate">{page.title}</span>
+                                      <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none text-[var(--workspace-text-faint)]">
+                                        {getPageTypeEmoji(page)}
+                                      </span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => togglePinnedAllPage(page._id)}
+                                      className="shrink-0 border border-[var(--workspace-brand)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
+                                    >
+                                      Unpin
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
                           {allActivePagesByType.map((group) => {
                             const isGroupCollapsed = collapsedAllPageTypeSections.has(group.label);
                             const showGroupContent = !isGroupCollapsed;
@@ -7327,22 +7446,38 @@ function ConfiguredWorkspace({
                                   >
                                     <div className="space-y-1">
                                       {group.pages.map((page) => (
-                                        <button
+                                        <div
                                           key={page._id}
-                                          type="button"
-                                          onClick={() => handleSelectPage(page._id)}
                                           className={clsx(
-                                            "block w-full px-2 py-1.5 text-left text-sm transition",
+                                            "flex items-center gap-2 px-2 py-1.5 transition",
                                             selectedPageId === page._id
-                                              ? "bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
-                                              : "text-[var(--workspace-text-strong)] hover:bg-[var(--workspace-surface-accent)]",
+                                              ? "bg-[var(--workspace-surface-accent)]"
+                                              : "hover:bg-[var(--workspace-surface-accent)]",
                                           )}
                                         >
-                                          <span>{page.title}</span>
-                                          <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none text-[var(--workspace-text-faint)]">
-                                            {getPageTypeEmoji(page)}
-                                          </span>
-                                        </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleSelectPage(page._id)}
+                                            className={clsx(
+                                              "min-w-0 flex-1 text-left text-sm",
+                                              selectedPageId === page._id
+                                                ? "text-[var(--workspace-brand)]"
+                                                : "text-[var(--workspace-text-strong)]",
+                                            )}
+                                          >
+                                            <span className="truncate">{page.title}</span>
+                                            <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none text-[var(--workspace-text-faint)]">
+                                              {getPageTypeEmoji(page)}
+                                            </span>
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => togglePinnedAllPage(page._id)}
+                                            className="shrink-0 border border-[var(--workspace-border)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                                          >
+                                            Pin
+                                          </button>
+                                        </div>
                                       ))}
                                     </div>
                                   </div>
