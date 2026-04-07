@@ -7686,7 +7686,12 @@ function ConfiguredWorkspace({
                 key={selectedPage._id}
                 className="workspace-pane-fade flex min-h-[calc(100vh-5rem)] flex-col border border-[var(--workspace-border)] bg-[var(--workspace-surface)]"
               >
-              <div className="px-10 py-6 md:px-14">
+              <div
+                className={clsx(
+                  "py-6 md:px-14",
+                  pageMeta.pageType === "planner" && isMobileLayout ? "px-4" : "px-10",
+                )}
+              >
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.3em] text-[var(--workspace-accent)]">
@@ -7754,7 +7759,10 @@ function ConfiguredWorkspace({
               </div>
 
               <div
-                className="flex-1 px-10 py-6 md:px-14"
+                className={clsx(
+                  "flex-1 py-6 md:px-14",
+                  pageMeta.pageType === "planner" && isMobileLayout ? "px-4" : "px-10",
+                )}
                 onMouseDownCapture={(event) => {
                   if (
                     selectedNodeIds.size > 0 &&
