@@ -6936,7 +6936,7 @@ function ConfiguredWorkspace({
       ) : null}
       {isSimpleViewOpen ? (
         <div className="mx-auto flex h-screen w-full max-w-7xl flex-col px-4 pb-[calc(env(safe-area-inset-bottom,0px)+7rem)] pt-24 sm:px-8 sm:pb-8 sm:pt-28">
-          <div className="min-h-0 flex-1 overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]">
             <div className="border-b border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-5 py-4">
               <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
                 Simple
@@ -6945,7 +6945,7 @@ function ConfiguredWorkspace({
                 {simpleTaskPageGroups.length} page{simpleTaskPageGroups.length === 1 ? "" : "s"} · {simpleOpenTaskCount} open task{simpleOpenTaskCount === 1 ? "" : "s"}
               </p>
             </div>
-            <div className="min-h-0 overflow-y-auto px-5 py-5">
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
               {typeof simpleTaskView === "undefined" ? (
                 <p className="text-sm text-[var(--workspace-text-faint)]">Loading task pages…</p>
               ) : simpleTaskPageGroups.length === 0 ? (
