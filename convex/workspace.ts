@@ -990,7 +990,14 @@ export const getSimpleTaskView = query({
           (isPlannerPage(page) ||
             (isTaskSourcePage(page) && !isPlannerScanExcludedPage(page))),
       )
-      .sort((left, right) => left.position - right.position);
+      .sort((left, right) => {
+        const leftPlannerRank = isPlannerPage(left) ? 0 : 1;
+        const rightPlannerRank = isPlannerPage(right) ? 0 : 1;
+        if (leftPlannerRank !== rightPlannerRank) {
+          return leftPlannerRank - rightPlannerRank;
+        }
+        return left.position - right.position;
+      });
 
     const pageGroups: Array<{
       page: Doc<"pages">;
