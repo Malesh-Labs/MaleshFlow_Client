@@ -971,6 +971,67 @@ export const listPages = query({
   },
 });
 
+export const getSimpleTaskView = query({
+  args: {
+    ownerKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const activePages = await ctx.db
+      .query("pages")
+      .withIndex("by_archived_position", (query) => query.eq("archived", false))
+      .collect();
+    const eligiblePages = activePages
+      .filter(
+        (page) =>
+          !isSidebarSpecialPage(page) &&
+          !isPagePendingDeletion(page) &&
+          isTaskSourcePage(page) &&
+          !isPlannerPage(page) &&
+          !isPlannerScanExcludedPage(page),
+      )
+      .sort((left, right) => left.position - right.position);
+
+    const pageGroups: Array<{
+      page: Doc<"pages">;
+      nodes: Doc<"nodes">[];
+      loadWarning: string | null;
+    }> = [];
+
+    for (const page of eligiblePages) {
+      const warnings: string[] = [];
+      let nodes: Doc<"nodes">[] = [];
+
+      try {
+        const result = await listPageNodesForTree(ctx, page._id);
+        nodes = result.nodes;
+        if (result.truncated) {
+          warnings.push(
+            "This page is too large to load fully right now, so only the first portion is shown.",
+          );
+        }
+      } catch (error) {
+        console.error("Failed to load simple task view page", {
+          pageId: page._id,
+          error,
+        });
+        warnings.push(
+          "Some outline items could not be loaded right now, so this page may be partially empty.",
+        );
+      }
+
+      pageGroups.push({
+        page,
+        nodes,
+        loadWarning: warnings.length > 0 ? warnings.join(" ") : null,
+      });
+    }
+
+    return pageGroups;
+  },
+});
+
 export const getSidebarTree = query({
   args: {
     ownerKey: v.string(),

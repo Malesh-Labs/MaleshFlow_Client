@@ -114,6 +114,7 @@ const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
 const OUTLINE_CLIPBOARD_MIME_TYPE = "application/x-maleshflow-outline";
 const WORKSPACE_AI_CHAT_TEXTAREA_ID = "workspace-ai-chat-textarea";
 const WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY = "maleshflow-workspace-ai-chat-open";
+const SIMPLE_VIEW_OPEN_STORAGE_KEY = "maleshflow-simple-view-open";
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
 const ALL_PAGE_TYPE_GROUP_ORDER = [
   "Planner",
@@ -150,6 +151,11 @@ type SidebarTreeResult = {
   nodes: Doc<"nodes">[];
   linkedPageIds: Id<"pages">[];
   nodeBacklinkCounts: Record<string, number>;
+};
+type SimpleTaskViewPageResult = {
+  page: PageDoc;
+  nodes: Doc<"nodes">[];
+  loadWarning?: string | null;
 };
 type PaletteMode =
   | "pages"
@@ -2390,6 +2396,9 @@ function ConfiguredWorkspace({
   const [isWorkspaceChatOpen, setIsWorkspaceChatOpen] = useState(() =>
     readStoredBoolean(WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY, false),
   );
+  const [isSimpleViewOpen, setIsSimpleViewOpen] = useState(() =>
+    readStoredBoolean(SIMPLE_VIEW_OPEN_STORAGE_KEY, false),
+  );
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("pages");
   const [paletteQuery, setPaletteQuery] = useState("");
@@ -2481,6 +2490,10 @@ function ConfiguredWorkspace({
     api.workspace.getSidebarTree,
     ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
   ) as SidebarTreeResult | null | undefined;
+  const simpleTaskView = useQuery(
+    api.workspace.getSimpleTaskView,
+    ownerKey && isOwnerKeyValid && isSimpleViewOpen ? { ownerKey } : SKIP,
+  ) as SimpleTaskViewPageResult[] | undefined;
 
   const createPage = useMutation(api.workspace.createPage);
   const ensureSidebarPage = useMutation(api.workspace.ensureSidebarPage);
@@ -2640,7 +2653,19 @@ function ConfiguredWorkspace({
     setPaletteMode("pages");
     setTextSearchResults([]);
     setNodeSearchResults([]);
+    setIsSimpleViewOpen(false);
     setIsWorkspaceChatOpen((current) => !current);
+  }, []);
+
+  const toggleSimpleView = useCallback(() => {
+    setPaletteOpen(false);
+    setPaletteQuery("");
+    setPaletteMode("pages");
+    setTextSearchResults([]);
+    setNodeSearchResults([]);
+    setWorkspaceChatError("");
+    setIsWorkspaceChatOpen(false);
+    setIsSimpleViewOpen((current) => !current);
   }, []);
 
   const isSidebarQueryLoading =
@@ -2858,7 +2883,40 @@ function ConfiguredWorkspace({
           ? flattenTreeNodes([...scratchpadVisibleRoots, ...genericRoots], collapsedNodeIds)
         : flattenTreeNodes(genericRoots, collapsedNodeIds);
   const sidebarVisibleRows = flattenTreeNodes(sidebarNodes, collapsedNodeIds);
-  const visibleNodeOrder = [...sidebarVisibleRows, ...pageVisibleRows].map((node) => node._id);
+  const simpleTaskPageGroups = useMemo(
+    () =>
+      (simpleTaskView ?? []).map((entry) => ({
+        ...entry,
+        tree: toTreeNodes(entry.nodes),
+        nodeMap: new Map(entry.nodes.map((node) => [node._id as string, node])),
+      })),
+    [simpleTaskView],
+  );
+  const simpleOpenTaskCount = useMemo(
+    () =>
+      simpleTaskPageGroups.reduce(
+        (count, group) =>
+          count +
+          group.nodes.filter((node) => node.kind === "task" && node.taskStatus !== "done").length,
+        0,
+      ),
+    [simpleTaskPageGroups],
+  );
+  const emptyNodeBacklinkCounts = useMemo(() => new Map<string, number>(), []);
+  const simpleVisibleRows = useMemo(
+    () =>
+      isSimpleViewOpen
+        ? simpleTaskPageGroups.flatMap((group) => flattenTreeNodes(group.tree, collapsedNodeIds))
+        : [],
+    [collapsedNodeIds, isSimpleViewOpen, simpleTaskPageGroups],
+  );
+  const visibleNodeOrder = (
+    isSimpleViewOpen ? simpleVisibleRows : [...sidebarVisibleRows, ...pageVisibleRows]
+  ).map((node) => node._id);
+  const selectionTrees = useMemo(
+    () => (isSimpleViewOpen ? simpleTaskPageGroups.flatMap((group) => group.tree) : [...sidebarNodes, ...tree]),
+    [isSimpleViewOpen, sidebarNodes, simpleTaskPageGroups, tree],
+  );
   const revealNodes = useMemo(() => {
     if (!pendingRevealNodeId) {
       return null;
@@ -2950,8 +3008,13 @@ function ConfiguredWorkspace({
     for (const node of activePageTree?.nodes ?? []) {
       next.set(node._id as string, node);
     }
+    for (const group of simpleTaskPageGroups) {
+      for (const node of group.nodes) {
+        next.set(node._id as string, node);
+      }
+    }
     return next;
-  }, [activePageTree?.nodes, sidebarTree?.nodes]);
+  }, [activePageTree?.nodes, sidebarTree?.nodes, simpleTaskPageGroups]);
   const paletteContextNodeId =
     selectedNodeIds.size === 1 ? ([...selectedNodeIds][0] ?? null) : actionContextNodeId;
   const taskScheduleTargetNode = useMemo(() => {
@@ -3085,7 +3148,7 @@ function ConfiguredWorkspace({
     }
 
     const selectedRoots = selectedRootNodeIds
-      .map((nodeId) => findTreeNodeById([...sidebarNodes, ...tree], nodeId))
+      .map((nodeId) => findTreeNodeById(selectionTrees, nodeId))
       .filter((node): node is TreeNode => node !== null);
     if (selectedRoots.length === 0) {
       return;
@@ -3107,7 +3170,7 @@ function ConfiguredWorkspace({
       `Copied ${selectedRoots.length} item${selectedRoots.length === 1 ? "" : "s"}`,
     );
     event.preventDefault();
-  }, [selectedNodeIds, setCopySnackbarMessage, sidebarNodes, tree, visibleNodeOrder, workspaceNodeMap]);
+  }, [selectedNodeIds, selectionTrees, setCopySnackbarMessage, visibleNodeOrder, workspaceNodeMap]);
   const pasteOutlineClipboardAfterSelection = useCallback(async (payload: OutlineClipboardPayload) => {
     if (selectedNodeIds.size === 0) {
       return;
@@ -3982,6 +4045,7 @@ function ConfiguredWorkspace({
     window.sessionStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
     window.sessionStorage.removeItem(WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY);
+    window.sessionStorage.removeItem(SIMPLE_VIEW_OPEN_STORAGE_KEY);
     window.localStorage.removeItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(SIDEBAR_TEXT_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY);
@@ -5435,6 +5499,17 @@ function ConfiguredWorkspace({
   }, [isWorkspaceChatOpen]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.sessionStorage.setItem(
+      SIMPLE_VIEW_OPEN_STORAGE_KEY,
+      isSimpleViewOpen ? "true" : "false",
+    );
+  }, [isSimpleViewOpen]);
+
+  useEffect(() => {
     if (
       !paletteOpen ||
       paletteMode === "archive" ||
@@ -6586,6 +6661,19 @@ function ConfiguredWorkspace({
           <button
             type="button"
             onMouseDown={(event) => event.preventDefault()}
+            onClick={toggleSimpleView}
+            className={clsx(
+              "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition",
+              isSimpleViewOpen
+                ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
+                : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+            )}
+          >
+            Simple
+          </button>
+          <button
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
             onClick={toggleWorkspaceChat}
             className={clsx(
               "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition",
@@ -6770,10 +6858,119 @@ function ConfiguredWorkspace({
           </div>
         </div>
       ) : null}
+      {isSimpleViewOpen ? (
+        <div className="mx-auto flex h-screen w-full max-w-7xl flex-col px-4 pb-[calc(env(safe-area-inset-bottom,0px)+7rem)] pt-24 sm:px-8 sm:pb-8 sm:pt-28">
+          <div className="min-h-0 flex-1 overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]">
+            <div className="border-b border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-5 py-4">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                Simple
+              </p>
+              <p className="mt-1 text-sm text-[var(--workspace-text-faint)]">
+                {simpleTaskPageGroups.length} page{simpleTaskPageGroups.length === 1 ? "" : "s"} · {simpleOpenTaskCount} open task{simpleOpenTaskCount === 1 ? "" : "s"}
+              </p>
+            </div>
+            <div className="min-h-0 overflow-y-auto px-5 py-5">
+              {typeof simpleTaskView === "undefined" ? (
+                <p className="text-sm text-[var(--workspace-text-faint)]">Loading task pages…</p>
+              ) : simpleTaskPageGroups.length === 0 ? (
+                <p className="text-sm text-[var(--workspace-text-faint)]">
+                  No active task pages are currently included in planner scans.
+                </p>
+              ) : (
+                <div className="space-y-8">
+                  {simpleTaskPageGroups.map((group) => (
+                    <section
+                      key={group.page._id}
+                      className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)]"
+                    >
+                      <div className="flex items-center justify-between gap-4 border-b border-[var(--workspace-border-subtle)] px-4 py-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-accent)]">
+                            {group.page.title}
+                          </p>
+                          <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]">
+                            {group.nodes.filter((node) => node.parentNodeId === null).length} root item{group.nodes.filter((node) => node.parentNodeId === null).length === 1 ? "" : "s"}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsSimpleViewOpen(false);
+                            handleSelectPage(group.page._id);
+                          }}
+                          className="shrink-0 border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                        >
+                          Open Page
+                        </button>
+                      </div>
+                      {group.loadWarning ? (
+                        <div className="border-b border-[var(--workspace-border-subtle)] px-4 py-3 text-sm text-[var(--workspace-text-faint)]">
+                          {group.loadWarning}
+                        </div>
+                      ) : null}
+                      <div className="px-4 py-4">
+                        <OutlineNodeList
+                          nodes={group.tree}
+                          ownerKey={ownerKey}
+                          pageId={group.page._id as Id<"pages">}
+                          nodeBacklinkCounts={emptyNodeBacklinkCounts}
+                          nodeMap={group.nodeMap}
+                          createNodesBatch={createNodesBatch}
+                          insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+                          updateNode={updateNode}
+                          moveNode={moveNode}
+                          splitNode={splitNode}
+                          replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                          setNodeTreeArchived={setNodeTreeArchived}
+                          isPageReadOnly={false}
+                          collapsedNodeIds={collapsedNodeIds}
+                          selectedNodeIds={selectedNodeIds}
+                          selectionAnchorNodeId={selectionAnchorNodeId}
+                          onToggleNodeCollapsed={toggleNodeCollapsed}
+                          onSelectSingleNode={selectSingleNode}
+                          onSelectNodeRange={selectNodeRange}
+                          onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
+                          pendingInsertedComposer={pendingInsertedComposer}
+                          onOpenInsertedComposer={openInsertedComposer}
+                          onClearInsertedComposer={clearInsertedComposer}
+                          onBeginTextEditing={clearNodeSelection}
+                          activeDraggedNodeId={null}
+                          activeDraggedNodePayload={null}
+                          onSetActiveDraggedNodeId={() => {}}
+                          onSetActiveDraggedNodePayload={() => {}}
+                          onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                          buildDraggedNodePayload={buildDraggedNodePayload}
+                          onDropDraggedNodes={dropDraggedNodes}
+                          onSelectionStart={beginNodeSelection}
+                          onSelectionExtend={extendNodeSelection}
+                          availableTags={sortedTags}
+                          pagesByTitle={pagesByTitle}
+                          pagesById={pagesById}
+                          onOpenPage={(pageId) => {
+                            setIsSimpleViewOpen(false);
+                            handleSelectPage(pageId);
+                          }}
+                          onOpenNode={(pageId, nodeId) => {
+                            setIsSimpleViewOpen(false);
+                            handleOpenLinkedNode(pageId, nodeId);
+                          }}
+                          onOpenTag={openFindPaletteForQuery}
+                          onOpenFindQuery={openFindPaletteForQuery}
+                          recurringCompletionMode={recurringCompletionMode}
+                        />
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
       <div
         className={clsx(
           "mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 pb-36 transition-[grid-template-columns] duration-200 ease-out motion-reduce:transition-none md:pb-44",
-          isWorkspaceChatOpen ? "hidden" : "",
+          isWorkspaceChatOpen || isSimpleViewOpen ? "hidden" : "",
         )}
         style={
           isMobileLayout
