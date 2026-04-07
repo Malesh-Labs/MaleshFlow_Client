@@ -6947,10 +6947,12 @@ function ConfiguredWorkspace({
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
               {typeof simpleTaskView === "undefined" ? (
-                <p className="text-sm text-[var(--workspace-text-faint)]">Loading task pages…</p>
+                <p className="text-sm text-[var(--workspace-text-faint)]">
+                  Loading planner and task pages…
+                </p>
               ) : simpleTaskPageGroups.length === 0 ? (
                 <p className="text-sm text-[var(--workspace-text-faint)]">
-                  No active task pages are currently included in planner scans.
+                  No active planner or included task pages are available right now.
                 </p>
               ) : (
                 <div className="space-y-8">

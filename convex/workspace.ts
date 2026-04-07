@@ -987,9 +987,8 @@ export const getSimpleTaskView = query({
         (page) =>
           !isSidebarSpecialPage(page) &&
           !isPagePendingDeletion(page) &&
-          isTaskSourcePage(page) &&
-          !isPlannerPage(page) &&
-          !isPlannerScanExcludedPage(page),
+          (isPlannerPage(page) ||
+            (isTaskSourcePage(page) && !isPlannerScanExcludedPage(page))),
       )
       .sort((left, right) => left.position - right.position);
 
@@ -1005,7 +1004,10 @@ export const getSimpleTaskView = query({
 
       try {
         const result = await listPageNodesForTree(ctx, page._id);
-        nodes = result.nodes;
+        nodes = filterNodesForKnowledgeContext(
+          page,
+          result.nodes.filter((node) => !node.archived),
+        );
         if (result.truncated) {
           warnings.push(
             "This page is too large to load fully right now, so only the first portion is shown.",
