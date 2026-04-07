@@ -3529,7 +3529,7 @@ function ConfiguredWorkspace({
     }
     try {
       const storedPinnedAllPages = JSON.parse(
-        window.sessionStorage.getItem(PINNED_ALL_PAGES_STORAGE_KEY) ?? "[]",
+        window.localStorage.getItem(PINNED_ALL_PAGES_STORAGE_KEY) ?? "[]",
       );
       if (Array.isArray(storedPinnedAllPages)) {
         setPinnedAllPageIds(
@@ -3650,7 +3650,7 @@ function ConfiguredWorkspace({
       return;
     }
 
-    window.sessionStorage.setItem(
+    window.localStorage.setItem(
       PINNED_ALL_PAGES_STORAGE_KEY,
       JSON.stringify([...pinnedAllPageIds]),
     );
