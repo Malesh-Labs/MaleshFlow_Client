@@ -677,6 +677,15 @@ function isPagePinnedInAllSidebar(page: Doc<"pages"> | null | undefined) {
   return sourceMeta.pinnedInAllSidebar === true;
 }
 
+function getModelPageCustomPrompt(page: Doc<"pages"> | null | undefined) {
+  const sourceMeta =
+    page && typeof page.sourceMeta === "object" && page.sourceMeta
+      ? (page.sourceMeta as Record<string, unknown>)
+      : {};
+
+  return typeof sourceMeta.modelCustomPrompt === "string" ? sourceMeta.modelCustomPrompt : "";
+}
+
 function getPageTypeLabel(page: Doc<"pages"> | null | undefined) {
   const meta = getPageMeta(page);
   if (meta.pageType === "planner") {
@@ -2461,6 +2470,7 @@ function ConfiguredWorkspace({
   const connectionState = useConvexConnectionState();
   const hasHydratedSessionUiStateRef = useRef(false);
   const hasMigratedPinnedAllPagesRef = useRef(false);
+  const lastLoadedModelPromptPageIdRef = useRef<string | null>(null);
 
   const isOwnerKeyValid = useQuery(
     api.workspace.validateOwnerKey,
@@ -2515,6 +2525,7 @@ function ConfiguredWorkspace({
   const renamePage = useMutation(api.workspace.renamePage);
   const archivePage = useMutation(api.workspace.archivePage);
   const setPlannerScanExcluded = useMutation(api.workspace.setPlannerScanExcluded);
+  const setModelPageCustomPrompt = useMutation(api.workspace.setModelPageCustomPrompt);
   const setPagePinnedInAllSidebar = useMutation(api.workspace.setPagePinnedInAllSidebar);
   const mergePinnedPagesInAllSidebar = useMutation(api.workspace.mergePinnedPagesInAllSidebar);
   const deletePageForever = useMutation(api.workspace.deletePageForever);
@@ -3055,6 +3066,10 @@ function ConfiguredWorkspace({
     () => new Map((pages ?? []).map((page) => [page._id as string, page])),
     [pages],
   );
+  const selectedModelPageCustomPrompt = useMemo(
+    () => (pageMeta.pageType === "model" ? getModelPageCustomPrompt(selectedPage) : ""),
+    [pageMeta.pageType, selectedPage],
+  );
   const workspaceNodeMap = useMemo(() => {
     const next = new Map<string, Doc<"nodes">>();
     for (const node of sidebarTree?.nodes ?? []) {
@@ -3514,6 +3529,58 @@ function ConfiguredWorkspace({
   useEffect(() => {
     pageTitleDraftRef.current = pageTitleDraft;
   }, [pageTitleDraft]);
+
+  useEffect(() => {
+    if (pageMeta.pageType !== "model" || !selectedPage) {
+      lastLoadedModelPromptPageIdRef.current = null;
+      return;
+    }
+
+    const currentPageId = selectedPage._id as string;
+    if (lastLoadedModelPromptPageIdRef.current === currentPageId) {
+      return;
+    }
+
+    setModelPromptNote(getModelPageCustomPrompt(selectedPage));
+    lastLoadedModelPromptPageIdRef.current = currentPageId;
+  }, [pageMeta.pageType, selectedPage]);
+
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      pageMeta.pageType !== "model" ||
+      !selectedPage ||
+      !selectedPageId ||
+      !ownerKey ||
+      !isOwnerKeyValid ||
+      isPageArchived ||
+      modelPromptNote === selectedModelPageCustomPrompt
+    ) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      void setModelPageCustomPrompt({
+        ownerKey,
+        pageId: selectedPageId,
+        prompt: modelPromptNote,
+      }).catch((error) => {
+        console.error("Failed to persist model page custom prompt", error);
+      });
+    }, 400);
+
+    return () => window.clearTimeout(timeout);
+  }, [
+    isOwnerKeyValid,
+    isPageArchived,
+    modelPromptNote,
+    ownerKey,
+    pageMeta.pageType,
+    selectedModelPageCustomPrompt,
+    selectedPage,
+    selectedPageId,
+    setModelPageCustomPrompt,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") {

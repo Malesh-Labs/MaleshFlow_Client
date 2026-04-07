@@ -2394,6 +2394,37 @@ export const setPlannerScanExcluded = mutation({
   },
 });
 
+export const setModelPageCustomPrompt = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+    prompt: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived) {
+      throw new Error("Page not found.");
+    }
+
+    const pageSourceMeta = getPageSourceMeta(page);
+    if (pageSourceMeta.pageType !== "model") {
+      throw new Error("Only model pages can store a custom prompt.");
+    }
+
+    await ctx.db.patch(args.pageId, {
+      sourceMeta: {
+        ...pageSourceMeta,
+        modelCustomPrompt: args.prompt,
+      },
+      updatedAt: getTimestamp(),
+    });
+
+    return args.prompt;
+  },
+});
+
 export const setPagePinnedInAllSidebar = mutation({
   args: {
     ownerKey: v.string(),
