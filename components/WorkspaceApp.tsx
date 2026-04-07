@@ -7689,7 +7689,7 @@ function ConfiguredWorkspace({
               <div
                 className={clsx(
                   "py-6 md:px-14",
-                  pageMeta.pageType === "planner" && isMobileLayout ? "px-4" : "px-10",
+                  pageMeta.pageType === "planner" && isMobileLayout ? "pl-3 pr-1.5" : "px-10",
                 )}
               >
                 <div className="flex items-start justify-between gap-4">
@@ -7761,7 +7761,7 @@ function ConfiguredWorkspace({
               <div
                 className={clsx(
                   "flex-1 py-6 md:px-14",
-                  pageMeta.pageType === "planner" && isMobileLayout ? "px-4" : "px-10",
+                  pageMeta.pageType === "planner" && isMobileLayout ? "pl-3 pr-1.5" : "px-10",
                 )}
                 onMouseDownCapture={(event) => {
                   if (
