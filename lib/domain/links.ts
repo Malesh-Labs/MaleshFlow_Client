@@ -305,6 +305,15 @@ export function replaceLinkMarkupWithLabels(text: string) {
   return replaceLinkMarkup(text, (match) => getReadableLinkLabel(match));
 }
 
+export function sanitizeGeneratedWikiLinkLabel(value: string) {
+  return (
+    replaceLinkMarkupWithLabels(value)
+      .replace(/\|/g, "/")
+      .replace(/\]\]/g, "] ]")
+      .trim() || "Untitled node"
+  );
+}
+
 export function rewriteMatchingPageWikiLinks(
   text: string,
   shouldRewrite: (

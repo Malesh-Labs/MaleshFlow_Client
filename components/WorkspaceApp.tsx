@@ -54,6 +54,7 @@ import {
   extractLinkMatches,
   getExplicitWikiLinkPreviewText,
   replaceLinkMarkupWithLabels,
+  sanitizeGeneratedWikiLinkLabel,
 } from "@/lib/domain/links";
 import { extractTagMatches } from "@/lib/domain/tags";
 import {
@@ -1068,7 +1069,7 @@ function withFindResultKeys(results: NodeSearchResult[], querySegment: string, s
 }
 
 function sanitizeLinkLabel(value: string) {
-  return value.replace(/\|/g, "/").replace(/\]\]/g, "] ]").trim() || "Untitled node";
+  return sanitizeGeneratedWikiLinkLabel(stripInlineFormattingMarkers(value));
 }
 
 function normalizePageTitleKey(value: string) {

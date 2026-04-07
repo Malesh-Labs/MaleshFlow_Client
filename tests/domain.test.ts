@@ -5,6 +5,7 @@ import {
   extractLinkMatches,
   extractLinks,
   rewriteMatchingPageWikiLinks,
+  sanitizeGeneratedWikiLinkLabel,
 } from "../lib/domain/links";
 import { cycleHeadingSyntax, parseHeadingSyntax } from "../lib/domain/displaySyntax";
 import {
@@ -138,6 +139,13 @@ test("extractLinks finds plain email addresses", () => {
       targetUrl: "mailto:support@test.co.uk",
     },
   ]);
+});
+
+test("sanitizeGeneratedWikiLinkLabel flattens nested wiki links", () => {
+  assert.equal(
+    sanitizeGeneratedWikiLinkLabel("here is a [[nested|node:123]] example"),
+    "here is a nested example",
+  );
 });
 
 test("normalizeCalendarTaskText removes link markup and inline formatting", () => {
