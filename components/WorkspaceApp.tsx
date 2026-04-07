@@ -668,6 +668,15 @@ function isSidebarSpecialPage(page: Doc<"pages"> | null | undefined) {
   return sourceMeta.specialPage === "sidebar";
 }
 
+function isPagePinnedInAllSidebar(page: Doc<"pages"> | null | undefined) {
+  const sourceMeta =
+    page && typeof page.sourceMeta === "object" && page.sourceMeta
+      ? (page.sourceMeta as Record<string, unknown>)
+      : {};
+
+  return sourceMeta.pinnedInAllSidebar === true;
+}
+
 function getPageTypeLabel(page: Doc<"pages"> | null | undefined) {
   const meta = getPageMeta(page);
   if (meta.pageType === "planner") {
@@ -2437,7 +2446,6 @@ function ConfiguredWorkspace({
   const [collapsedAllPageTypeSections, setCollapsedAllPageTypeSections] = useState<Set<string>>(
     new Set(),
   );
-  const [pinnedAllPageIds, setPinnedAllPageIds] = useState<Set<string>>(new Set());
   const [isTagsSectionCollapsed, setIsTagsSectionCollapsed] = useState(false);
   const [isArchiveSectionCollapsed, setIsArchiveSectionCollapsed] = useState(false);
   const [showSidebarDiagnostics, setShowSidebarDiagnostics] = useState(false);
@@ -2452,6 +2460,7 @@ function ConfiguredWorkspace({
   const [locationPageId, setLocationPageId] = useState<string | null>(null);
   const connectionState = useConvexConnectionState();
   const hasHydratedSessionUiStateRef = useRef(false);
+  const hasMigratedPinnedAllPagesRef = useRef(false);
 
   const isOwnerKeyValid = useQuery(
     api.workspace.validateOwnerKey,
@@ -2506,6 +2515,8 @@ function ConfiguredWorkspace({
   const renamePage = useMutation(api.workspace.renamePage);
   const archivePage = useMutation(api.workspace.archivePage);
   const setPlannerScanExcluded = useMutation(api.workspace.setPlannerScanExcluded);
+  const setPagePinnedInAllSidebar = useMutation(api.workspace.setPagePinnedInAllSidebar);
+  const mergePinnedPagesInAllSidebar = useMutation(api.workspace.mergePinnedPagesInAllSidebar);
   const deletePageForever = useMutation(api.workspace.deletePageForever);
   const rebuildEmbeddings = useMutation(api.workspace.rebuildEmbeddings);
   const ensureTaskCalendarFeed = useMutation(api.calendar.ensureTaskCalendarFeed);
@@ -2949,12 +2960,17 @@ function ConfiguredWorkspace({
     [pages, sidebarLinkedPageIds],
   );
   const allActivePagesByType = useMemo(() => {
+    const pinnedPageIds = new Set(
+      (pages ?? [])
+        .filter((page) => isPagePinnedInAllSidebar(page))
+        .map((page) => page._id as string),
+    );
     const grouped = new Map<string, PageDoc[]>();
     for (const page of pages ?? []) {
       if (
         page.archived ||
         isSidebarSpecialPage(page) ||
-        pinnedAllPageIds.has(page._id as string)
+        pinnedPageIds.has(page._id as string)
       ) {
         continue;
       }
@@ -2982,7 +2998,16 @@ function ConfiguredWorkspace({
       label,
       pages: grouped.get(label) ?? [],
     }));
-  }, [pages, pinnedAllPageIds]);
+  }, [pages]);
+  const pinnedAllPageIds = useMemo(
+    () =>
+      new Set(
+        (pages ?? [])
+          .filter((page) => isPagePinnedInAllSidebar(page))
+          .map((page) => page._id as string),
+      ),
+    [pages],
+  );
   const pinnedAllPages = useMemo(() => {
     const pinnedPages = (pages ?? []).filter(
       (page) =>
@@ -3527,22 +3552,6 @@ function ConfiguredWorkspace({
     } catch {
       setCollapsedAllPageTypeSections(new Set());
     }
-    try {
-      const storedPinnedAllPages = JSON.parse(
-        window.localStorage.getItem(PINNED_ALL_PAGES_STORAGE_KEY) ?? "[]",
-      );
-      if (Array.isArray(storedPinnedAllPages)) {
-        setPinnedAllPageIds(
-          new Set(
-            storedPinnedAllPages.filter(
-              (value): value is string => typeof value === "string" && value.length > 0,
-            ),
-          ),
-        );
-      }
-    } catch {
-      setPinnedAllPageIds(new Set());
-    }
     setRecurringCompletionMode(
       readStoredRecurringCompletionMode("dueDate"),
     );
@@ -3565,6 +3574,58 @@ function ConfiguredWorkspace({
 
     hasHydratedSessionUiStateRef.current = true;
   }, []);
+
+  useEffect(() => {
+    if (
+      typeof window === "undefined" ||
+      hasMigratedPinnedAllPagesRef.current ||
+      !ownerKey ||
+      !isOwnerKeyValid ||
+      !pages
+    ) {
+      return;
+    }
+
+    let storedPinnedPageIds: unknown = null;
+    try {
+      storedPinnedPageIds = JSON.parse(
+        window.localStorage.getItem(PINNED_ALL_PAGES_STORAGE_KEY) ?? "[]",
+      );
+    } catch {
+      storedPinnedPageIds = [];
+    }
+
+    if (!Array.isArray(storedPinnedPageIds) || storedPinnedPageIds.length === 0) {
+      hasMigratedPinnedAllPagesRef.current = true;
+      return;
+    }
+
+    const eligiblePageIds = storedPinnedPageIds.filter(
+      (value): value is string =>
+        typeof value === "string" &&
+        value.length > 0 &&
+        (pages ?? []).some((page) => (page._id as string) === value),
+    );
+
+    if (eligiblePageIds.length === 0) {
+      window.localStorage.removeItem(PINNED_ALL_PAGES_STORAGE_KEY);
+      hasMigratedPinnedAllPagesRef.current = true;
+      return;
+    }
+
+    hasMigratedPinnedAllPagesRef.current = true;
+    void mergePinnedPagesInAllSidebar({
+      ownerKey,
+      pageIds: eligiblePageIds as Id<"pages">[],
+    })
+      .then(() => {
+        window.localStorage.removeItem(PINNED_ALL_PAGES_STORAGE_KEY);
+      })
+      .catch((error) => {
+        console.error("Failed to migrate pinned sidebar pages", error);
+        hasMigratedPinnedAllPagesRef.current = false;
+      });
+  }, [isOwnerKeyValid, mergePinnedPagesInAllSidebar, ownerKey, pages]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -3640,21 +3701,6 @@ function ConfiguredWorkspace({
       JSON.stringify([...collapsedAllPageTypeSections]),
     );
   }, [collapsedAllPageTypeSections]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    if (!hasHydratedSessionUiStateRef.current) {
-      return;
-    }
-
-    window.localStorage.setItem(
-      PINNED_ALL_PAGES_STORAGE_KEY,
-      JSON.stringify([...pinnedAllPageIds]),
-    );
-  }, [pinnedAllPageIds]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -6695,15 +6741,16 @@ function ConfiguredWorkspace({
   };
 
   const togglePinnedAllPage = (pageId: Id<"pages">) => {
-    setPinnedAllPageIds((current) => {
-      const next = new Set(current);
-      const key = pageId as string;
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-      }
-      return next;
+    if (!ownerKey) {
+      return;
+    }
+
+    void setPagePinnedInAllSidebar({
+      ownerKey,
+      pageId,
+      pinned: !pinnedAllPageIds.has(pageId as string),
+    }).catch((error) => {
+      console.error("Failed to toggle All sidebar pin", error);
     });
   };
 

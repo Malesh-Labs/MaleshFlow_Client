@@ -2387,6 +2387,68 @@ export const setPlannerScanExcluded = mutation({
   },
 });
 
+export const setPagePinnedInAllSidebar = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+    pinned: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived || isSidebarSpecialPage(page) || isPagePendingDeletion(page)) {
+      throw new Error("Only active workspace pages can be pinned in the All sidebar.");
+    }
+
+    const nextSourceMeta = {
+      ...getPageSourceMeta(page),
+      pinnedInAllSidebar: args.pinned,
+    };
+    await ctx.db.patch(args.pageId, {
+      sourceMeta: nextSourceMeta,
+      updatedAt: getTimestamp(),
+    });
+
+    return args.pinned;
+  },
+});
+
+export const mergePinnedPagesInAllSidebar = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageIds: v.array(v.id("pages")),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const uniquePageIds = [...new Set(args.pageIds.map((pageId) => pageId as string))] as Id<"pages">[];
+    const now = getTimestamp();
+
+    for (const pageId of uniquePageIds) {
+      const page = await ctx.db.get(pageId);
+      if (!page || page.archived || isSidebarSpecialPage(page) || isPagePendingDeletion(page)) {
+        continue;
+      }
+
+      const sourceMeta = getPageSourceMeta(page);
+      if (sourceMeta.pinnedInAllSidebar === true) {
+        continue;
+      }
+
+      await ctx.db.patch(pageId, {
+        sourceMeta: {
+          ...sourceMeta,
+          pinnedInAllSidebar: true,
+        },
+        updatedAt: now,
+      });
+    }
+
+    return uniquePageIds.length;
+  },
+});
+
 export const renamePage = mutation({
   args: {
     ownerKey: v.string(),
