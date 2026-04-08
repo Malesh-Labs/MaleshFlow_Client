@@ -67,6 +67,15 @@ import {
   getEffectiveTaskDueDateRange,
 } from "@/lib/domain/planner";
 import {
+  applyOptimisticNodeBatchUpdates,
+  applyOptimisticNodeMoves,
+  applyOptimisticNodeTreeArchive,
+  applyOptimisticNodeUpdate,
+  applyOptimisticPagePinnedInAllSidebar,
+  applyOptimisticPageRename,
+  applyOptimisticPlannerScanExcluded,
+} from "@/lib/domain/optimisticWorkspace";
+import {
   WorkspaceHistoryProvider,
   focusElementAtEnd,
   getComposerEditorId,
@@ -327,16 +336,35 @@ type NodeDropTarget = {
   lineSide: "top" | "bottom";
   lineIndentOffset: number;
 };
-type UpdateNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.updateNode>>;
+type RenamePageArgs = Parameters<ReturnType<typeof useMutation<typeof api.workspace.renamePage>>>[0];
+type SetPlannerScanExcludedArgs = Parameters<
+  ReturnType<typeof useMutation<typeof api.workspace.setPlannerScanExcluded>>
+>[0];
+type SetPagePinnedInAllSidebarArgs = Parameters<
+  ReturnType<typeof useMutation<typeof api.workspace.setPagePinnedInAllSidebar>>
+>[0];
+type UpdateNodeArgs = Parameters<ReturnType<typeof useMutation<typeof api.workspace.updateNode>>>[0];
+type UpdateNodesBatchArgs = Parameters<
+  ReturnType<typeof useMutation<typeof api.workspace.updateNodesBatch>>
+>[0];
+type MoveNodeArgs = Parameters<ReturnType<typeof useMutation<typeof api.workspace.moveNode>>>[0];
+type MoveNodesBatchArgs = Parameters<
+  ReturnType<typeof useMutation<typeof api.workspace.moveNodesBatch>>
+>[0];
+type SetNodeTreeArchivedArgs = Parameters<
+  ReturnType<typeof useMutation<typeof api.workspace.setNodeTreeArchived>>
+>[0];
+type SetNodeTreesArchivedBatchArgs = Parameters<
+  ReturnType<typeof useMutation<typeof api.workspace.setNodeTreesArchivedBatch>>
+>[0];
+type UpdateNodeMutation = (args: UpdateNodeArgs) => Promise<unknown>;
 type CreateNodesBatchMutation = ReturnType<typeof useMutation<typeof api.workspace.createNodesBatch>>;
-type MoveNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.moveNode>>;
+type MoveNodeMutation = (args: MoveNodeArgs) => Promise<unknown>;
 type SplitNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.splitNode>>;
 type ReplaceNodeAndInsertSiblingsMutation = ReturnType<
   typeof useMutation<typeof api.workspace.replaceNodeAndInsertSiblings>
 >;
-type SetNodeTreeArchivedMutation = ReturnType<
-  typeof useMutation<typeof api.workspace.setNodeTreeArchived>
->;
+type SetNodeTreeArchivedMutation = (args: SetNodeTreeArchivedArgs) => Promise<unknown>;
 type BuildDraggedNodePayloadFn = (args: {
   nodeId: string;
   pageId: Id<"pages">;
@@ -356,6 +384,15 @@ type InsertOutlineClipboardNodesFn = (args: {
   createdNodes: Doc<"nodes">[];
   createdRootNodeIds: Id<"nodes">[];
 }>;
+type PendingSyncTargetIds = {
+  nodeIds?: Array<string | Id<"nodes"> | null | undefined>;
+  pageIds?: Array<string | Id<"pages"> | null | undefined>;
+};
+type PendingSyncSnapshot = {
+  count: number;
+  nodeIds: Set<string>;
+  pageIds: Set<string>;
+};
 type OutlineClipboardBatchEntry = {
   clientId: string;
   parentNodeId?: Id<"nodes"> | null;
@@ -2538,6 +2575,12 @@ function ConfiguredWorkspace({
   const [showSidebarDiagnostics, setShowSidebarDiagnostics] = useState(false);
   const [sidebarBootstrapError, setSidebarBootstrapError] = useState<string>("");
   const [copySnackbarMessage, setCopySnackbarMessage] = useState("");
+  const [syncErrorMessage, setSyncErrorMessage] = useState("");
+  const [pendingSyncSnapshot, setPendingSyncSnapshot] = useState<PendingSyncSnapshot>({
+    count: 0,
+    nodeIds: new Set(),
+    pageIds: new Set(),
+  });
   const [dragSelection, setDragSelection] = useState<{
     anchorNodeId: string;
     currentNodeId: string;
@@ -2549,6 +2592,10 @@ function ConfiguredWorkspace({
   const hasHydratedSessionUiStateRef = useRef(false);
   const hasMigratedPinnedAllPagesRef = useRef(false);
   const lastLoadedModelPromptPageIdRef = useRef<string | null>(null);
+  const pendingSyncEntriesRef = useRef(
+    new Map<number, { nodeIds: string[]; pageIds: string[] }>(),
+  );
+  const nextPendingSyncTokenRef = useRef(1);
 
   const isOwnerKeyValid = useQuery(
     api.workspace.validateOwnerKey,
@@ -2594,17 +2641,92 @@ function ConfiguredWorkspace({
     ownerKey && isOwnerKeyValid && isSimpleViewOpen ? { ownerKey } : SKIP,
   ) as SimpleTaskViewPageResult[] | undefined;
 
+  const recomputePendingSyncSnapshot = useCallback(() => {
+    const nodeIds = new Set<string>();
+    const pageIds = new Set<string>();
+    for (const entry of pendingSyncEntriesRef.current.values()) {
+      for (const nodeId of entry.nodeIds) {
+        nodeIds.add(nodeId);
+      }
+      for (const pageId of entry.pageIds) {
+        pageIds.add(pageId);
+      }
+    }
+    setPendingSyncSnapshot({
+      count: pendingSyncEntriesRef.current.size,
+      nodeIds,
+      pageIds,
+    });
+  }, []);
+
+  const beginPendingSync = useCallback(
+    (targets: PendingSyncTargetIds) => {
+      const token = nextPendingSyncTokenRef.current++;
+      const nodeIds = Array.from(
+        new Set(
+          (targets.nodeIds ?? [])
+            .map((value) => (value ? String(value) : null))
+            .filter((value): value is string => value !== null),
+        ),
+      );
+      const pageIds = Array.from(
+        new Set(
+          (targets.pageIds ?? [])
+            .map((value) => (value ? String(value) : null))
+            .filter((value): value is string => value !== null),
+        ),
+      );
+      pendingSyncEntriesRef.current.set(token, { nodeIds, pageIds });
+      recomputePendingSyncSnapshot();
+      return token;
+    },
+    [recomputePendingSyncSnapshot],
+  );
+
+  const finishPendingSync = useCallback(
+    (token: number) => {
+      if (!pendingSyncEntriesRef.current.delete(token)) {
+        return;
+      }
+      recomputePendingSyncSnapshot();
+    },
+    [recomputePendingSyncSnapshot],
+  );
+
+  const runTrackedMutation = useCallback(
+    async function runTrackedMutation<T>(
+      operation: () => Promise<T>,
+      targets: PendingSyncTargetIds,
+      fallbackMessage: string,
+    ) {
+      const token = beginPendingSync(targets);
+      try {
+        return await operation();
+      } catch (error) {
+        setSyncErrorMessage(
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : fallbackMessage,
+        );
+        throw error;
+      } finally {
+        finishPendingSync(token);
+      }
+    },
+    [beginPendingSync, finishPendingSync],
+  );
+
   const createPage = useMutation(api.workspace.createPage);
   const ensureSidebarPage = useMutation(api.workspace.ensureSidebarPage);
   const ensureTaskPageSidebarSection = useMutation(
     api.workspace.ensureTaskPageSidebarSection,
   );
   const ensurePlannerPageSections = useMutation(api.planner.ensurePlannerPageSections);
-  const renamePage = useMutation(api.workspace.renamePage);
+  const renamePageRaw = useMutation(api.workspace.renamePage);
   const archivePage = useMutation(api.workspace.archivePage);
-  const setPlannerScanExcluded = useMutation(api.workspace.setPlannerScanExcluded);
+  const setPlannerScanExcludedRaw = useMutation(api.workspace.setPlannerScanExcluded);
   const setModelPageCustomPrompt = useMutation(api.workspace.setModelPageCustomPrompt);
-  const setPagePinnedInAllSidebar = useMutation(api.workspace.setPagePinnedInAllSidebar);
+  const setPagePinnedInAllSidebarRaw = useMutation(api.workspace.setPagePinnedInAllSidebar);
   const mergePinnedPagesInAllSidebar = useMutation(api.workspace.mergePinnedPagesInAllSidebar);
   const deletePageForever = useMutation(api.workspace.deletePageForever);
   const rebuildEmbeddings = useMutation(api.workspace.rebuildEmbeddings);
@@ -2612,16 +2734,163 @@ function ConfiguredWorkspace({
   const refreshSidebarLinks = useMutation(api.workspace.refreshSidebarLinks);
   const cancelEmbeddingRebuild = useMutation(api.workspace.cancelEmbeddingRebuild);
   const createNodesBatch = useMutation(api.workspace.createNodesBatch);
-  const updateNode = useMutation(api.workspace.updateNode);
-  const updateNodesBatch = useMutation(api.workspace.updateNodesBatch);
-  const moveNode = useMutation(api.workspace.moveNode);
-  const moveNodesBatch = useMutation(api.workspace.moveNodesBatch);
+  const updateNodeRaw = useMutation(api.workspace.updateNode);
+  const updateNodesBatchRaw = useMutation(api.workspace.updateNodesBatch);
+  const moveNodeRaw = useMutation(api.workspace.moveNode);
+  const moveNodesBatchRaw = useMutation(api.workspace.moveNodesBatch);
   const splitNode = useMutation(api.workspace.splitNode);
   const replaceNodeAndInsertSiblings = useMutation(
     api.workspace.replaceNodeAndInsertSiblings,
   );
-  const setNodeTreeArchived = useMutation(api.workspace.setNodeTreeArchived);
-  const setNodeTreesArchivedBatch = useMutation(api.workspace.setNodeTreesArchivedBatch);
+  const setNodeTreeArchivedRaw = useMutation(api.workspace.setNodeTreeArchived);
+  const setNodeTreesArchivedBatchRaw = useMutation(api.workspace.setNodeTreesArchivedBatch);
+  const renamePageMutation = renamePageRaw.withOptimisticUpdate((localStore, args) => {
+    applyOptimisticPageRename(localStore, args);
+  });
+  const setPlannerScanExcludedMutation = setPlannerScanExcludedRaw.withOptimisticUpdate(
+    (localStore, args) => {
+      applyOptimisticPlannerScanExcluded(localStore, args);
+    },
+  );
+  const setPagePinnedInAllSidebarMutation = setPagePinnedInAllSidebarRaw.withOptimisticUpdate(
+    (localStore, args) => {
+      applyOptimisticPagePinnedInAllSidebar(localStore, args);
+    },
+  );
+  const updateNodeMutation = updateNodeRaw.withOptimisticUpdate((localStore, args) => {
+    applyOptimisticNodeUpdate(localStore, args);
+  });
+  const updateNodesBatchMutation = updateNodesBatchRaw.withOptimisticUpdate(
+    (localStore, args) => {
+      applyOptimisticNodeBatchUpdates(localStore, args);
+    },
+  );
+  const moveNodeMutation = moveNodeRaw.withOptimisticUpdate((localStore, args) => {
+    applyOptimisticNodeMoves(localStore, {
+      ownerKey: args.ownerKey,
+      moves: [args],
+    });
+  });
+  const moveNodesBatchMutation = moveNodesBatchRaw.withOptimisticUpdate(
+    (localStore, args) => {
+      applyOptimisticNodeMoves(localStore, args);
+    },
+  );
+  const setNodeTreeArchivedMutation = setNodeTreeArchivedRaw.withOptimisticUpdate(
+    (localStore, args) => {
+      if (!args.archived) {
+        return;
+      }
+      applyOptimisticNodeTreeArchive(localStore, {
+        ownerKey: args.ownerKey,
+        rootNodeIds: [args.nodeId],
+      });
+    },
+  );
+  const setNodeTreesArchivedBatchMutation = setNodeTreesArchivedBatchRaw.withOptimisticUpdate(
+    (localStore, args) => {
+      if (!args.archived) {
+        return;
+      }
+      applyOptimisticNodeTreeArchive(localStore, {
+        ownerKey: args.ownerKey,
+        rootNodeIds: args.nodeIds,
+      });
+    },
+  );
+  const renamePage = useCallback(
+    (args: RenamePageArgs) =>
+      runTrackedMutation(
+        () => renamePageMutation(args),
+        { pageIds: [args.pageId] },
+        "Could not rename page.",
+      ),
+    [renamePageMutation, runTrackedMutation],
+  );
+  const setPlannerScanExcluded = useCallback(
+    (args: SetPlannerScanExcludedArgs) =>
+      runTrackedMutation(
+        () => setPlannerScanExcludedMutation(args),
+        { pageIds: [args.pageId] },
+        "Could not update planner scan settings.",
+      ),
+    [runTrackedMutation, setPlannerScanExcludedMutation],
+  );
+  const setPagePinnedInAllSidebar = useCallback(
+    (args: SetPagePinnedInAllSidebarArgs) =>
+      runTrackedMutation(
+        () => setPagePinnedInAllSidebarMutation(args),
+        { pageIds: [args.pageId] },
+        "Could not update sidebar pins.",
+      ),
+    [runTrackedMutation, setPagePinnedInAllSidebarMutation],
+  );
+  const updateNode = useCallback(
+    (args: UpdateNodeArgs) =>
+      runTrackedMutation(
+        () => updateNodeMutation(args),
+        { nodeIds: [args.nodeId] },
+        "Could not save changes.",
+      ),
+    [runTrackedMutation, updateNodeMutation],
+  );
+  const updateNodesBatch = useCallback(
+    (args: UpdateNodesBatchArgs) =>
+      runTrackedMutation(
+        () => updateNodesBatchMutation(args),
+        {
+          nodeIds: args.updates.map((update) => update.nodeId),
+        },
+        "Could not save changes.",
+      ),
+    [runTrackedMutation, updateNodesBatchMutation],
+  );
+  const moveNode = useCallback(
+    (args: MoveNodeArgs) =>
+      runTrackedMutation(
+        () => moveNodeMutation(args),
+        {
+          nodeIds: [args.nodeId],
+          pageIds: [args.pageId],
+        },
+        "Could not move that item.",
+      ),
+    [moveNodeMutation, runTrackedMutation],
+  );
+  const moveNodesBatch = useCallback(
+    (args: MoveNodesBatchArgs) =>
+      runTrackedMutation(
+        () => moveNodesBatchMutation(args),
+        {
+          nodeIds: args.moves.map((move) => move.nodeId),
+          pageIds: args.moves.map((move) => move.pageId),
+        },
+        "Could not move those items.",
+      ),
+    [moveNodesBatchMutation, runTrackedMutation],
+  );
+  const setNodeTreeArchived = useCallback(
+    (args: SetNodeTreeArchivedArgs) =>
+      runTrackedMutation(
+        () => setNodeTreeArchivedMutation(args),
+        {
+          nodeIds: [args.nodeId],
+        },
+        args.archived ? "Could not delete that item." : "Could not restore that item.",
+      ),
+    [runTrackedMutation, setNodeTreeArchivedMutation],
+  );
+  const setNodeTreesArchivedBatch = useCallback(
+    (args: SetNodeTreesArchivedBatchArgs) =>
+      runTrackedMutation(
+        () => setNodeTreesArchivedBatchMutation(args),
+        {
+          nodeIds: args.nodeIds,
+        },
+        args.archived ? "Could not delete those items." : "Could not restore those items.",
+      ),
+    [runTrackedMutation, setNodeTreesArchivedBatchMutation],
+  );
   const rewriteModelSection = useAction(api.chat.rewriteModelSection);
   const generateJournalFeedback = useAction(api.chat.generateJournalFeedback);
   const appendPlannerDay = useMutation(api.planner.appendPlannerDay);
@@ -2783,14 +3052,17 @@ function ConfiguredWorkspace({
     selectedPageId,
     setSelectedPageId,
     auxiliaryPageIds: sidebarTree?.page ? [sidebarTree.page._id] : [],
-    renamePage,
-    updateNode,
-    moveNode,
-    setNodeTreeArchived,
+    renamePage: renamePageRaw,
+    updateNode: updateNodeRaw,
+    moveNode: moveNodeRaw,
+    setNodeTreeArchived: setNodeTreeArchivedRaw,
     isDisabled: activePageTree?.page?.archived ?? false,
   });
 
   const selectedPage = activePageTree?.page ?? null;
+  const isSelectedPagePendingSync = selectedPage
+    ? pendingSyncSnapshot.pageIds.has(selectedPage._id as string)
+    : false;
   const pageMeta = getPageMeta(selectedPage);
   const isPageArchived = selectedPage?.archived ?? false;
   const selectedPageSourceMeta =
@@ -4661,6 +4933,18 @@ function ConfiguredWorkspace({
 
     return () => window.clearTimeout(timeoutId);
   }, [copySnackbarMessage]);
+
+  useEffect(() => {
+    if (!syncErrorMessage) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setSyncErrorMessage("");
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [syncErrorMessage]);
 
   useEffect(() => {
     if (!dragSelection) {
@@ -6951,6 +7235,15 @@ function ConfiguredWorkspace({
         }}
       >
       <div className="pointer-events-none fixed right-4 top-4 z-40 flex flex-col items-end gap-2 md:right-6 md:top-6">
+        {pendingSyncSnapshot.count > 0 ? (
+          <div className="pointer-events-auto inline-flex items-center gap-2 border border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface)_92%,transparent)] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-faint)] shadow-[0_18px_40px_-28px_rgba(0,0,0,0.5)] backdrop-blur-sm">
+            <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-[var(--workspace-accent)]" />
+            <span>
+              Syncing {pendingSyncSnapshot.count} change
+              {pendingSyncSnapshot.count === 1 ? "" : "s"}
+            </span>
+          </div>
+        ) : null}
         <div className="pointer-events-auto flex items-center gap-2 border border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface)_88%,transparent)] px-2 py-2 shadow-[0_18px_40px_-28px_rgba(0,0,0,0.5)] backdrop-blur-sm">
           <button
             type="button"
@@ -7220,6 +7513,7 @@ function ConfiguredWorkspace({
                           setNodeTreeArchived={setNodeTreeArchived}
                           isPageReadOnly={false}
                           collapsedNodeIds={collapsedNodeIds}
+                          pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                           selectedNodeIds={selectedNodeIds}
                           selectionAnchorNodeId={selectionAnchorNodeId}
                           onToggleNodeCollapsed={toggleNodeCollapsed}
@@ -7365,6 +7659,7 @@ function ConfiguredWorkspace({
                           setNodeTreeArchived={setNodeTreeArchived}
                           isPageReadOnly={false}
                           collapsedNodeIds={collapsedNodeIds}
+                          pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                           selectedNodeIds={selectedNodeIds}
                           selectionAnchorNodeId={selectionAnchorNodeId}
                           onToggleNodeCollapsed={toggleNodeCollapsed}
@@ -7867,6 +8162,12 @@ function ConfiguredWorkspace({
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.3em] text-[var(--workspace-accent)]">
                       <span>{getPageTypeDisplayLabel(selectedPage)}</span>
+                      {isSelectedPagePendingSync ? (
+                        <span className="inline-flex items-center gap-2 rounded-full border border-[var(--workspace-border)] px-2 py-1 text-[10px] tracking-[0.2em] text-[var(--workspace-text-faint)]">
+                          <span className="inline-flex h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--workspace-accent)]" />
+                          Syncing
+                        </span>
+                      ) : null}
                       {pageBacklinkCount > 0 ? (
                         <button
                           type="button"
@@ -7898,7 +8199,9 @@ function ConfiguredWorkspace({
                           );
                         }
                       }}
-                      onBlur={() => void handleRenamePage()}
+                      onBlur={() => {
+                        void handleRenamePage().catch(() => undefined);
+                      }}
                       disabled={isPageArchived}
                       className="mt-4 w-full border-0 bg-transparent p-0 text-4xl font-semibold tracking-tight text-[var(--workspace-text-subtle)] outline-none disabled:text-[var(--workspace-text-muted)]"
                     />
@@ -7964,6 +8267,7 @@ function ConfiguredWorkspace({
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
                       collapsedNodeIds={collapsedNodeIds}
+                      pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                       selectedNodeIds={selectedNodeIds}
                       selectionAnchorNodeId={selectionAnchorNodeId}
                       onToggleNodeCollapsed={toggleNodeCollapsed}
@@ -8214,6 +8518,7 @@ function ConfiguredWorkspace({
                           setNodeTreeArchived={setNodeTreeArchived}
                           isPageReadOnly={isPageArchived}
                           collapsedNodeIds={collapsedNodeIds}
+                          pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                           selectedNodeIds={selectedNodeIds}
                           selectionAnchorNodeId={selectionAnchorNodeId}
                           onToggleNodeCollapsed={toggleNodeCollapsed}
@@ -8261,6 +8566,7 @@ function ConfiguredWorkspace({
                             setNodeTreeArchived={setNodeTreeArchived}
                             isPageReadOnly={isPageArchived}
                             collapsedNodeIds={collapsedNodeIds}
+                            pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                             selectedNodeIds={selectedNodeIds}
                             selectionAnchorNodeId={selectionAnchorNodeId}
                             onToggleNodeCollapsed={toggleNodeCollapsed}
@@ -8314,6 +8620,7 @@ function ConfiguredWorkspace({
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
                       collapsedNodeIds={collapsedNodeIds}
+                      pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                       selectedNodeIds={selectedNodeIds}
                       selectionAnchorNodeId={selectionAnchorNodeId}
                       onToggleNodeCollapsed={toggleNodeCollapsed}
@@ -8363,6 +8670,7 @@ function ConfiguredWorkspace({
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
                       collapsedNodeIds={collapsedNodeIds}
+                      pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                       selectedNodeIds={selectedNodeIds}
                       selectionAnchorNodeId={selectionAnchorNodeId}
                       onToggleNodeCollapsed={toggleNodeCollapsed}
@@ -8445,6 +8753,7 @@ function ConfiguredWorkspace({
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
                       collapsedNodeIds={collapsedNodeIds}
+                      pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                       selectedNodeIds={selectedNodeIds}
                       selectionAnchorNodeId={selectionAnchorNodeId}
                       onToggleNodeCollapsed={toggleNodeCollapsed}
@@ -8495,6 +8804,7 @@ function ConfiguredWorkspace({
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
                       collapsedNodeIds={collapsedNodeIds}
+                      pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                       selectedNodeIds={selectedNodeIds}
                       selectionAnchorNodeId={selectionAnchorNodeId}
                       onToggleNodeCollapsed={toggleNodeCollapsed}
@@ -8542,6 +8852,7 @@ function ConfiguredWorkspace({
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
                       collapsedNodeIds={collapsedNodeIds}
+                      pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                       selectedNodeIds={selectedNodeIds}
                       selectionAnchorNodeId={selectionAnchorNodeId}
                       onToggleNodeCollapsed={toggleNodeCollapsed}
@@ -8627,6 +8938,7 @@ function ConfiguredWorkspace({
                         setNodeTreeArchived={setNodeTreeArchived}
                         isPageReadOnly={isPageArchived}
                         collapsedNodeIds={collapsedNodeIds}
+                        pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                         selectedNodeIds={selectedNodeIds}
                         selectionAnchorNodeId={selectionAnchorNodeId}
                         onToggleNodeCollapsed={toggleNodeCollapsed}
@@ -8674,6 +8986,7 @@ function ConfiguredWorkspace({
                         setNodeTreeArchived={setNodeTreeArchived}
                         isPageReadOnly={isPageArchived}
                         collapsedNodeIds={collapsedNodeIds}
+                        pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                         selectedNodeIds={selectedNodeIds}
                         selectionAnchorNodeId={selectionAnchorNodeId}
                         onToggleNodeCollapsed={toggleNodeCollapsed}
@@ -8722,6 +9035,7 @@ function ConfiguredWorkspace({
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
                       collapsedNodeIds={collapsedNodeIds}
+                      pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                       selectedNodeIds={selectedNodeIds}
                       selectionAnchorNodeId={selectionAnchorNodeId}
                       onToggleNodeCollapsed={toggleNodeCollapsed}
@@ -9180,6 +9494,13 @@ function ConfiguredWorkspace({
           </div>
         </div>
       ) : null}
+      {syncErrorMessage ? (
+        <div className="pointer-events-none fixed bottom-36 left-1/2 z-40 -translate-x-1/2 md:bottom-20">
+          <div className="border border-[var(--workspace-danger)]/60 bg-[color-mix(in_srgb,var(--workspace-surface)_95%,transparent)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--workspace-danger)] shadow-[0_18px_40px_-28px_rgba(0,0,0,0.5)] backdrop-blur-sm">
+            {syncErrorMessage}
+          </div>
+        </div>
+      ) : null}
       {copySnackbarMessage ? (
         <div className="pointer-events-none fixed bottom-24 left-1/2 z-40 -translate-x-1/2 md:bottom-6">
           <div className="border border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface)_92%,transparent)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text)] shadow-[0_18px_40px_-28px_rgba(0,0,0,0.5)] backdrop-blur-sm">
@@ -9266,6 +9587,7 @@ function PageSection({
   setNodeTreeArchived,
   isPageReadOnly,
   collapsedNodeIds,
+  pendingSyncNodeIds = new Set(),
   selectedNodeIds,
   selectionAnchorNodeId,
   onToggleNodeCollapsed,
@@ -9316,6 +9638,7 @@ function PageSection({
   setNodeTreeArchived: SetNodeTreeArchivedMutation;
   isPageReadOnly: boolean;
   collapsedNodeIds: Set<string>;
+  pendingSyncNodeIds?: Set<string>;
   selectedNodeIds: Set<string>;
   selectionAnchorNodeId: string | null;
   onToggleNodeCollapsed: (nodeId: string) => void;
@@ -9406,6 +9729,7 @@ function PageSection({
           depth={depthOffset}
           isPageReadOnly={isPageReadOnly}
           collapsedNodeIds={collapsedNodeIds}
+          pendingSyncNodeIds={pendingSyncNodeIds}
           selectedNodeIds={selectedNodeIds}
           selectionAnchorNodeId={selectionAnchorNodeId}
           onToggleNodeCollapsed={onToggleNodeCollapsed}
@@ -9457,6 +9781,7 @@ function OutlineNodeList({
   parentNodeId = null,
   isPageReadOnly,
   collapsedNodeIds,
+  pendingSyncNodeIds = new Set(),
   selectedNodeIds,
   selectionAnchorNodeId,
   onToggleNodeCollapsed,
@@ -9502,6 +9827,7 @@ function OutlineNodeList({
   parentNodeId?: Id<"nodes"> | null;
   isPageReadOnly: boolean;
   collapsedNodeIds: Set<string>;
+  pendingSyncNodeIds?: Set<string>;
   selectedNodeIds: Set<string>;
   selectionAnchorNodeId: string | null;
   onToggleNodeCollapsed: (nodeId: string) => void;
@@ -9591,6 +9917,7 @@ function OutlineNodeList({
           depth={depth}
           isPageReadOnly={isPageReadOnly}
           collapsedNodeIds={collapsedNodeIds}
+          pendingSyncNodeIds={pendingSyncNodeIds}
           isSelected={isNodeWithinSelectedSubtree(node._id, selectedNodeIds, nodeMap)}
           selectedNodeIds={selectedNodeIds}
           selectionAnchorNodeId={selectionAnchorNodeId}
@@ -10567,6 +10894,7 @@ function OutlineNodeEditor({
   depth = 0,
   isPageReadOnly,
   collapsedNodeIds,
+  pendingSyncNodeIds = new Set(),
   isSelected,
   selectedNodeIds,
   selectionAnchorNodeId,
@@ -10617,6 +10945,7 @@ function OutlineNodeEditor({
   depth?: number;
   isPageReadOnly: boolean;
   collapsedNodeIds: Set<string>;
+  pendingSyncNodeIds?: Set<string>;
   isSelected: boolean;
   selectedNodeIds: Set<string>;
   selectionAnchorNodeId: string | null;
@@ -10791,6 +11120,7 @@ function OutlineNodeEditor({
   const hasNestedGrandchildren = node.children.some((child) => child.children.length > 0);
   const isCollapsed = hasChildren && collapsedNodeIds.has(node._id);
   const isTaskRow = node.kind === "task";
+  const isPendingSync = pendingSyncNodeIds.has(node._id as string);
   const isHeadingRow = isHeadingLine;
   const hidePlannerTemplateWeekdayMarker = isPlannerTemplateWeekdayRoot;
   const recurrenceFrequency = getNodeRecurrenceFrequency(node);
@@ -11181,15 +11511,15 @@ function OutlineNodeEditor({
 
     if (node.kind === "task") {
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-        void handleToggleNodeKind();
+        void handleToggleNodeKind().catch(() => undefined);
         return;
       }
 
-      void handleToggleTask();
+      void handleToggleTask().catch(() => undefined);
       return;
     }
 
-    void handleToggleNodeKind();
+    void handleToggleNodeKind().catch(() => undefined);
   };
 
   const handleDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
@@ -12539,13 +12869,17 @@ function OutlineNodeEditor({
               }}
               onBlur={() => {
                 setIsFocused(false);
-                void handleSave();
+                void handleSave().catch(() => undefined);
               }}
               onSelect={(event) => {
                 setCaretPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length);
               }}
-              onPaste={(event) => void handlePaste(event)}
-              onKeyDown={(event) => void handleKeyDown(event)}
+              onPaste={(event) => {
+                void handlePaste(event).catch(() => undefined);
+              }}
+              onKeyDown={(event) => {
+                void handleKeyDown(event).catch(() => undefined);
+              }}
               placeholder="Write a line…"
               disabled={isDisabled}
               rows={1}
@@ -12653,6 +12987,12 @@ function OutlineNodeEditor({
                   : "items-start pt-[2px]",
             )}
           >
+            {isPendingSync ? (
+              <span
+                className="mt-1 inline-flex h-2 w-2 flex-none animate-pulse rounded-full bg-[var(--workspace-accent)]"
+                title="Syncing"
+              />
+            ) : null}
             {node.kind === "task" && (effectiveDueRange.dueAt || recurrenceFrequency) ? (
               <div className="flex items-center gap-1 pt-px text-[10px] leading-none">
                 {effectiveDueRange.dueAt ? (
@@ -12770,6 +13110,7 @@ function OutlineNodeEditor({
               depth={depth + 1}
               isPageReadOnly={isPageReadOnly}
               collapsedNodeIds={collapsedNodeIds}
+              pendingSyncNodeIds={pendingSyncNodeIds}
               selectedNodeIds={selectedNodeIds}
               selectionAnchorNodeId={selectionAnchorNodeId}
               onToggleNodeCollapsed={onToggleNodeCollapsed}
