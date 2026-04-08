@@ -1672,6 +1672,83 @@ function isNodeWithinSelectedSubtree(
   return false;
 }
 
+function areNodeIdListsEqual(left: string[], right: string[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  const rightSet = new Set(right);
+  return left.every((nodeId) => rightSet.has(nodeId));
+}
+
+function getOrderedSiblingNodeIds(
+  nodeMap: Map<string, Doc<"nodes">>,
+  pageId: Id<"pages">,
+  parentNodeId: Id<"nodes"> | null,
+) {
+  return [...nodeMap.values()]
+    .filter(
+      (candidate) =>
+        candidate.pageId === pageId &&
+        ((candidate.parentNodeId as Id<"nodes"> | null) ?? null) === parentNodeId,
+    )
+    .sort((left, right) => left.position - right.position)
+    .map((candidate) => candidate._id as string);
+}
+
+function buildNodeSelectionScopeChain(
+  anchorNodeId: string,
+  nodeMap: Map<string, Doc<"nodes">>,
+) {
+  const anchorNode = nodeMap.get(anchorNodeId) ?? null;
+  if (!anchorNode) {
+    return [[anchorNodeId]];
+  }
+
+  const candidates: string[][] = [[anchorNodeId]];
+  let scopeNode: Doc<"nodes"> | null = anchorNode;
+
+  while (scopeNode) {
+    const siblingIds = getOrderedSiblingNodeIds(
+      nodeMap,
+      scopeNode.pageId as Id<"pages">,
+      (scopeNode.parentNodeId as Id<"nodes"> | null) ?? null,
+    );
+    if (
+      siblingIds.length > 0 &&
+      !areNodeIdListsEqual(candidates[candidates.length - 1] ?? [], siblingIds)
+    ) {
+      candidates.push(siblingIds);
+    }
+
+    if (!scopeNode.parentNodeId) {
+      break;
+    }
+
+    scopeNode = nodeMap.get(scopeNode.parentNodeId as string) ?? null;
+  }
+
+  return candidates;
+}
+
+function getNextExpandedSelectionScope(
+  anchorNodeId: string,
+  selectedNodeIds: Set<string>,
+  nodeMap: Map<string, Doc<"nodes">>,
+) {
+  const candidates = buildNodeSelectionScopeChain(anchorNodeId, nodeMap);
+  const currentSelection = [...selectedNodeIds];
+  const matchedIndex = candidates.findIndex((candidate) =>
+    areNodeIdListsEqual(candidate, currentSelection),
+  );
+
+  if (matchedIndex < 0) {
+    return candidates[0] ?? [anchorNodeId];
+  }
+
+  return candidates[Math.min(matchedIndex + 1, candidates.length - 1)] ?? [anchorNodeId];
+}
+
 function isValidClipboardTaskStatus(value: unknown): value is NodeValueSnapshot["taskStatus"] {
   return (
     value === null ||
@@ -5996,6 +6073,29 @@ function ConfiguredWorkspace({
         return;
       }
 
+      if (
+        isModifier &&
+        !event.shiftKey &&
+        !event.altKey &&
+        normalizedKey === "a" &&
+        selectedNodeIds.size > 0 &&
+        !isTextEntryElement(event.target)
+      ) {
+        event.preventDefault();
+        const anchorNodeId =
+          selectionAnchorNodeId ??
+          getSelectedRootNodeIds(selectedNodeIds, visibleNodeOrder, workspaceNodeMap)[0] ??
+          null;
+        if (!anchorNodeId) {
+          return;
+        }
+
+        setExplicitSelectedNodeIds(
+          getNextExpandedSelectionScope(anchorNodeId, selectedNodeIds, workspaceNodeMap),
+        );
+        return;
+      }
+
       if (event.key === "Escape") {
         if (paletteOpen) {
           event.preventDefault();
@@ -6155,11 +6255,13 @@ function ConfiguredWorkspace({
     indentHighlightedNodeByKeyboard,
     moveHighlightedNodeByKeyboard,
     openPalette,
+    selectionAnchorNodeId,
     toggleWorkspaceChat,
     cyclePaletteMode,
     paletteOpen,
     isWorkspaceChatOpen,
     clearNodeSelection,
+    setExplicitSelectedNodeIds,
     selectNodeRange,
     selectSingleNode,
     selectedNodeIds,
@@ -6167,6 +6269,7 @@ function ConfiguredWorkspace({
     toggleHighlightedNodeCompletion,
     toggleHighlightedNodeKind,
     visibleNodeOrder,
+    workspaceNodeMap,
   ]);
 
   useEffect(() => {
@@ -11620,15 +11723,34 @@ function OutlineNodeEditor({
     }
   };
 
+  const expandFocusedSelectionScope = () => {
+    textareaRef.current?.blur();
+    onSetSelectedNodeIds(
+      getNextExpandedSelectionScope(node._id as string, selectedNodeIds, nodeMap),
+    );
+  };
+
   const handleKeyDown = async (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
     const isModifier = event.metaKey || event.ctrlKey;
     const normalizedKey = event.key.toLowerCase();
+    const selectionStart = event.currentTarget.selectionStart ?? 0;
+    const selectionEnd = event.currentTarget.selectionEnd ?? selectionStart;
+    const isFullTextSelected =
+      selectionStart === 0 && selectionEnd === event.currentTarget.value.length;
+
+    if (isModifier && !event.shiftKey && !event.altKey && normalizedKey === "a") {
+      if (isFullTextSelected) {
+        event.preventDefault();
+        expandFocusedSelectionScope();
+      }
+      return;
+    }
 
     if (isModifier && !event.shiftKey && !event.altKey && normalizedKey === "k") {
       const replacement = applySelectedLinkShortcut(
         event.currentTarget.value,
-        event.currentTarget.selectionStart ?? 0,
-        event.currentTarget.selectionEnd ?? 0,
+        selectionStart,
+        selectionEnd,
       );
 
       if (replacement) {
@@ -11650,8 +11772,8 @@ function OutlineNodeEditor({
     if (isModifier && !event.shiftKey && !event.altKey && normalizedKey === "i") {
       const replacement = applySelectedInlineFormattingShortcut(
         event.currentTarget.value,
-        event.currentTarget.selectionStart ?? 0,
-        event.currentTarget.selectionEnd ?? 0,
+        selectionStart,
+        selectionEnd,
         "__",
       );
 
@@ -11677,8 +11799,8 @@ function OutlineNodeEditor({
     if (isModifier && !event.shiftKey && !event.altKey && normalizedKey === "b") {
       const replacement = applySelectedInlineFormattingShortcut(
         event.currentTarget.value,
-        event.currentTarget.selectionStart ?? 0,
-        event.currentTarget.selectionEnd ?? 0,
+        selectionStart,
+        selectionEnd,
         "**",
       );
 
@@ -11705,8 +11827,8 @@ function OutlineNodeEditor({
       event.preventDefault();
       const replacement = cycleHeadingSyntax(
         event.currentTarget.value,
-        event.currentTarget.selectionStart ?? 0,
-        event.currentTarget.selectionEnd ?? 0,
+        selectionStart,
+        selectionEnd,
       );
       setDraft(replacement.value);
       history.updateDraftValue(editorId, editorTarget, replacement.value);
@@ -11724,8 +11846,8 @@ function OutlineNodeEditor({
     if (isModifier && event.shiftKey && !event.altKey && (event.key === "_" || event.key === "-")) {
       const replacement = applySelectedInlineFormattingShortcut(
         event.currentTarget.value,
-        event.currentTarget.selectionStart ?? 0,
-        event.currentTarget.selectionEnd ?? 0,
+        selectionStart,
+        selectionEnd,
         "~~",
       );
 
