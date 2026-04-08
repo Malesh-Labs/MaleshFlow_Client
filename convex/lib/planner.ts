@@ -203,15 +203,24 @@ function isPlannerSubtreeCompleted(
   nodeId: Id<"nodes">,
   nodeMap: Map<string, Doc<"nodes">>,
   childrenByParent: Map<string | null, Doc<"nodes">[]>,
+  isRoot = true,
 ) {
   const rootNode = nodeMap.get(nodeId as string);
-  if (!rootNode || !isPlannerNodeCompleted(rootNode)) {
+  if (!rootNode) {
+    return false;
+  }
+
+  if (
+    rootNode.kind === "task"
+      ? rootNode.taskStatus !== "done"
+      : isRoot && !isPlannerNodeCompleted(rootNode)
+  ) {
     return false;
   }
 
   const descendants = childrenByParent.get(nodeId as string) ?? [];
   for (const child of descendants) {
-    if (!isPlannerSubtreeCompleted(child._id, nodeMap, childrenByParent)) {
+    if (!isPlannerSubtreeCompleted(child._id, nodeMap, childrenByParent, false)) {
       return false;
     }
   }
