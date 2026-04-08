@@ -1095,6 +1095,27 @@ export const getSidebarTree = query({
   },
 });
 
+export const getWorkspaceInbox = query({
+  args: {
+    ownerKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const pages = await ctx.db.query("pages").collect();
+    const sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
+    const sourceMeta = getPageSourceMeta(sidebarPage);
+
+    return {
+      text:
+        typeof sourceMeta.workspaceInboxText === "string"
+          ? sourceMeta.workspaceInboxText
+          : "",
+      updatedAt: sidebarPage?.updatedAt ?? null,
+    };
+  },
+});
+
 export const ensureSidebarPage = mutation({
   args: {
     ownerKey: v.string(),
@@ -1137,6 +1158,62 @@ export const ensureSidebarPage = mutation({
       createdAt: now,
       updatedAt: now,
     });
+  },
+});
+
+export const setWorkspaceInbox = mutation({
+  args: {
+    ownerKey: v.string(),
+    text: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const pages = await ctx.db.query("pages").collect();
+    let sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
+
+    if (!sidebarPage) {
+      const now = getTimestamp();
+      const slug = await buildUniquePageSlug(ctx.db, "Sidebar");
+      const sidebarPageId = await ctx.db.insert("pages", {
+        title: "Sidebar",
+        slug,
+        icon: null,
+        archived: false,
+        position: -1024,
+        sourceMeta: {
+          sourceType: "system",
+          specialPage: "sidebar",
+          hidden: true,
+          pageType: "note",
+          sidebarSection: "Notes",
+          workspaceInboxText: args.text,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+      return {
+        pageId: sidebarPageId,
+        text: args.text,
+      };
+    }
+
+    const nextSourceMeta = {
+      ...getPageSourceMeta(sidebarPage),
+      workspaceInboxText: args.text,
+      pageType: "note",
+      sidebarSection: "Notes",
+    };
+
+    await ctx.db.patch(sidebarPage._id, {
+      sourceMeta: nextSourceMeta,
+      updatedAt: getTimestamp(),
+    });
+
+    return {
+      pageId: sidebarPage._id,
+      text: args.text,
+    };
   },
 });
 

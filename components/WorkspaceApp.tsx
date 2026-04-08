@@ -126,6 +126,7 @@ const OUTLINE_CLIPBOARD_MIME_TYPE = "application/x-maleshflow-outline";
 const WORKSPACE_AI_CHAT_TEXTAREA_ID = "workspace-ai-chat-textarea";
 const WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY = "maleshflow-workspace-ai-chat-open";
 const SIMPLE_VIEW_OPEN_STORAGE_KEY = "maleshflow-simple-view-open";
+const WORKSPACE_INBOX_TEXTAREA_ID = "workspace-inbox-textarea";
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
 const ALL_PAGE_TYPE_GROUP_ORDER = [
   "Planner",
@@ -2533,6 +2534,11 @@ function ConfiguredWorkspace({
   const [isSimpleViewOpen, setIsSimpleViewOpen] = useState(() =>
     readStoredBoolean(SIMPLE_VIEW_OPEN_STORAGE_KEY, false),
   );
+  const [isInboxOpen, setIsInboxOpen] = useState(false);
+  const [inboxDraft, setInboxDraft] = useState("");
+  const [isInboxDirty, setIsInboxDirty] = useState(false);
+  const [isInboxSaving, setIsInboxSaving] = useState(false);
+  const [inboxSaveError, setInboxSaveError] = useState("");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("pages");
   const [paletteQuery, setPaletteQuery] = useState("");
@@ -2592,6 +2598,7 @@ function ConfiguredWorkspace({
   const hasHydratedSessionUiStateRef = useRef(false);
   const hasMigratedPinnedAllPagesRef = useRef(false);
   const lastLoadedModelPromptPageIdRef = useRef<string | null>(null);
+  const inboxDraftRef = useRef("");
   const pendingSyncEntriesRef = useRef(
     new Map<number, { nodeIds: string[]; pageIds: string[] }>(),
   );
@@ -2624,6 +2631,10 @@ function ConfiguredWorkspace({
   );
   const workspaceKnowledgeThread = useQuery(
     api.chatData.getWorkspaceKnowledgeThread,
+    ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
+  );
+  const workspaceInbox = useQuery(
+    api.workspace.getWorkspaceInbox,
     ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
   );
   const pageTree = useQuery(
@@ -2726,6 +2737,7 @@ function ConfiguredWorkspace({
   const archivePage = useMutation(api.workspace.archivePage);
   const setPlannerScanExcludedRaw = useMutation(api.workspace.setPlannerScanExcluded);
   const setModelPageCustomPrompt = useMutation(api.workspace.setModelPageCustomPrompt);
+  const setWorkspaceInbox = useMutation(api.workspace.setWorkspaceInbox);
   const setPagePinnedInAllSidebarRaw = useMutation(api.workspace.setPagePinnedInAllSidebar);
   const mergePinnedPagesInAllSidebar = useMutation(api.workspace.mergePinnedPagesInAllSidebar);
   const deletePageForever = useMutation(api.workspace.deletePageForever);
@@ -4947,6 +4959,73 @@ function ConfiguredWorkspace({
   }, [syncErrorMessage]);
 
   useEffect(() => {
+    inboxDraftRef.current = inboxDraft;
+  }, [inboxDraft]);
+
+  useEffect(() => {
+    if (typeof workspaceInbox?.text !== "string") {
+      return;
+    }
+
+    if (!isInboxOpen || !isInboxDirty) {
+      setInboxDraft(workspaceInbox.text);
+    }
+  }, [isInboxDirty, isInboxOpen, workspaceInbox?.text]);
+
+  const saveInboxDraft = useCallback(
+    async (text: string) => {
+      if (!ownerKey || !isOwnerKeyValid) {
+        return;
+      }
+
+      setIsInboxSaving(true);
+      setInboxSaveError("");
+      try {
+        await setWorkspaceInbox({
+          ownerKey,
+          text,
+        });
+        if (inboxDraftRef.current === text) {
+          setIsInboxDirty(false);
+        }
+      } catch (error) {
+        setInboxSaveError(
+          error instanceof Error ? error.message : "Could not save inbox.",
+        );
+      } finally {
+        setIsInboxSaving(false);
+      }
+    },
+    [isOwnerKeyValid, ownerKey, setWorkspaceInbox],
+  );
+
+  const openInbox = useCallback(() => {
+    setInboxSaveError("");
+    setInboxDraft(typeof workspaceInbox?.text === "string" ? workspaceInbox.text : "");
+    setIsInboxDirty(false);
+    setIsInboxOpen(true);
+  }, [workspaceInbox?.text]);
+
+  const closeInbox = useCallback(() => {
+    if (isInboxDirty) {
+      void saveInboxDraft(inboxDraftRef.current);
+    }
+    setIsInboxOpen(false);
+  }, [isInboxDirty, saveInboxDraft]);
+
+  useEffect(() => {
+    if (!isInboxOpen || !isInboxDirty) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void saveInboxDraft(inboxDraftRef.current);
+    }, 450);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isInboxDirty, isInboxOpen, saveInboxDraft]);
+
+  useEffect(() => {
     if (!dragSelection) {
       return;
     }
@@ -6024,6 +6103,29 @@ function ConfiguredWorkspace({
 
     return () => window.clearTimeout(timeout);
   }, [isWorkspaceChatOpen]);
+
+  useEffect(() => {
+    if (!isInboxOpen) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      document.getElementById(WORKSPACE_INBOX_TEXTAREA_ID)?.focus();
+    }, 0);
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeInbox();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeInbox, isInboxOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -7249,53 +7351,78 @@ function ConfiguredWorkspace({
             type="button"
             onMouseDown={(event) => event.preventDefault()}
             onClick={toggleSimpleView}
+            title="Simple view"
+            aria-label="Simple view"
             className={clsx(
-              "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition",
+              "flex h-10 w-10 items-center justify-center border text-lg transition",
               isSimpleViewOpen
                 ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
                 : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
             )}
           >
-            Simple
+            ☰
           </button>
           <button
             type="button"
             onMouseDown={(event) => event.preventDefault()}
             onClick={toggleWorkspaceChat}
+            title="AI chat"
+            aria-label="AI chat"
             className={clsx(
-              "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition",
+              "flex h-10 w-10 items-center justify-center border text-lg transition",
               isWorkspaceChatOpen
                 ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
                 : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
             )}
           >
-            AI Chat
+            🤖
+          </button>
+          <button
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={openInbox}
+            title="Inbox"
+            aria-label="Inbox"
+            className={clsx(
+              "flex h-10 w-10 items-center justify-center border text-lg transition",
+              isInboxOpen
+                ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
+                : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+            )}
+          >
+            📥
           </button>
           <button
             type="button"
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => openPalette(lastPaletteModeRef.current)}
-            className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+            title="Command palette"
+            aria-label="Command palette"
+            className="flex h-10 w-10 items-center justify-center border border-[var(--workspace-border)] text-lg text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
           >
-            Command
+            ⌘
           </button>
           <button
             type="button"
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => void history.undo()}
             disabled={!history.canUndo || history.isApplyingHistory}
-            className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-40"
+            title="Undo"
+            aria-label="Undo"
+            className="flex h-10 w-10 items-center justify-center border border-[var(--workspace-border)] text-lg text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Undo
+            ↶
           </button>
           <button
             type="button"
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => void history.redo()}
             disabled={!history.canRedo || history.isApplyingHistory}
-            className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-40"
+            title="Redo"
+            aria-label="Redo"
+            className="flex h-10 w-10 items-center justify-center border border-[var(--workspace-border)] text-lg text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-40"
           >
-            Redo
+            ↷
           </button>
         </div>
         {embeddingRebuildTracker ? (
@@ -9491,6 +9618,57 @@ function ConfiguredWorkspace({
                 )
               ) : null}
             </div>
+          </div>
+        </div>
+      ) : null}
+      {isInboxOpen ? (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4"
+          onClick={closeInbox}
+        >
+          <div
+            className="flex h-[min(34rem,78vh)] w-full max-w-3xl flex-col border border-[var(--workspace-border)] bg-[var(--workspace-surface)] shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-4 border-b border-[var(--workspace-border)] px-4 py-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--workspace-accent)]">
+                  Inbox
+                </p>
+                <p className="mt-1 text-xs text-[var(--workspace-text-faint)]">
+                  Plain text. Auto-saved to the workspace.
+                </p>
+              </div>
+              <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                {isInboxSaving ? <span>Saving…</span> : null}
+                {isInboxDirty && !isInboxSaving ? <span>Unsaved</span> : null}
+                <button
+                  type="button"
+                  onClick={closeInbox}
+                  className="border border-[var(--workspace-border)] px-3 py-2 text-[10px] font-semibold tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 p-4">
+              <textarea
+                id={WORKSPACE_INBOX_TEXTAREA_ID}
+                value={inboxDraft}
+                onChange={(event) => {
+                  setInboxDraft(event.target.value);
+                  setIsInboxDirty(true);
+                  setInboxSaveError("");
+                }}
+                placeholder="Drop notes, thoughts, and loose tasks here…"
+                className="h-full w-full resize-none border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-4 py-3 text-sm leading-7 text-[var(--workspace-text)] outline-none transition focus:border-[var(--workspace-accent)]"
+              />
+            </div>
+            {inboxSaveError ? (
+              <div className="border-t border-[var(--workspace-border)] px-4 py-3 text-sm text-[var(--workspace-danger)]">
+                {inboxSaveError}
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
