@@ -5772,6 +5772,88 @@ function ConfiguredWorkspace({
     });
   }, [clearNodeSelection, completePlannerTask, executeNodeUpdateBatch, history, ownerKey, pagesById, recurringCompletionMode, selectedNodeIds, visibleNodeOrder, workspaceNodeMap]);
 
+  const applyInlineFormattingToHighlightedNodes = useCallback(async (marker: "**" | "__" | "~~") => {
+    if (selectedNodeIds.size === 0) {
+      return;
+    }
+
+    const orderedSelectedNodeIds = visibleNodeOrder.filter((nodeId) =>
+      selectedNodeIds.has(nodeId),
+    );
+    if (orderedSelectedNodeIds.length === 0) {
+      return;
+    }
+
+    const historyEntries: Array<Extract<HistoryEntry, { type: "update_node" }>> = [];
+    const updates: Array<{
+      nodeId: Id<"nodes">;
+      text?: string;
+    }> = [];
+
+    for (const nodeId of orderedSelectedNodeIds) {
+      const node = workspaceNodeMap.get(nodeId);
+      if (!node || getNodeMeta(node).locked === true) {
+        continue;
+      }
+
+      const page = pagesById.get(node.pageId as string);
+      if (page?.archived) {
+        continue;
+      }
+
+      const replacement = applySelectedInlineFormattingShortcut(
+        node.text,
+        0,
+        node.text.length,
+        marker,
+      );
+      if (!replacement) {
+        continue;
+      }
+
+      const beforeSnapshot = toNodeValueSnapshot(node);
+      const afterSnapshot = withNodeScheduleSnapshot(
+        {
+          ...beforeSnapshot,
+          text: replacement.value,
+        },
+        node,
+      );
+
+      updates.push({
+        nodeId: node._id as Id<"nodes">,
+        text: replacement.value,
+      });
+      historyEntries.push({
+        type: "update_node",
+        pageId: node.pageId as Id<"pages">,
+        nodeId: node._id as Id<"nodes">,
+        before: beforeSnapshot,
+        after: afterSnapshot,
+        focusEditorId: getNodeEditorId(node._id as Id<"nodes">),
+      });
+    }
+
+    await executeNodeUpdateBatch(updates);
+
+    if (historyEntries.length === 0) {
+      return;
+    }
+
+    if (historyEntries.length === 1) {
+      history.pushUndoEntry(historyEntries[0]!);
+      return;
+    }
+
+    history.pushUndoEntry({
+      type: "compound",
+      pageId: historyEntries[0]!.pageId,
+      entries: historyEntries,
+      focusAfterUndoId: historyEntries[0]!.focusEditorId,
+      focusAfterRedoId: historyEntries[historyEntries.length - 1]!.focusEditorId,
+    });
+  }, [executeNodeUpdateBatch, history, pagesById, selectedNodeIds, visibleNodeOrder, workspaceNodeMap]);
+
   const toggleHighlightedNodeCompletion = useCallback(async () => {
     if (selectedNodeIds.size === 0) {
       return;
@@ -6478,6 +6560,45 @@ function ConfiguredWorkspace({
 
       if (
         isModifier &&
+        !event.shiftKey &&
+        !event.altKey &&
+        normalizedKey === "i" &&
+        selectedNodeIds.size > 0 &&
+        !isTextEntryElement(event.target)
+      ) {
+        event.preventDefault();
+        void applyInlineFormattingToHighlightedNodes("__");
+        return;
+      }
+
+      if (
+        isModifier &&
+        !event.shiftKey &&
+        !event.altKey &&
+        normalizedKey === "b" &&
+        selectedNodeIds.size > 0 &&
+        !isTextEntryElement(event.target)
+      ) {
+        event.preventDefault();
+        void applyInlineFormattingToHighlightedNodes("**");
+        return;
+      }
+
+      if (
+        isModifier &&
+        event.shiftKey &&
+        !event.altKey &&
+        (event.key === "_" || event.key === "-") &&
+        selectedNodeIds.size > 0 &&
+        !isTextEntryElement(event.target)
+      ) {
+        event.preventDefault();
+        void applyInlineFormattingToHighlightedNodes("~~");
+        return;
+      }
+
+      if (
+        isModifier &&
         normalizedKey === "enter" &&
         selectedNodeIds.size > 0 &&
         !isTextEntryElement(event.target)
@@ -6692,6 +6813,7 @@ function ConfiguredWorkspace({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     copyNodeLinkToClipboard,
+    applyInlineFormattingToHighlightedNodes,
     deleteHighlightedNodes,
     focusLastVisiblePageNode,
     indentHighlightedNodeByKeyboard,
