@@ -2569,15 +2569,15 @@ function ConfiguredWorkspace({
   const [actionContextNodeId, setActionContextNodeId] = useState<string | null>(null);
   const [recurringCompletionMode, setRecurringCompletionMode] =
     useState<RecurringCompletionMode>("dueDate");
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [isSidebarTextSectionCollapsed, setIsSidebarTextSectionCollapsed] = useState(false);
-  const [isUncategorizedSectionCollapsed, setIsUncategorizedSectionCollapsed] = useState(false);
-  const [isAllSectionCollapsed, setIsAllSectionCollapsed] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
+  const [isSidebarTextSectionCollapsed, setIsSidebarTextSectionCollapsed] = useState(true);
+  const [isUncategorizedSectionCollapsed, setIsUncategorizedSectionCollapsed] = useState(true);
+  const [isAllSectionCollapsed, setIsAllSectionCollapsed] = useState(true);
   const [collapsedAllPageTypeSections, setCollapsedAllPageTypeSections] = useState<Set<string>>(
-    new Set(),
+    new Set(ALL_PAGE_TYPE_GROUP_ORDER),
   );
-  const [isTagsSectionCollapsed, setIsTagsSectionCollapsed] = useState(false);
-  const [isArchiveSectionCollapsed, setIsArchiveSectionCollapsed] = useState(false);
+  const [isTagsSectionCollapsed, setIsTagsSectionCollapsed] = useState(true);
+  const [isArchiveSectionCollapsed, setIsArchiveSectionCollapsed] = useState(true);
   const [showSidebarDiagnostics, setShowSidebarDiagnostics] = useState(false);
   const [sidebarBootstrapError, setSidebarBootstrapError] = useState<string>("");
   const [copySnackbarMessage, setCopySnackbarMessage] = useState("");
@@ -2595,7 +2595,9 @@ function ConfiguredWorkspace({
     useState<PendingInsertedComposer | null>(null);
   const [locationPageId, setLocationPageId] = useState<string | null>(null);
   const connectionState = useConvexConnectionState();
+  const [hasHydratedSessionUiState, setHasHydratedSessionUiState] = useState(false);
   const hasHydratedSessionUiStateRef = useRef(false);
+  const hasStoredCollapsedNodeIdsRef = useRef(false);
   const hasMigratedPinnedAllPagesRef = useRef(false);
   const lastLoadedModelPromptPageIdRef = useRef<string | null>(null);
   const inboxDraftRef = useRef("");
@@ -3253,22 +3255,6 @@ function ConfiguredWorkspace({
   const scratchpadVisibleRoots = [scratchpadLiveSection, scratchpadPreviousSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
-  const pageVisibleRows =
-    pageMeta.pageType === "task"
-      ? flattenTreeNodes(genericRoots, collapsedNodeIds)
-      : pageMeta.pageType === "planner"
-      ? flattenTreeNodes(
-          [...plannerTopVisibleRoots, ...genericRoots, ...plannerBottomVisibleRoots],
-          collapsedNodeIds,
-        )
-      : pageMeta.pageType === "model"
-      ? flattenTreeNodes([...modelVisibleRoots, ...genericRoots], collapsedNodeIds)
-      : pageMeta.pageType === "journal"
-        ? flattenTreeNodes([...journalVisibleRoots, ...genericRoots], collapsedNodeIds)
-        : pageMeta.pageType === "scratchpad"
-          ? flattenTreeNodes([...scratchpadVisibleRoots, ...genericRoots], collapsedNodeIds)
-        : flattenTreeNodes(genericRoots, collapsedNodeIds);
-  const sidebarVisibleRows = flattenTreeNodes(sidebarNodes, collapsedNodeIds);
   const simpleTaskPageGroups = useMemo(
     () =>
       (simpleTaskView ?? []).map((entry) => ({
@@ -3278,6 +3264,34 @@ function ConfiguredWorkspace({
       })),
     [simpleTaskView],
   );
+  const preHydrationCollapsedNodeIds = useMemo(
+    () =>
+      new Set([
+        ...collectExpandableNodeIds(sidebarNodes),
+        ...collectExpandableNodeIds(tree),
+        ...simpleTaskPageGroups.flatMap((group) => collectExpandableNodeIds(group.tree)),
+      ]),
+    [sidebarNodes, simpleTaskPageGroups, tree],
+  );
+  const effectiveCollapsedNodeIds = hasHydratedSessionUiState
+    ? collapsedNodeIds
+    : preHydrationCollapsedNodeIds;
+  const pageVisibleRows =
+    pageMeta.pageType === "task"
+      ? flattenTreeNodes(genericRoots, effectiveCollapsedNodeIds)
+      : pageMeta.pageType === "planner"
+      ? flattenTreeNodes(
+          [...plannerTopVisibleRoots, ...genericRoots, ...plannerBottomVisibleRoots],
+          effectiveCollapsedNodeIds,
+        )
+      : pageMeta.pageType === "model"
+      ? flattenTreeNodes([...modelVisibleRoots, ...genericRoots], effectiveCollapsedNodeIds)
+      : pageMeta.pageType === "journal"
+        ? flattenTreeNodes([...journalVisibleRoots, ...genericRoots], effectiveCollapsedNodeIds)
+        : pageMeta.pageType === "scratchpad"
+          ? flattenTreeNodes([...scratchpadVisibleRoots, ...genericRoots], effectiveCollapsedNodeIds)
+        : flattenTreeNodes(genericRoots, effectiveCollapsedNodeIds);
+  const sidebarVisibleRows = flattenTreeNodes(sidebarNodes, effectiveCollapsedNodeIds);
   const simpleOpenTaskCount = useMemo(
     () =>
       simpleTaskPageGroups.reduce(
@@ -3292,9 +3306,11 @@ function ConfiguredWorkspace({
   const simpleVisibleRows = useMemo(
     () =>
       isSimpleViewOpen
-        ? simpleTaskPageGroups.flatMap((group) => flattenTreeNodes(group.tree, collapsedNodeIds))
+        ? simpleTaskPageGroups.flatMap((group) =>
+            flattenTreeNodes(group.tree, effectiveCollapsedNodeIds),
+          )
         : [],
-    [collapsedNodeIds, isSimpleViewOpen, simpleTaskPageGroups],
+    [effectiveCollapsedNodeIds, isSimpleViewOpen, simpleTaskPageGroups],
   );
   const visibleNodeOrder = (
     isSimpleViewOpen ? simpleVisibleRows : [...sidebarVisibleRows, ...pageVisibleRows]
@@ -3949,9 +3965,9 @@ function ConfiguredWorkspace({
       return;
     }
 
-    setIsSidebarCollapsed(readStoredBoolean(SIDEBAR_COLLAPSE_STORAGE_KEY, false));
+    setIsSidebarCollapsed(readStoredBoolean(SIDEBAR_COLLAPSE_STORAGE_KEY, true));
     setIsSidebarTextSectionCollapsed(
-      readStoredBoolean(SIDEBAR_TEXT_SECTION_COLLAPSE_STORAGE_KEY, false),
+      readStoredBoolean(SIDEBAR_TEXT_SECTION_COLLAPSE_STORAGE_KEY, true),
     );
     setIsUncategorizedSectionCollapsed(
       readStoredBoolean(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY, true),
@@ -3979,15 +3995,16 @@ function ConfiguredWorkspace({
         );
       }
     } catch {
-      setCollapsedAllPageTypeSections(new Set());
+      setCollapsedAllPageTypeSections(new Set(ALL_PAGE_TYPE_GROUP_ORDER));
     }
     setRecurringCompletionMode(
       readStoredRecurringCompletionMode("dueDate"),
     );
     try {
-      const storedCollapsedNodeIds = JSON.parse(
-        window.sessionStorage.getItem(COLLAPSED_NODES_STORAGE_KEY) ?? "[]",
-      );
+      const storedCollapsedNodeIdsRaw = window.sessionStorage.getItem(COLLAPSED_NODES_STORAGE_KEY);
+      const storedCollapsedNodeIds = JSON.parse(storedCollapsedNodeIdsRaw ?? "[]");
+      hasStoredCollapsedNodeIdsRef.current =
+        storedCollapsedNodeIdsRaw !== null && Array.isArray(storedCollapsedNodeIds);
       if (Array.isArray(storedCollapsedNodeIds)) {
         setCollapsedNodeIds(
           new Set(
@@ -3999,9 +4016,11 @@ function ConfiguredWorkspace({
       }
     } catch {
       setCollapsedNodeIds(new Set());
+      hasStoredCollapsedNodeIdsRef.current = false;
     }
 
     hasHydratedSessionUiStateRef.current = true;
+    setHasHydratedSessionUiState(true);
   }, []);
 
   useEffect(() => {
@@ -4070,6 +4089,23 @@ function ConfiguredWorkspace({
       isSidebarCollapsed ? "true" : "false",
     );
   }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    if (
+      !hasHydratedSessionUiState ||
+      hasStoredCollapsedNodeIdsRef.current ||
+      preHydrationCollapsedNodeIds.size === 0 ||
+      collapsedNodeIds.size > 0
+    ) {
+      return;
+    }
+
+    setCollapsedNodeIds(new Set(preHydrationCollapsedNodeIds));
+  }, [
+    collapsedNodeIds.size,
+    hasHydratedSessionUiState,
+    preHydrationCollapsedNodeIds,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -7639,7 +7675,7 @@ function ConfiguredWorkspace({
                           replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                           setNodeTreeArchived={setNodeTreeArchived}
                           isPageReadOnly={false}
-                          collapsedNodeIds={collapsedNodeIds}
+                          collapsedNodeIds={effectiveCollapsedNodeIds}
                           pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                           selectedNodeIds={selectedNodeIds}
                           selectionAnchorNodeId={selectionAnchorNodeId}
@@ -7785,7 +7821,7 @@ function ConfiguredWorkspace({
                           replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                           setNodeTreeArchived={setNodeTreeArchived}
                           isPageReadOnly={false}
-                          collapsedNodeIds={collapsedNodeIds}
+                          collapsedNodeIds={effectiveCollapsedNodeIds}
                           pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                           selectedNodeIds={selectedNodeIds}
                           selectionAnchorNodeId={selectionAnchorNodeId}
@@ -8393,7 +8429,7 @@ function ConfiguredWorkspace({
                       replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
-                      collapsedNodeIds={collapsedNodeIds}
+                      collapsedNodeIds={effectiveCollapsedNodeIds}
                       pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                       selectedNodeIds={selectedNodeIds}
                       selectionAnchorNodeId={selectionAnchorNodeId}
@@ -8644,7 +8680,7 @@ function ConfiguredWorkspace({
                           replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                           setNodeTreeArchived={setNodeTreeArchived}
                           isPageReadOnly={isPageArchived}
-                          collapsedNodeIds={collapsedNodeIds}
+                          collapsedNodeIds={effectiveCollapsedNodeIds}
                           pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                           selectedNodeIds={selectedNodeIds}
                           selectionAnchorNodeId={selectionAnchorNodeId}
@@ -8692,7 +8728,7 @@ function ConfiguredWorkspace({
                             replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                             setNodeTreeArchived={setNodeTreeArchived}
                             isPageReadOnly={isPageArchived}
-                            collapsedNodeIds={collapsedNodeIds}
+                            collapsedNodeIds={effectiveCollapsedNodeIds}
                             pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                             selectedNodeIds={selectedNodeIds}
                             selectionAnchorNodeId={selectionAnchorNodeId}
@@ -8746,7 +8782,7 @@ function ConfiguredWorkspace({
                       replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
-                      collapsedNodeIds={collapsedNodeIds}
+                      collapsedNodeIds={effectiveCollapsedNodeIds}
                       pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                       selectedNodeIds={selectedNodeIds}
                       selectionAnchorNodeId={selectionAnchorNodeId}
@@ -8796,7 +8832,7 @@ function ConfiguredWorkspace({
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
-                      collapsedNodeIds={collapsedNodeIds}
+                      collapsedNodeIds={effectiveCollapsedNodeIds}
                       pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                       selectedNodeIds={selectedNodeIds}
                       selectionAnchorNodeId={selectionAnchorNodeId}
@@ -8879,7 +8915,7 @@ function ConfiguredWorkspace({
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
-                      collapsedNodeIds={collapsedNodeIds}
+                      collapsedNodeIds={effectiveCollapsedNodeIds}
                       pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                       selectedNodeIds={selectedNodeIds}
                       selectionAnchorNodeId={selectionAnchorNodeId}
@@ -8930,7 +8966,7 @@ function ConfiguredWorkspace({
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
-                      collapsedNodeIds={collapsedNodeIds}
+                      collapsedNodeIds={effectiveCollapsedNodeIds}
                       pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                       selectedNodeIds={selectedNodeIds}
                       selectionAnchorNodeId={selectionAnchorNodeId}
@@ -8978,7 +9014,7 @@ function ConfiguredWorkspace({
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
-                      collapsedNodeIds={collapsedNodeIds}
+                      collapsedNodeIds={effectiveCollapsedNodeIds}
                       pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                       selectedNodeIds={selectedNodeIds}
                       selectionAnchorNodeId={selectionAnchorNodeId}
@@ -9064,7 +9100,7 @@ function ConfiguredWorkspace({
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                         setNodeTreeArchived={setNodeTreeArchived}
                         isPageReadOnly={isPageArchived}
-                        collapsedNodeIds={collapsedNodeIds}
+                        collapsedNodeIds={effectiveCollapsedNodeIds}
                         pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                         selectedNodeIds={selectedNodeIds}
                         selectionAnchorNodeId={selectionAnchorNodeId}
@@ -9112,7 +9148,7 @@ function ConfiguredWorkspace({
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                         setNodeTreeArchived={setNodeTreeArchived}
                         isPageReadOnly={isPageArchived}
-                        collapsedNodeIds={collapsedNodeIds}
+                        collapsedNodeIds={effectiveCollapsedNodeIds}
                         pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                         selectedNodeIds={selectedNodeIds}
                         selectionAnchorNodeId={selectionAnchorNodeId}
@@ -9161,7 +9197,7 @@ function ConfiguredWorkspace({
                       replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
                       isPageReadOnly={isPageArchived}
-                      collapsedNodeIds={collapsedNodeIds}
+                      collapsedNodeIds={effectiveCollapsedNodeIds}
                       pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
                       selectedNodeIds={selectedNodeIds}
                       selectionAnchorNodeId={selectionAnchorNodeId}
