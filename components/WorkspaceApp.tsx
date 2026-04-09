@@ -11665,26 +11665,41 @@ function OutlineNodeEditor({
     });
   };
 
-  const focusAdjacentVisibleNode = (direction: -1 | 1) => {
+  const getAdjacentVisibleNodeId = (direction: -1 | 1) => {
     const shells = Array.from(
       document.querySelectorAll<HTMLElement>("[data-node-shell][data-node-id]"),
     );
     const currentIndex = shells.findIndex((shell) => shell.dataset.nodeId === node._id);
     if (currentIndex === -1) {
-      return false;
+      return null;
     }
 
     const targetShell = shells[currentIndex + direction];
     const targetNodeId = targetShell?.dataset.nodeId;
     if (!targetShell || !targetNodeId) {
+      return null;
+    }
+
+    return targetNodeId;
+  };
+
+  const focusNodeById = (targetNodeId: string) => {
+    onSelectSingleNode(targetNodeId);
+    window.setTimeout(() => {
+      const targetInput = document.querySelector<HTMLTextAreaElement>(
+        `[data-node-id="${targetNodeId}"] textarea`,
+      );
+      focusElementAtEnd(targetInput);
+    }, 0);
+  };
+
+  const focusAdjacentVisibleNode = (direction: -1 | 1) => {
+    const targetNodeId = getAdjacentVisibleNodeId(direction);
+    if (!targetNodeId) {
       return false;
     }
 
-    onSelectSingleNode(targetNodeId);
-    const targetInput = targetShell.querySelector<HTMLTextAreaElement>("textarea");
-    window.setTimeout(() => {
-      focusElementAtEnd(targetInput);
-    }, 0);
+    focusNodeById(targetNodeId);
     return true;
   };
 
@@ -12594,7 +12609,11 @@ function OutlineNodeEditor({
 
     if (isModifier && normalizedKey === "enter") {
       event.preventDefault();
+      const nextNodeId = getAdjacentVisibleNodeId(1);
       await handleToggleCompletion();
+      if (nextNodeId) {
+        focusNodeById(nextNodeId);
+      }
       return;
     }
 
