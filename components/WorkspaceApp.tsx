@@ -13695,6 +13695,7 @@ function InlineComposer({
     autocompleteSuggestions.length === 0
       ? 0
       : Math.min(linkHighlightIndex, autocompleteSuggestions.length - 1);
+  const shouldHideEmptySubmittingComposer = isSubmitting && draft.trim().length === 0;
 
   useEffect(() => {
     draftRef.current = draft;
@@ -14146,7 +14147,12 @@ function InlineComposer({
 
   return (
     <div
-      className="outline-depth-composer relative"
+      className={clsx(
+        "outline-depth-composer relative",
+        shouldHideEmptySubmittingComposer
+          ? "pointer-events-none h-0 overflow-hidden opacity-0"
+          : "",
+      )}
       style={
         {
           "--outline-depth": composerDepth,
