@@ -2572,7 +2572,7 @@ function ConfiguredWorkspace({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [isSidebarTextSectionCollapsed, setIsSidebarTextSectionCollapsed] = useState(true);
   const [isUncategorizedSectionCollapsed, setIsUncategorizedSectionCollapsed] = useState(true);
-  const [isAllSectionCollapsed, setIsAllSectionCollapsed] = useState(true);
+  const [isAllSectionCollapsed, setIsAllSectionCollapsed] = useState(false);
   const [collapsedAllPageTypeSections, setCollapsedAllPageTypeSections] = useState<Set<string>>(
     new Set(ALL_PAGE_TYPE_GROUP_ORDER),
   );
@@ -3973,7 +3973,7 @@ function ConfiguredWorkspace({
       readStoredBoolean(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY, true),
     );
     setIsAllSectionCollapsed(
-      readStoredBoolean(ALL_SECTION_COLLAPSE_STORAGE_KEY, true),
+      readStoredBoolean(ALL_SECTION_COLLAPSE_STORAGE_KEY, false),
     );
     setIsTagsSectionCollapsed(
       readStoredBoolean(TAGS_SECTION_COLLAPSE_STORAGE_KEY, true),
