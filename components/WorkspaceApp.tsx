@@ -3275,6 +3275,7 @@ function ConfiguredWorkspace({
   const scratchpadVisibleRoots = [scratchpadLiveSection, scratchpadPreviousSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
+  const scratchpadSelectionRoots = scratchpadVisibleRoots.flatMap((node) => node.children);
   const simpleTaskPageGroups = useMemo(
     () =>
       (simpleTaskView ?? []).map((entry) => ({
@@ -3306,10 +3307,13 @@ function ConfiguredWorkspace({
         )
       : pageMeta.pageType === "model"
       ? flattenTreeNodes([...modelVisibleRoots, ...genericRoots], effectiveCollapsedNodeIds)
-      : pageMeta.pageType === "journal"
+        : pageMeta.pageType === "journal"
         ? flattenTreeNodes([...journalVisibleRoots, ...genericRoots], effectiveCollapsedNodeIds)
         : pageMeta.pageType === "scratchpad"
-          ? flattenTreeNodes([...scratchpadVisibleRoots, ...genericRoots], effectiveCollapsedNodeIds)
+          ? flattenTreeNodes(
+              [...scratchpadSelectionRoots, ...genericRoots],
+              effectiveCollapsedNodeIds,
+            )
         : flattenTreeNodes(genericRoots, effectiveCollapsedNodeIds);
   const sidebarVisibleRows = flattenTreeNodes(sidebarNodes, effectiveCollapsedNodeIds);
   const simpleOpenTaskCount = useMemo(
@@ -13035,6 +13039,9 @@ function OutlineNodeEditor({
           }
 
           const isTextSelectionTarget = isTextEntryElement(event.target);
+          const isInteractiveSurfaceTarget =
+            event.target instanceof HTMLElement &&
+            event.target.closest("button, a, [contenteditable='true']");
           const activeEditorNodeId =
             document.activeElement instanceof HTMLElement
               ? document.activeElement.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId ??
@@ -13045,8 +13052,7 @@ function OutlineNodeEditor({
           if (
             event.shiftKey &&
             !isShiftClickInsideActiveEditor &&
-            !(event.target instanceof HTMLElement &&
-              event.target.closest("button, a, [contenteditable='true']"))
+            !isInteractiveSurfaceTarget
           ) {
             event.preventDefault();
             event.stopPropagation();
@@ -13058,7 +13064,13 @@ function OutlineNodeEditor({
             return;
           }
 
-          if (!event.altKey) {
+          if (isTextSelectionTarget || isInteractiveSurfaceTarget) {
+            return;
+          }
+
+          if (!event.altKey && !event.shiftKey) {
+            event.preventDefault();
+            onSelectionStart(node._id);
             return;
           }
 
