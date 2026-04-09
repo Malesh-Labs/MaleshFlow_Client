@@ -67,6 +67,7 @@ import {
   getEffectiveTaskDueDateRange,
 } from "@/lib/domain/planner";
 import {
+  applyOptimisticNodeCreates,
   applyOptimisticNodeBatchUpdates,
   applyOptimisticNodeMoves,
   applyOptimisticNodeTreeArchive,
@@ -358,8 +359,11 @@ type SetNodeTreeArchivedArgs = Parameters<
 type SetNodeTreesArchivedBatchArgs = Parameters<
   ReturnType<typeof useMutation<typeof api.workspace.setNodeTreesArchivedBatch>>
 >[0];
+type CreateNodesBatchArgs = Parameters<
+  ReturnType<typeof useMutation<typeof api.workspace.createNodesBatch>>
+>[0];
 type UpdateNodeMutation = (args: UpdateNodeArgs) => Promise<unknown>;
-type CreateNodesBatchMutation = ReturnType<typeof useMutation<typeof api.workspace.createNodesBatch>>;
+type CreateNodesBatchMutation = (args: CreateNodesBatchArgs) => Promise<Doc<"nodes">[]>;
 type MoveNodeMutation = (args: MoveNodeArgs) => Promise<unknown>;
 type SplitNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.splitNode>>;
 type ReplaceNodeAndInsertSiblingsMutation = ReturnType<
@@ -2747,7 +2751,7 @@ function ConfiguredWorkspace({
   const ensureTaskCalendarFeed = useMutation(api.calendar.ensureTaskCalendarFeed);
   const refreshSidebarLinks = useMutation(api.workspace.refreshSidebarLinks);
   const cancelEmbeddingRebuild = useMutation(api.workspace.cancelEmbeddingRebuild);
-  const createNodesBatch = useMutation(api.workspace.createNodesBatch);
+  const createNodesBatchRaw = useMutation(api.workspace.createNodesBatch);
   const updateNodeRaw = useMutation(api.workspace.updateNode);
   const updateNodesBatchRaw = useMutation(api.workspace.updateNodesBatch);
   const moveNodeRaw = useMutation(api.workspace.moveNode);
@@ -2810,6 +2814,11 @@ function ConfiguredWorkspace({
         ownerKey: args.ownerKey,
         rootNodeIds: args.nodeIds,
       });
+    },
+  );
+  const createNodesBatchMutation = createNodesBatchRaw.withOptimisticUpdate(
+    (localStore, args) => {
+      applyOptimisticNodeCreates(localStore, args);
     },
   );
   const renamePage = useCallback(
@@ -2904,6 +2913,17 @@ function ConfiguredWorkspace({
         args.archived ? "Could not delete those items." : "Could not restore those items.",
       ),
     [runTrackedMutation, setNodeTreesArchivedBatchMutation],
+  );
+  const createNodesBatch = useCallback(
+    (args: CreateNodesBatchArgs) =>
+      runTrackedMutation(
+        async () => (await createNodesBatchMutation(args)) as Doc<"nodes">[],
+        {
+          pageIds: [args.pageId],
+        },
+        args.nodes.length <= 1 ? "Could not add that item." : "Could not add those items.",
+      ),
+    [createNodesBatchMutation, runTrackedMutation],
   );
   const rewriteModelSection = useAction(api.chat.rewriteModelSection);
   const generateJournalFeedback = useAction(api.chat.generateJournalFeedback);
@@ -12726,7 +12746,7 @@ function OutlineNodeEditor({
       let createEntry: HistoryEntry | null = null;
 
       if (isStartOfLineSplit) {
-        const createdNodes = (await createNodesBatch({
+        const createNodesPromise = createNodesBatch({
           ownerKey,
           pageId,
           nodes: [
@@ -12738,10 +12758,8 @@ function OutlineNodeEditor({
               taskStatus: normalizedHead.taskStatus ?? undefined,
             },
           ],
-        })) as Doc<"nodes">[];
-        const createdNode = createdNodes[0] ?? null;
-
-        await updateNode({
+        });
+        const updateNodePromise = updateNode({
           ownerKey,
           nodeId: node._id as Id<"nodes">,
           text: normalizedTail.text,
@@ -12752,6 +12770,8 @@ function OutlineNodeEditor({
           dueEndAt: normalizedTail.kind === "task" ? (node.dueEndAt ?? null) : null,
           recurrenceFrequency: normalizedTail.kind === "task" ? recurrenceFrequency : null,
         });
+        const [createdNodes] = await Promise.all([createNodesPromise, updateNodePromise]);
+        const createdNode = createdNodes[0] ?? null;
 
         const beforeValue = history.commitTrackedValue(
           editorId,
@@ -13613,11 +13633,14 @@ function InlineComposer({
       return [];
     }
 
+    const previousDraft = value;
     isSubmittingRef.current = true;
     setIsSubmitting(true);
     let createdNodes: Doc<"nodes">[] = [];
 
     try {
+      history.resetTrackedValue(editorId, editorTarget, "");
+      setDraft("");
       createdNodes = (await createNodesBatch({
         ownerKey,
         pageId,
@@ -13633,8 +13656,6 @@ function InlineComposer({
         ),
       );
 
-      history.resetTrackedValue(editorId, editorTarget, "");
-      setDraft("");
       onSubmitted?.(createdNodes, reason);
       history.pushUndoEntry({
         type: "create_nodes",
@@ -13646,6 +13667,11 @@ function InlineComposer({
             ? getNodeEditorId(createdSnapshots[createdSnapshots.length - 1]!.nodeId)
             : editorId,
       });
+    } catch (error) {
+      history.resetTrackedValue(editorId, editorTarget, previousDraft);
+      setDraft(previousDraft);
+      setCaretPosition(previousDraft.length);
+      throw error;
     } finally {
       isSubmittingRef.current = false;
       setIsSubmitting(false);

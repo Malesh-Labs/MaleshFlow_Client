@@ -60,6 +60,22 @@ export type OptimisticNodeMove = {
   afterNodeId?: Id<"nodes"> | null;
 };
 
+export type OptimisticNodeCreateInput = {
+  clientId?: string;
+  parentNodeId?: Id<"nodes"> | null;
+  parentClientId?: string;
+  afterNodeId?: Id<"nodes"> | null;
+  afterClientId?: string;
+  text?: string;
+  kind?: "note" | "task";
+  lockKind?: boolean;
+  noteCompleted?: boolean;
+  taskStatus?: NodeTaskStatus;
+  dueAt?: number | null;
+  dueEndAt?: number | null;
+  recurrenceFrequency?: RecurrenceFrequency | null;
+};
+
 function getTimestamp() {
   return Date.now();
 }
@@ -384,6 +400,97 @@ function applyOptimisticMovesToNodes(nodes: NodeDoc[], moves: OptimisticNodeMove
   return nextNodes;
 }
 
+function buildOptimisticCreateTempIds(
+  entries: OptimisticNodeCreateInput[],
+  createdAt: number,
+) {
+  return entries.map(
+    (entry, index) =>
+      `optimistic-node:${entry.clientId ?? `${createdAt}:${index}`}` as Id<"nodes">,
+  );
+}
+
+function sortNodesByPosition(nodes: NodeDoc[]) {
+  return [...nodes].sort((left, right) => {
+    if (left.position !== right.position) {
+      return left.position - right.position;
+    }
+    return left.createdAt - right.createdAt;
+  });
+}
+
+function applyOptimisticCreatesToNodes(
+  nodes: NodeDoc[],
+  pageId: Id<"pages">,
+  entries: OptimisticNodeCreateInput[],
+  tempNodeIds: Id<"nodes">[],
+  createdAt: number,
+) {
+  if (entries.length === 0) {
+    return nodes;
+  }
+
+  const nextNodes = [...nodes];
+  const createdNodeIdsByClientId = new Map<string, Id<"nodes">>();
+  let lastCreatedId: Id<"nodes"> | null = null;
+  let lastParentNodeId: Id<"nodes"> | null = null;
+
+  for (const [index, entry] of entries.entries()) {
+    const tempNodeId = tempNodeIds[index]!;
+    const parentNodeId =
+      entry.parentClientId !== undefined
+        ? (createdNodeIdsByClientId.get(entry.parentClientId) ?? null)
+        : (entry.parentNodeId ?? null);
+    const afterNodeId =
+      entry.afterClientId !== undefined
+        ? (createdNodeIdsByClientId.get(entry.afterClientId) ?? null)
+        : entry.afterNodeId !== undefined
+          ? (entry.afterNodeId ?? null)
+          : lastParentNodeId === parentNodeId
+            ? lastCreatedId
+            : null;
+    const position = computeOptimisticNodePosition(
+      nextNodes,
+      tempNodeId,
+      pageId,
+      parentNodeId,
+      afterNodeId,
+    );
+    const kind = entry.kind ?? "note";
+    const nextNode: NodeDoc = {
+      _id: tempNodeId,
+      _creationTime: createdAt,
+      pageId,
+      parentNodeId,
+      position,
+      text: entry.text?.trim() || "",
+      kind,
+      taskStatus: kind === "task" ? (entry.taskStatus ?? "todo") : null,
+      priority: null,
+      dueAt: kind === "task" ? (entry.dueAt ?? null) : null,
+      dueEndAt: kind === "task" ? (entry.dueEndAt ?? null) : null,
+      archived: false,
+      sourceMeta: {
+        sourceType: "manual",
+        taskKindLocked: entry.lockKind ?? false,
+        noteCompleted: kind === "note" ? (entry.noteCompleted ?? false) : false,
+        recurrenceFrequency: kind === "task" ? (entry.recurrenceFrequency ?? null) : null,
+      },
+      createdAt,
+      updatedAt: createdAt,
+    };
+
+    nextNodes.push(nextNode);
+    if (entry.clientId) {
+      createdNodeIdsByClientId.set(entry.clientId, tempNodeId);
+    }
+    lastCreatedId = tempNodeId;
+    lastParentNodeId = parentNodeId;
+  }
+
+  return sortNodesByPosition(nextNodes);
+}
+
 export function applyOptimisticPageRename(
   localStore: OptimisticLocalStore,
   args: {
@@ -481,6 +588,63 @@ export function applyOptimisticNodeMoves(
       ...group,
       nodes: applyOptimisticMovesToNodes(group.nodes, args.moves),
     })),
+  );
+}
+
+export function applyOptimisticNodeCreates(
+  localStore: OptimisticLocalStore,
+  args: {
+    ownerKey: string;
+    pageId: Id<"pages">;
+    nodes: OptimisticNodeCreateInput[];
+  },
+) {
+  const createdAt = getTimestamp();
+  const tempNodeIds = buildOptimisticCreateTempIds(args.nodes, createdAt);
+
+  updatePageTreeQueries(localStore, args.ownerKey, (result) =>
+    result.page._id === args.pageId
+      ? {
+          ...result,
+          nodes: applyOptimisticCreatesToNodes(
+            result.nodes,
+            args.pageId,
+            args.nodes,
+            tempNodeIds,
+            createdAt,
+          ),
+        }
+      : result,
+  );
+  updateSidebarTreeQueries(localStore, args.ownerKey, (result) =>
+    result.page._id === args.pageId
+      ? {
+          ...result,
+          nodes: applyOptimisticCreatesToNodes(
+            result.nodes,
+            args.pageId,
+            args.nodes,
+            tempNodeIds,
+            createdAt,
+          ),
+        }
+      : result,
+  );
+  updateSimpleTaskViewQueries(localStore, args.ownerKey, (groups) =>
+    groups.map((group) =>
+      group.page._id === args.pageId
+        ? {
+            ...group,
+            nodes: applyOptimisticCreatesToNodes(
+              group.nodes,
+              args.pageId,
+              args.nodes,
+              tempNodeIds,
+              createdAt,
+            ),
+          }
+        : group,
+    ),
   );
 }
 
