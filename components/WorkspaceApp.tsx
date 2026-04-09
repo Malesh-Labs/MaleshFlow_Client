@@ -139,6 +139,54 @@ const ALL_PAGE_TYPE_GROUP_ORDER = [
   "Scratchpad",
   "Page",
 ] as const;
+const SHORTCUT_SECTIONS = [
+  {
+    title: "Navigation",
+    items: [
+      { keys: ["⌘", "⇧", "P"], description: "Open the command palette" },
+      { keys: ["⌘", "O"], description: "Open page search" },
+      { keys: ["⌘", "⇧", "O"], description: "Search notes and tasks" },
+      { keys: ["⌘", "⇧", "F"], description: "Open exact text find" },
+      { keys: ["⌘", "⇧", "L"], description: "Toggle AI chat" },
+      { keys: ["Esc"], description: "Close overlays or clear selection" },
+    ],
+  },
+  {
+    title: "Editing",
+    items: [
+      { keys: ["Enter"], description: "Split the current item or add a new one" },
+      { keys: ["Tab"], description: "Indent the current or selected item" },
+      { keys: ["⇧", "Tab"], description: "Outdent the current or selected item" },
+      { keys: ["⌘", "Enter"], description: "Mark complete and jump to the next item" },
+      { keys: ["⌘", "⇧", "C"], description: "Toggle note or task" },
+      { keys: ["⌘", "B"], description: "Bold selected text or highlighted item text" },
+      { keys: ["⌘", "I"], description: "Italicize selected text or highlighted item text" },
+      { keys: ["⌘", "⇧", "-"], description: "Strike through selected text or highlighted item text" },
+      { keys: ["⌘", "K"], description: "Wrap the selection in a link" },
+      { keys: ["⌘", "⇧", "H"], description: "Cycle between plain text and heading levels" },
+    ],
+  },
+  {
+    title: "Selection",
+    items: [
+      { keys: ["⌘", "A"], description: "Expand from text to item to parent scopes" },
+      { keys: ["Shift", "Click"], description: "Select the range between items" },
+      { keys: ["Alt", "Drag"], description: "Drag-select multiple items" },
+      { keys: ["↑", "↓"], description: "Move selection between items" },
+      { keys: ["Shift", "↑", "↓"], description: "Extend the current item selection" },
+      { keys: ["⌘", "←", "→"], description: "Collapse or expand the selected item" },
+      { keys: ["⌘", "↑", "↓"], description: "Move highlighted items" },
+      { keys: ["Delete"], description: "Delete highlighted items" },
+    ],
+  },
+  {
+    title: "Clipboard",
+    items: [
+      { keys: ["⌘", "⇧", "K"], description: "Copy a node link" },
+      { keys: ["Paste"], description: "Paste multiple lines to create multiple items" },
+    ],
+  },
+] as const;
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
 type PageType =
@@ -2584,6 +2632,7 @@ function ConfiguredWorkspace({
   const [isArchiveSectionCollapsed, setIsArchiveSectionCollapsed] = useState(true);
   const [showSidebarDiagnostics, setShowSidebarDiagnostics] = useState(false);
   const [sidebarBootstrapError, setSidebarBootstrapError] = useState<string>("");
+  const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
   const [copySnackbarMessage, setCopySnackbarMessage] = useState("");
   const [syncErrorMessage, setSyncErrorMessage] = useState("");
   const [pendingSyncSnapshot, setPendingSyncSnapshot] = useState<PendingSyncSnapshot>({
@@ -4834,6 +4883,17 @@ function ConfiguredWorkspace({
         },
       },
       {
+        key: "view-shortcuts",
+        title: "View Shortcuts",
+        subtitle: "See the main keyboard shortcuts and selection gestures available in the app.",
+        keywords: ["shortcuts", "keyboard", "hotkeys", "keys", "help", "commands"],
+        actionLabel: "Open",
+        onSelect: () => {
+          setPaletteOpen(false);
+          setIsShortcutsOpen(true);
+        },
+      },
+      {
         key: "collapse-all",
         title: "Collapse All",
         subtitle: selectedPage
@@ -6664,6 +6724,12 @@ function ConfiguredWorkspace({
       }
 
       if (event.key === "Escape") {
+        if (isShortcutsOpen) {
+          event.preventDefault();
+          setIsShortcutsOpen(false);
+          return;
+        }
+
         if (paletteOpen) {
           event.preventDefault();
           setPaletteOpen(false);
@@ -6826,6 +6892,7 @@ function ConfiguredWorkspace({
     selectionAnchorNodeId,
     toggleWorkspaceChat,
     cyclePaletteMode,
+    isShortcutsOpen,
     paletteOpen,
     isWorkspaceChatOpen,
     clearNodeSelection,
@@ -9854,6 +9921,9 @@ function ConfiguredWorkspace({
           </div>
         </div>
       ) : null}
+      {isShortcutsOpen ? (
+        <ShortcutsSheet onDismiss={() => setIsShortcutsOpen(false)} />
+      ) : null}
       {syncErrorMessage ? (
         <div className="pointer-events-none fixed bottom-36 left-1/2 z-40 -translate-x-1/2 md:bottom-20">
           <div className="border border-[var(--workspace-danger)]/60 bg-[color-mix(in_srgb,var(--workspace-surface)_95%,transparent)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-[var(--workspace-danger)] shadow-[0_18px_40px_-28px_rgba(0,0,0,0.5)] backdrop-blur-sm">
@@ -9927,6 +9997,76 @@ function AiPromptEditorPanel({
         </div>
       </div>
       <p className="mt-3 text-xs leading-5 text-[var(--workspace-text-faint)]">{helperText}</p>
+    </div>
+  );
+}
+
+function ShortcutsSheet({
+  onDismiss,
+}: {
+  onDismiss: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4 py-6"
+      onClick={onDismiss}
+    >
+      <div
+        className="flex max-h-[min(42rem,calc(100vh-3rem))] w-full max-w-4xl flex-col border border-[var(--workspace-border)] bg-[var(--workspace-surface)] shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between gap-4 border-b border-[var(--workspace-border)] px-5 py-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--workspace-accent)]">
+              Shortcuts
+            </p>
+            <p className="mt-1 text-sm text-[var(--workspace-text-faint)]">
+              Keyboard commands and selection gestures available across the app.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="border border-[var(--workspace-border)] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+          >
+            Dismiss
+          </button>
+        </div>
+        <div className="grid min-h-0 flex-1 gap-5 overflow-y-auto px-5 py-5 md:grid-cols-2">
+          {SHORTCUT_SECTIONS.map((section) => (
+            <section
+              key={section.title}
+              className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] p-4"
+            >
+              <h3 className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-accent)]">
+                {section.title}
+              </h3>
+              <div className="mt-4 space-y-3">
+                {section.items.map((item) => (
+                  <div
+                    key={`${section.title}:${item.keys.join("+")}:${item.description}`}
+                    className="flex items-start justify-between gap-4"
+                  >
+                    <div className="min-w-0 text-sm leading-6 text-[var(--workspace-text)]">
+                      {item.description}
+                    </div>
+                    <div className="flex shrink-0 flex-wrap justify-end gap-1.5">
+                      {item.keys.map((key) => (
+                        <kbd
+                          key={`${section.title}:${item.description}:${key}`}
+                          className="border border-[var(--workspace-border)] bg-[var(--workspace-surface)] px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--workspace-text-faint)]"
+                        >
+                          {key}
+                        </kbd>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
