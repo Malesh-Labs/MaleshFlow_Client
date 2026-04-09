@@ -124,6 +124,7 @@ const RECURRING_TASK_COMPLETION_MODE_STORAGE_KEY =
   "maleshflow-recurring-task-completion-mode";
 const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
 const OUTLINE_CLIPBOARD_MIME_TYPE = "application/x-maleshflow-outline";
+const OUTLINE_CUT_CLIPBOARD_MIME_TYPE = "application/x-maleshflow-outline-cut";
 const WORKSPACE_AI_CHAT_TEXTAREA_ID = "workspace-ai-chat-textarea";
 const WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY = "maleshflow-workspace-ai-chat-open";
 const SIMPLE_VIEW_OPEN_STORAGE_KEY = "maleshflow-simple-view-open";
@@ -357,6 +358,10 @@ type OutlineClipboardNode = {
 type OutlineClipboardPayload = {
   version: 1;
   nodes: OutlineClipboardNode[];
+};
+type OutlineCutClipboardPayload = {
+  version: 1;
+  nodeIds: string[];
 };
 type PendingInsertedComposer = {
   pageId: string;
@@ -1897,6 +1902,30 @@ function parseOutlineClipboardPayload(raw: string) {
   }
 }
 
+function parseOutlineCutClipboardPayload(raw: string) {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      version?: unknown;
+      nodeIds?: unknown;
+    };
+    if (parsed.version !== 1 || !Array.isArray(parsed.nodeIds)) {
+      return null;
+    }
+
+    if (!parsed.nodeIds.every((nodeId) => typeof nodeId === "string" && nodeId.length > 0)) {
+      return null;
+    }
+
+    return parsed as OutlineCutClipboardPayload;
+  } catch {
+    return null;
+  }
+}
+
 function findTreeNodeById(nodes: TreeNode[], targetNodeId: string): TreeNode | null {
   for (const node of nodes) {
     if (node._id === targetNodeId) {
@@ -2654,6 +2683,10 @@ function ConfiguredWorkspace({
   const hasMigratedPinnedAllPagesRef = useRef(false);
   const lastLoadedModelPromptPageIdRef = useRef<string | null>(null);
   const inboxDraftRef = useRef("");
+  const pendingCutClipboardRef = useRef<{
+    nodeIds: Id<"nodes">[];
+    payloadNodeIds: string[];
+  } | null>(null);
   const pendingSyncEntriesRef = useRef(
     new Map<number, { nodeIds: string[]; pageIds: string[] }>(),
   );
@@ -3654,9 +3687,12 @@ function ConfiguredWorkspace({
     await copyTextToClipboard(link);
     setCopySnackbarMessage("Copied node link");
   }, [selectedNodeIds, workspaceNodeMap]);
-  const copySelectedNodesToClipboard = useCallback((event: ClipboardEvent) => {
-    if (selectedNodeIds.size === 0 || isTextEntryElement(event.target) || !event.clipboardData) {
-      return;
+  const getSelectedClipboardRoots = useCallback(() => {
+    if (selectedNodeIds.size === 0) {
+      return {
+        selectedRootNodeIds: [] as string[],
+        selectedRoots: [] as TreeNode[],
+      };
     }
 
     const selectedRootNodeIds = getSelectedRootNodeIds(
@@ -3665,12 +3701,27 @@ function ConfiguredWorkspace({
       workspaceNodeMap,
     );
     if (selectedRootNodeIds.length === 0) {
-      return;
+      return {
+        selectedRootNodeIds,
+        selectedRoots: [] as TreeNode[],
+      };
     }
 
     const selectedRoots = selectedRootNodeIds
       .map((nodeId) => findTreeNodeById(selectionTrees, nodeId))
       .filter((node): node is TreeNode => node !== null);
+
+    return {
+      selectedRootNodeIds,
+      selectedRoots,
+    };
+  }, [selectedNodeIds, selectionTrees, visibleNodeOrder, workspaceNodeMap]);
+  const copySelectedNodesToClipboard = useCallback((event: ClipboardEvent) => {
+    if (selectedNodeIds.size === 0 || isTextEntryElement(event.target) || !event.clipboardData) {
+      return;
+    }
+
+    const { selectedRoots } = getSelectedClipboardRoots();
     if (selectedRoots.length === 0) {
       return;
     }
@@ -3690,8 +3741,9 @@ function ConfiguredWorkspace({
     setCopySnackbarMessage(
       `Copied ${selectedRoots.length} item${selectedRoots.length === 1 ? "" : "s"}`,
     );
+    pendingCutClipboardRef.current = null;
     event.preventDefault();
-  }, [selectedNodeIds, selectionTrees, setCopySnackbarMessage, visibleNodeOrder, workspaceNodeMap]);
+  }, [getSelectedClipboardRoots, selectedNodeIds, setCopySnackbarMessage]);
   const pasteOutlineClipboardAfterSelection = useCallback(async (payload: OutlineClipboardPayload) => {
     if (selectedNodeIds.size === 0) {
       return;
@@ -3825,6 +3877,127 @@ function ConfiguredWorkspace({
     },
     [ownerKey, setNodeTreeArchived, setNodeTreesArchivedBatch],
   );
+  const cutSelectedNodesToClipboard = useCallback(async (event: ClipboardEvent) => {
+    if (selectedNodeIds.size === 0 || isTextEntryElement(event.target) || !event.clipboardData) {
+      return;
+    }
+
+    const { selectedRootNodeIds, selectedRoots } = getSelectedClipboardRoots();
+    if (selectedRoots.length === 0 || selectedRootNodeIds.length === 0) {
+      return;
+    }
+
+    const payload: OutlineClipboardPayload = {
+      version: 1,
+      nodes: selectedRoots.map((node) => serializeTreeNodeForClipboard(node)),
+    };
+    const cutPayload: OutlineCutClipboardPayload = {
+      version: 1,
+      nodeIds: selectedRootNodeIds,
+    };
+
+    event.clipboardData.setData(
+      OUTLINE_CLIPBOARD_MIME_TYPE,
+      JSON.stringify(payload),
+    );
+    event.clipboardData.setData(
+      OUTLINE_CUT_CLIPBOARD_MIME_TYPE,
+      JSON.stringify(cutPayload),
+    );
+    event.clipboardData.setData(
+      "text/plain",
+      buildOutlineClipboardText(payload.nodes),
+    );
+    event.preventDefault();
+
+    pendingCutClipboardRef.current = {
+      nodeIds: selectedRootNodeIds.map((nodeId) => nodeId as Id<"nodes">),
+      payloadNodeIds: selectedRootNodeIds,
+    };
+
+    await executeNodeArchiveBatch(
+      selectedRootNodeIds.map((nodeId) => nodeId as Id<"nodes">),
+      true,
+    );
+    clearNodeSelection();
+    setCopySnackbarMessage(
+      `Cut ${selectedRoots.length} item${selectedRoots.length === 1 ? "" : "s"}`,
+    );
+  }, [
+    clearNodeSelection,
+    executeNodeArchiveBatch,
+    getSelectedClipboardRoots,
+    selectedNodeIds,
+    setCopySnackbarMessage,
+  ]);
+  const pasteCutNodesAfterSelection = useCallback(async (cutPayload: OutlineCutClipboardPayload) => {
+    if (selectedNodeIds.size === 0) {
+      return false;
+    }
+
+    const pendingCutClipboard = pendingCutClipboardRef.current;
+    if (!pendingCutClipboard) {
+      return false;
+    }
+
+    if (
+      cutPayload.nodeIds.length !== pendingCutClipboard.payloadNodeIds.length ||
+      cutPayload.nodeIds.some((nodeId, index) => nodeId !== pendingCutClipboard.payloadNodeIds[index])
+    ) {
+      return false;
+    }
+
+    const selectedRootNodeIds = getSelectedRootNodeIds(
+      selectedNodeIds,
+      visibleNodeOrder,
+      workspaceNodeMap,
+    );
+    const anchorNodeId = selectedRootNodeIds[selectedRootNodeIds.length - 1] ?? null;
+    if (!anchorNodeId) {
+      return false;
+    }
+
+    const anchorNode = workspaceNodeMap.get(anchorNodeId) ?? null;
+    if (!anchorNode) {
+      return false;
+    }
+
+    await executeNodeArchiveBatch(pendingCutClipboard.nodeIds, false);
+
+    const moves = pendingCutClipboard.nodeIds.map((nodeId, index) => ({
+      nodeId,
+      pageId: anchorNode.pageId as Id<"pages">,
+      parentNodeId: (anchorNode.parentNodeId as Id<"nodes"> | null) ?? null,
+      afterNodeId: index === 0
+        ? (anchorNode._id as Id<"nodes">)
+        : pendingCutClipboard.nodeIds[index - 1]!,
+    }));
+    await executeNodeMoveBatch(moves);
+
+    const movedRootNodeIds = pendingCutClipboard.nodeIds.map((nodeId) => nodeId as string);
+    const firstMovedRootNodeId = movedRootNodeIds[0] ?? null;
+    if (movedRootNodeIds.length > 1) {
+      setSelectedNodeIds(new Set(movedRootNodeIds));
+      setDragSelection(null);
+      setPendingRevealNodeId(firstMovedRootNodeId);
+    } else if (firstMovedRootNodeId) {
+      selectSingleNode(firstMovedRootNodeId);
+      setPendingRevealNodeId(firstMovedRootNodeId);
+    }
+
+    pendingCutClipboardRef.current = null;
+    setCopySnackbarMessage(
+      `Pasted ${movedRootNodeIds.length} cut item${movedRootNodeIds.length === 1 ? "" : "s"}`,
+    );
+    return true;
+  }, [
+    executeNodeArchiveBatch,
+    executeNodeMoveBatch,
+    selectSingleNode,
+    selectedNodeIds,
+    visibleNodeOrder,
+    workspaceNodeMap,
+  ]);
   const handleImportTextNodes = useCallback(
     async ({
       pageId,
@@ -6553,29 +6726,44 @@ function ConfiguredWorkspace({
       copySelectedNodesToClipboard(event);
     };
 
+    const handleCut = (event: ClipboardEvent) => {
+      void cutSelectedNodesToClipboard(event);
+    };
+
     const handlePaste = (event: ClipboardEvent) => {
       if (isTextEntryElement(event.target) || !event.clipboardData) {
         return;
       }
 
-      const payload = parseOutlineClipboardPayload(
-        event.clipboardData.getData(OUTLINE_CLIPBOARD_MIME_TYPE),
-      );
-      if (!payload) {
+      const cutPayloadRaw = event.clipboardData.getData(OUTLINE_CUT_CLIPBOARD_MIME_TYPE);
+      const outlinePayloadRaw = event.clipboardData.getData(OUTLINE_CLIPBOARD_MIME_TYPE);
+      const cutPayload = parseOutlineCutClipboardPayload(cutPayloadRaw);
+      const payload = parseOutlineClipboardPayload(outlinePayloadRaw);
+      if (!cutPayload && !payload) {
         return;
       }
 
       event.preventDefault();
-      void pasteOutlineClipboardAfterSelection(payload);
+      void (async () => {
+        if (cutPayload && await pasteCutNodesAfterSelection(cutPayload)) {
+          return;
+        }
+
+        if (payload) {
+          await pasteOutlineClipboardAfterSelection(payload);
+        }
+      })();
     };
 
     window.addEventListener("copy", handleCopy);
+    window.addEventListener("cut", handleCut);
     window.addEventListener("paste", handlePaste);
     return () => {
       window.removeEventListener("copy", handleCopy);
+      window.removeEventListener("cut", handleCut);
       window.removeEventListener("paste", handlePaste);
     };
-  }, [copySelectedNodesToClipboard, pasteOutlineClipboardAfterSelection]);
+  }, [copySelectedNodesToClipboard, cutSelectedNodesToClipboard, pasteCutNodesAfterSelection, pasteOutlineClipboardAfterSelection]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
