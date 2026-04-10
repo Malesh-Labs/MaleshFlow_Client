@@ -151,6 +151,7 @@ const SHORTCUT_SECTIONS = [
       { keys: ["⌘", "⇧", "O"], description: "Search notes and tasks" },
       { keys: ["⌘", "⇧", "F"], description: "Open exact text find" },
       { keys: ["⌘", "⇧", "L"], description: "Toggle AI chat" },
+      { keys: ["⌘", "⇧", "R"], description: "Open the random box" },
       { keys: ["Esc"], description: "Close overlays or clear selection" },
     ],
   },
@@ -6948,6 +6949,12 @@ function ConfiguredWorkspace({
         return;
       }
 
+      if (isModifier && event.shiftKey && normalizedKey === "r") {
+        event.preventDefault();
+        openRandomBox();
+        return;
+      }
+
       if (isModifier && event.shiftKey && normalizedKey === "k") {
         event.preventDefault();
         void copyNodeLinkToClipboard(event.target);
@@ -7220,6 +7227,7 @@ function ConfiguredWorkspace({
     focusLastVisiblePageNode,
     indentHighlightedNodeByKeyboard,
     moveHighlightedNodeByKeyboard,
+    openRandomBox,
     openPalette,
     selectionAnchorNodeId,
     toggleWorkspaceChat,
