@@ -70,6 +70,7 @@ import {
   applyOptimisticNodeCreates,
   applyOptimisticNodeBatchUpdates,
   applyOptimisticNodeMoves,
+  applyOptimisticPlannerTaskCompletion,
   applyOptimisticNodeSplit,
   applyOptimisticNodeTreeArchive,
   applyOptimisticNodeUpdate,
@@ -3047,7 +3048,23 @@ function ConfiguredWorkspace({
   const suggestRandomPlannerTask = useAction(api.plannerAi.suggestRandomPlannerTask);
   const addRandomPlannerTaskWithAi = useAction(api.plannerAi.addRandomPlannerTaskWithAi);
   const suggestNextPlannerTask = useAction(api.plannerAi.suggestNextPlannerTask);
-  const completePlannerTask = useMutation(api.planner.completePlannerTask);
+  const completePlannerTaskRaw = useMutation(api.planner.completePlannerTask);
+  const completePlannerTaskMutation = completePlannerTaskRaw.withOptimisticUpdate(
+    (localStore, args) => {
+      applyOptimisticPlannerTaskCompletion(localStore, args);
+    },
+  );
+  const completePlannerTask = useCallback(
+    (args: Parameters<typeof completePlannerTaskMutation>[0]) =>
+      runTrackedMutation(
+        async () => await completePlannerTaskMutation(args),
+        {
+          nodeIds: [args.plannerNodeId as string],
+        },
+        "Could not complete that planner item.",
+      ),
+    [completePlannerTaskMutation, runTrackedMutation],
+  );
   const findNodesText = useAction(api.ai.findNodesText);
   const searchNodes = useAction(api.ai.searchNodes);
   const chatWithWorkspace = useAction(api.ai.chatWithWorkspace);
@@ -11929,7 +11946,12 @@ function OutlineNodeEditor({
   mobileIndentStep?: number;
 }) {
   const history = useWorkspaceHistory();
-  const completePlannerTaskMutation = useMutation(api.planner.completePlannerTask);
+  const completePlannerTaskRaw = useMutation(api.planner.completePlannerTask);
+  const completePlannerTaskMutation = completePlannerTaskRaw.withOptimisticUpdate(
+    (localStore, args) => {
+      applyOptimisticPlannerTaskCompletion(localStore, args);
+    },
+  );
   const [draft, setDraft] = useState(node.text);
   const [isFocused, setIsFocused] = useState(false);
   const [caretPosition, setCaretPosition] = useState<number | null>(null);

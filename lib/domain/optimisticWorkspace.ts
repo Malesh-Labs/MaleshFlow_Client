@@ -87,6 +87,12 @@ export type OptimisticNodeSplitArgs = {
   tailTaskStatus?: NodeTaskStatus;
 };
 
+export type OptimisticPlannerTaskCompletionArgs = {
+  ownerKey: string;
+  plannerNodeId: Id<"nodes">;
+  completionMode: "dueDate" | "today";
+};
+
 function getTimestamp() {
   return Date.now();
 }
@@ -708,6 +714,18 @@ export function applyOptimisticNodeSplit(
       ...group,
       nodes: applyOptimisticSplitToNodes(group.nodes, args),
     })),
+  );
+}
+
+export function applyOptimisticPlannerTaskCompletion(
+  localStore: OptimisticLocalStore,
+  args: OptimisticPlannerTaskCompletionArgs,
+) {
+  patchNodeInWorkspaceQueries(localStore, args.ownerKey, args.plannerNodeId, (node) =>
+    applyNodeUpdatePatch(node, {
+      taskStatus: node.kind === "task" ? "done" : undefined,
+      noteCompleted: node.kind === "note" ? true : undefined,
+    }),
   );
 }
 
