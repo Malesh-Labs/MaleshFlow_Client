@@ -367,6 +367,7 @@ type PendingInsertedComposer = {
   pageId: string;
   parentNodeId: string | null;
   afterNodeId: string;
+  defaultKind: "note" | "task";
   focusToken: number;
 };
 type PlannerNextTaskSuggestion = {
@@ -6330,16 +6331,23 @@ function ConfiguredWorkspace({
   ]);
 
   const openInsertedComposer = useCallback(
-    (pageId: Id<"pages">, parentNodeId: Id<"nodes"> | null, afterNodeId: Id<"nodes">) => {
+    (
+      pageId: Id<"pages">,
+      parentNodeId: Id<"nodes"> | null,
+      afterNodeId: Id<"nodes">,
+      defaultKind: "note" | "task" = "note",
+    ) => {
       setPendingInsertedComposer((current) => ({
         pageId,
         parentNodeId,
         afterNodeId,
+        defaultKind,
         focusToken:
           current &&
           current.pageId === pageId &&
           current.parentNodeId === parentNodeId &&
-          current.afterNodeId === afterNodeId
+          current.afterNodeId === afterNodeId &&
+          current.defaultKind === defaultKind
             ? current.focusToken + 1
             : 1,
       }));
@@ -10338,6 +10346,7 @@ function PageSection({
     pageId: Id<"pages">,
     parentNodeId: Id<"nodes"> | null,
     afterNodeId: Id<"nodes">,
+    defaultKind?: "note" | "task",
   ) => void;
   onClearInsertedComposer: () => void;
   onBeginTextEditing: () => void;
@@ -10527,6 +10536,7 @@ function OutlineNodeList({
     pageId: Id<"pages">,
     parentNodeId: Id<"nodes"> | null,
     afterNodeId: Id<"nodes">,
+    defaultKind?: "note" | "task",
   ) => void;
   onClearInsertedComposer: () => void;
   onBeginTextEditing: () => void;
@@ -10576,6 +10586,7 @@ function OutlineNodeList({
                   pageId,
                   ((lastCreatedNode.parentNodeId as Id<"nodes"> | null) ?? null),
                   lastCreatedNode._id as Id<"nodes">,
+                  lastCreatedNode.kind as "note" | "task",
                 );
               }
             }
@@ -11646,6 +11657,7 @@ function OutlineNodeEditor({
     pageId: Id<"pages">,
     parentNodeId: Id<"nodes"> | null,
     afterNodeId: Id<"nodes">,
+    defaultKind?: "note" | "task",
   ) => void;
   onClearInsertedComposer: () => void;
   onBeginTextEditing: () => void;
@@ -11803,6 +11815,8 @@ function OutlineNodeEditor({
     pendingInsertedComposer?.afterNodeId === node._id;
   const pendingSiblingComposerFocusToken =
     pendingSiblingComposerVisible ? pendingInsertedComposer?.focusToken ?? 0 : 0;
+  const pendingSiblingComposerDefaultKind =
+    pendingSiblingComposerVisible ? pendingInsertedComposer?.defaultKind ?? "note" : "note";
   const isDraggingAnotherNode = activeDraggedNodeId !== null && activeDraggedNodeId !== node._id;
   const hasChildren = node.children.length > 0;
   const hasNestedGrandchildren = node.children.some((child) => child.children.length > 0);
@@ -13354,7 +13368,12 @@ function OutlineNodeEditor({
     }
 
     if (draft.trim().length > 0 || pendingSiblingComposerVisible) {
-      onOpenInsertedComposer(pageId, parentNodeId, node._id as Id<"nodes">);
+      onOpenInsertedComposer(
+        pageId,
+        parentNodeId,
+        node._id as Id<"nodes">,
+        node.kind as "note" | "task",
+      );
     }
 
     const result = await commitNodeText(draft);
@@ -13895,6 +13914,7 @@ function OutlineNodeEditor({
           depth={depth}
           mobileIndentStep={mobileIndentStep}
           autoFocusToken={pendingSiblingComposerFocusToken}
+          defaultKind={pendingSiblingComposerDefaultKind}
           persistWhenEmpty
           placeholder="Write a line…"
           onBeginTextEditing={onBeginTextEditing}
@@ -13906,6 +13926,7 @@ function OutlineNodeEditor({
                   pageId,
                   ((lastCreatedNode.parentNodeId as Id<"nodes"> | null) ?? null),
                   lastCreatedNode._id as Id<"nodes">,
+                  lastCreatedNode.kind as "note" | "task",
                 );
                 return;
               }
@@ -13937,6 +13958,7 @@ function InlineComposer({
   depth = 0,
   mobileIndentStep = 0,
   autoFocusToken = 0,
+  defaultKind = "note",
   persistWhenEmpty = false,
   placeholder = "",
   onBeginTextEditing,
@@ -13957,6 +13979,7 @@ function InlineComposer({
   depth?: number;
   mobileIndentStep?: number;
   autoFocusToken?: number;
+  defaultKind?: "note" | "task";
   persistWhenEmpty?: boolean;
   placeholder?: string;
   onBeginTextEditing?: () => void;
@@ -14097,7 +14120,12 @@ function InlineComposer({
 
     let nextAfterNodeId: Id<"nodes"> | null | undefined = composerAfterNodeId ?? null;
     const batch = lines
-      .map((line) => parseNodeDraft(line))
+      .map((line) =>
+        parseNodeDraftWithFallback(line, {
+          kind: defaultKind,
+          taskStatus: defaultKind === "task" ? "todo" : null,
+        }),
+      )
       .filter((entry) => !entry.shouldDelete)
       .map((entry) => {
         const nextEntry = {
