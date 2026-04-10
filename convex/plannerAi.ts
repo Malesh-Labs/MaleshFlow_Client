@@ -9,9 +9,11 @@ import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { assertOwnerKey } from "./lib/auth";
 import {
+  findPlannerSectionNode,
   getPlannerDayTimestamp,
   getPlannerLinkedSourceTaskId,
   getPlannerDayRoots,
+  PLANNER_FOCUS_SLOT,
 } from "./lib/planner";
 import {
   comparePlannerTaskOrder,
@@ -91,10 +93,9 @@ export const completePlannerDayWithAi = action({
     args,
   ): Promise<{
     completedDayNodeId: Id<"nodes">;
-    nextDayNodeId: Id<"nodes">;
+    focusSectionId: Id<"nodes">;
     movedCount: number;
     archivedDuplicateCount: number;
-    createdNextDay: boolean;
   }> => {
     assertOwnerKey(args.ownerKey);
 
@@ -114,13 +115,13 @@ export const completePlannerDayWithAi = action({
 
     const plannerDays = getPlannerDayRoots(plannerContext.nodes);
     const topDay = plannerDays[0] ?? null;
-    const nextDay = plannerDays[1] ?? null;
+    const focusSection = findPlannerSectionNode(plannerContext.nodes, PLANNER_FOCUS_SLOT);
 
     if (!topDay) {
       throw new Error("Add a planner day before completing one.");
     }
 
-    if (!nextDay) {
+    if (!focusSection) {
       return await ctx.runMutation(api.planner.completePlannerDay, {
         ownerKey: args.ownerKey,
         pageId: args.pageId,
@@ -130,19 +131,19 @@ export const completePlannerDayWithAi = action({
     const topDayChildren = plannerContext.nodes
       .filter((node) => node.parentNodeId === topDay._id && !node.archived)
       .sort((left, right) => left.position - right.position);
-    const nextDayChildren = plannerContext.nodes
-      .filter((node) => node.parentNodeId === nextDay._id && !node.archived)
+    const focusChildren = plannerContext.nodes
+      .filter((node) => node.parentNodeId === focusSection._id && !node.archived)
       .sort((left, right) => left.position - right.position);
 
-    const existingNextDaySourceIds = new Set(
-      nextDayChildren
+    const existingFocusSourceIds = new Set(
+      focusChildren
         .map((node) => getPlannerLinkedSourceTaskId(node))
         .filter((value): value is Id<"nodes"> => value !== null)
         .map((value) => value as string),
     );
     const carryChildren = topDayChildren.filter((node) => {
       const linkedSourceTaskId = getPlannerLinkedSourceTaskId(node);
-      return !linkedSourceTaskId || !existingNextDaySourceIds.has(linkedSourceTaskId as string);
+      return !linkedSourceTaskId || !existingFocusSourceIds.has(linkedSourceTaskId as string);
     });
 
     if (carryChildren.length === 0) {
@@ -162,7 +163,7 @@ export const completePlannerDayWithAi = action({
             {
               role: "system",
               content:
-                "You are arranging a daily planner outline. Return a single ordered list of node ids representing the best combined order for the next day. Keep all existing next-day node ids and all carried node ids exactly once each. Do not invent ids, omit ids, or duplicate ids. Prefer placing carried items near similar tasks, routines, or sections. If uncertain, preserve the existing next-day order and append carried items in a sensible order near related items.",
+                "You are arranging a daily planner Focus outline. Return a single ordered list of node ids representing the best combined order for the Focus section. Keep all existing Focus node ids and all carried node ids exactly once each. Do not invent ids, omit ids, or duplicate ids. Prefer placing carried items near similar tasks, routines, or sections. If uncertain, preserve the existing Focus order and append carried items in a sensible order near related items.",
             },
             {
               role: "user",
@@ -170,11 +171,10 @@ export const completePlannerDayWithAi = action({
                 `Planner page: ${plannerContext.page.title}`,
                 `Top day being completed: ${topDay.text}`,
                 `Top day date: ${getPlannerDayTimestamp(topDay) ?? "(unknown)"}`,
-                `Next day receiving items: ${nextDay.text}`,
-                `Next day date: ${getPlannerDayTimestamp(nextDay) ?? "(unknown)"}`,
+                `Focus section receiving items: ${focusSection.text}`,
                 "",
-                "Existing next-day root items:",
-                nextDayChildren
+                "Existing Focus root items:",
+                focusChildren
                   .map(
                     (node) =>
                       `- ${node._id}: ${node.text} [${node.kind}/${node.taskStatus ?? "n/a"}]`,
@@ -201,7 +201,7 @@ export const completePlannerDayWithAi = action({
 
         const parsed = response.output_parsed;
         const candidateIds = new Set(
-          [...nextDayChildren, ...carryChildren].map((node) => node._id as string),
+          [...focusChildren, ...carryChildren].map((node) => node._id as string),
         );
         if (
           parsed &&

@@ -668,8 +668,17 @@ export const completePlannerDay = mutation({
       throw new Error("Planner page not found.");
     }
 
-    await ensurePlannerSections(ctx, page);
+    const ensuredSections = await ensurePlannerSections(ctx, page);
     const nodes = await listPageNodes(ctx.db, page._id);
+    const focusSection =
+      findPlannerSectionNode(nodes, PLANNER_FOCUS_SLOT) ??
+      (ensuredSections.focusSectionId
+        ? ((await ctx.db.get(ensuredSections.focusSectionId)) ?? null)
+        : null);
+    if (!focusSection) {
+      throw new Error("Could not prepare the Focus section.");
+    }
+
     const dayRoots = getPlannerDayRoots(nodes);
     const topDay = dayRoots[0] ?? null;
     if (!topDay) {
@@ -681,41 +690,22 @@ export const completePlannerDay = mutation({
       throw new Error("Top planner day is missing its date.");
     }
 
-    let nextDay: Doc<"nodes"> | null = dayRoots[1] ?? null;
-    if (!nextDay) {
-      const created = await appendPlannerDayCore(ctx, {
-        page,
-        plannerDate: topDayDate + 24 * 60 * 60 * 1000,
-      });
-      nextDay = await ctx.db.get(created.dayNodeId);
-    }
-
-    if (!nextDay) {
-      throw new Error("Could not prepare the next planner day.");
-    }
-
-    const nextDayDate = getPlannerDayTimestamp(nextDay);
-    if (!nextDayDate) {
-      throw new Error("Next planner day is missing its date.");
-    }
-
     const now = Date.now();
     const topDayTree = await collectNodeTree(ctx.db, topDay._id);
     const topDayChildren = topDayTree
       .filter((node) => node.parentNodeId === topDay._id && !node.archived)
       .sort((left, right) => left.position - right.position);
-    const nextDayTree = await collectNodeTree(ctx.db, nextDay._id);
+    const focusTree = await collectNodeTree(ctx.db, focusSection._id);
     const existingLinkedSourceIds = new Set(
-      nextDayTree
+      focusTree
         .map((node) => getPlannerLinkedSourceTaskId(node))
         .filter((value): value is Id<"nodes"> => value !== null)
         .map((value) => value as string),
     );
 
-    const nextDayDirectChildren = nextDayTree
-      .filter((node) => node.parentNodeId === nextDay!._id && !node.archived)
+    const focusDirectChildren = focusTree
+      .filter((node) => node.parentNodeId === focusSection._id && !node.archived)
       .sort((left, right) => left.position - right.position);
-    let afterNodeId = nextDayDirectChildren[nextDayDirectChildren.length - 1]?._id ?? null;
     let movedCount = 0;
     let archivedDuplicateCount = 0;
     const keptCarryChildren: Doc<"nodes">[] = [];
@@ -734,7 +724,7 @@ export const completePlannerDay = mutation({
     }
 
     const candidateIds = [
-      ...nextDayDirectChildren.map((node) => node._id as Id<"nodes">),
+      ...focusDirectChildren.map((node) => node._id as Id<"nodes">),
       ...keptCarryChildren.map((node) => node._id as Id<"nodes">),
     ];
     const candidateIdSet = new Set(candidateIds.map((id) => id as string));
@@ -756,6 +746,7 @@ export const completePlannerDay = mutation({
     }
 
     const carryIdSet = new Set(keptCarryChildren.map((node) => node._id as string));
+    let afterNodeId: Id<"nodes"> | null = null;
     for (const nodeId of orderedNodeIds) {
       const node = candidateIds.find((candidateId) => candidateId === nodeId)
         ? (await ctx.db.get(nodeId))
@@ -766,17 +757,17 @@ export const completePlannerDay = mutation({
       const nextPosition = await computeNodePosition(
         ctx.db,
         page._id,
-        nextDay._id,
+        focusSection._id,
         afterNodeId,
       );
       const isCarryNode = carryIdSet.has(nodeId as string);
       await ctx.db.patch(node._id, {
-        parentNodeId: nextDay._id,
+        parentNodeId: focusSection._id,
         position: nextPosition,
         updatedAt: now,
       });
       if (isCarryNode) {
-        await updateMovedPlannerSubtreeDate(ctx, node._id, nextDayDate, now);
+        await updateMovedPlannerSubtreeDate(ctx, node._id, topDayDate, now);
         movedCount += 1;
       }
       afterNodeId = node._id;
@@ -787,10 +778,9 @@ export const completePlannerDay = mutation({
 
     return {
       completedDayNodeId: topDay._id,
-      nextDayNodeId: nextDay._id,
+      focusSectionId: focusSection._id,
       movedCount,
       archivedDuplicateCount,
-      createdNextDay: dayRoots[1] ? false : true,
     };
   },
 });
