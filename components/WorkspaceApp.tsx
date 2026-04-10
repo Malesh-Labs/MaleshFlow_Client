@@ -129,6 +129,7 @@ const WORKSPACE_AI_CHAT_TEXTAREA_ID = "workspace-ai-chat-textarea";
 const WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY = "maleshflow-workspace-ai-chat-open";
 const SIMPLE_VIEW_OPEN_STORAGE_KEY = "maleshflow-simple-view-open";
 const WORKSPACE_INBOX_TEXTAREA_ID = "workspace-inbox-textarea";
+const WORKSPACE_RANDOM_BOX_TEXTAREA_ID = "workspace-random-box-textarea";
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
 const ALL_PAGE_TYPE_GROUP_ORDER = [
   "Planner",
@@ -2621,6 +2622,13 @@ function ConfiguredWorkspace({
   const [isInboxDirty, setIsInboxDirty] = useState(false);
   const [isInboxSaving, setIsInboxSaving] = useState(false);
   const [inboxSaveError, setInboxSaveError] = useState("");
+  const [isRandomBoxOpen, setIsRandomBoxOpen] = useState(false);
+  const [randomBoxDraft, setRandomBoxDraft] = useState("");
+  const [randomBoxSelectedItem, setRandomBoxSelectedItem] = useState("");
+  const [isRandomBoxListCollapsed, setIsRandomBoxListCollapsed] = useState(false);
+  const [isRandomBoxDirty, setIsRandomBoxDirty] = useState(false);
+  const [isRandomBoxSaving, setIsRandomBoxSaving] = useState(false);
+  const [randomBoxSaveError, setRandomBoxSaveError] = useState("");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("pages");
   const [paletteQuery, setPaletteQuery] = useState("");
@@ -2684,6 +2692,7 @@ function ConfiguredWorkspace({
   const hasMigratedPinnedAllPagesRef = useRef(false);
   const lastLoadedModelPromptPageIdRef = useRef<string | null>(null);
   const inboxDraftRef = useRef("");
+  const randomBoxDraftRef = useRef("");
   const pendingCutClipboardRef = useRef<{
     nodeIds: Id<"nodes">[];
     payloadNodeIds: string[];
@@ -2724,6 +2733,10 @@ function ConfiguredWorkspace({
   );
   const workspaceInbox = useQuery(
     api.workspace.getWorkspaceInbox,
+    ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
+  );
+  const workspaceRandomBox = useQuery(
+    api.workspace.getWorkspaceRandomBox,
     ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
   );
   const pageTree = useQuery(
@@ -2827,6 +2840,7 @@ function ConfiguredWorkspace({
   const setPlannerScanExcludedRaw = useMutation(api.workspace.setPlannerScanExcluded);
   const setModelPageCustomPrompt = useMutation(api.workspace.setModelPageCustomPrompt);
   const setWorkspaceInbox = useMutation(api.workspace.setWorkspaceInbox);
+  const setWorkspaceRandomBox = useMutation(api.workspace.setWorkspaceRandomBox);
   const setPagePinnedInAllSidebarRaw = useMutation(api.workspace.setPagePinnedInAllSidebar);
   const mergePinnedPagesInAllSidebar = useMutation(api.workspace.mergePinnedPagesInAllSidebar);
   const deletePageForever = useMutation(api.workspace.deletePageForever);
@@ -5257,6 +5271,10 @@ function ConfiguredWorkspace({
   }, [inboxDraft]);
 
   useEffect(() => {
+    randomBoxDraftRef.current = randomBoxDraft;
+  }, [randomBoxDraft]);
+
+  useEffect(() => {
     if (typeof workspaceInbox?.text !== "string") {
       return;
     }
@@ -5308,6 +5326,73 @@ function ConfiguredWorkspace({
   }, [isInboxDirty, saveInboxDraft]);
 
   useEffect(() => {
+    if (typeof workspaceRandomBox?.text !== "string") {
+      return;
+    }
+
+    if (!isRandomBoxOpen || !isRandomBoxDirty) {
+      setRandomBoxDraft(workspaceRandomBox.text);
+    }
+  }, [isRandomBoxDirty, isRandomBoxOpen, workspaceRandomBox?.text]);
+
+  const saveRandomBoxDraft = useCallback(
+    async (text: string) => {
+      if (!ownerKey || !isOwnerKeyValid) {
+        return;
+      }
+
+      setIsRandomBoxSaving(true);
+      setRandomBoxSaveError("");
+      try {
+        await setWorkspaceRandomBox({
+          ownerKey,
+          text,
+        });
+        if (randomBoxDraftRef.current === text) {
+          setIsRandomBoxDirty(false);
+        }
+      } catch (error) {
+        setRandomBoxSaveError(
+          error instanceof Error ? error.message : "Could not save random box.",
+        );
+      } finally {
+        setIsRandomBoxSaving(false);
+      }
+    },
+    [isOwnerKeyValid, ownerKey, setWorkspaceRandomBox],
+  );
+
+  const openRandomBox = useCallback(() => {
+    setRandomBoxSaveError("");
+    setRandomBoxDraft(
+      typeof workspaceRandomBox?.text === "string" ? workspaceRandomBox.text : "",
+    );
+    setIsRandomBoxDirty(false);
+    setIsRandomBoxOpen(true);
+  }, [workspaceRandomBox?.text]);
+
+  const closeRandomBox = useCallback(() => {
+    if (isRandomBoxDirty) {
+      void saveRandomBoxDraft(randomBoxDraftRef.current);
+    }
+    setIsRandomBoxOpen(false);
+  }, [isRandomBoxDirty, saveRandomBoxDraft]);
+
+  const chooseRandomBoxItem = useCallback(() => {
+    const items = randomBoxDraftRef.current
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+    if (items.length === 0) {
+      setRandomBoxSelectedItem("");
+      return;
+    }
+
+    const selectedItem = items[Math.floor(Math.random() * items.length)] ?? "";
+    setRandomBoxSelectedItem(selectedItem);
+  }, []);
+
+  useEffect(() => {
     if (!isInboxOpen || !isInboxDirty) {
       return;
     }
@@ -5318,6 +5403,18 @@ function ConfiguredWorkspace({
 
     return () => window.clearTimeout(timeoutId);
   }, [isInboxDirty, isInboxOpen, saveInboxDraft]);
+
+  useEffect(() => {
+    if (!isRandomBoxOpen || !isRandomBoxDirty) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void saveRandomBoxDraft(randomBoxDraftRef.current);
+    }, 450);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [isRandomBoxDirty, isRandomBoxOpen, saveRandomBoxDraft]);
 
   useEffect(() => {
     if (!dragSelection) {
@@ -6509,6 +6606,29 @@ function ConfiguredWorkspace({
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [closeInbox, isInboxOpen]);
+
+  useEffect(() => {
+    if (!isRandomBoxOpen) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      document.getElementById(WORKSPACE_RANDOM_BOX_TEXTAREA_ID)?.focus();
+    }, 0);
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRandomBox();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeRandomBox, isRandomBoxOpen]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -7836,6 +7956,21 @@ function ConfiguredWorkspace({
             )}
           >
             📥
+          </button>
+          <button
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={openRandomBox}
+            title="Random box"
+            aria-label="Random box"
+            className={clsx(
+              "flex h-10 w-10 items-center justify-center border text-lg transition",
+              isRandomBoxOpen
+                ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
+                : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+            )}
+          >
+            🗃️
           </button>
           <button
             type="button"
@@ -10112,6 +10247,95 @@ function ConfiguredWorkspace({
             {inboxSaveError ? (
               <div className="border-t border-[var(--workspace-border)] px-4 py-3 text-sm text-[var(--workspace-danger)]">
                 {inboxSaveError}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+      {isRandomBoxOpen ? (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4"
+          onClick={closeRandomBox}
+        >
+          <div
+            className="flex h-[min(34rem,78vh)] w-full max-w-3xl flex-col border border-[var(--workspace-border)] bg-[var(--workspace-surface)] shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-4 border-b border-[var(--workspace-border)] px-4 py-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[var(--workspace-accent)]">
+                  Random Box
+                </p>
+                <p className="mt-1 text-xs text-[var(--workspace-text-faint)]">
+                  One item per line. Auto-saved to the workspace.
+                </p>
+              </div>
+              <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                {isRandomBoxSaving ? <span>Saving…</span> : null}
+                {isRandomBoxDirty && !isRandomBoxSaving ? <span>Unsaved</span> : null}
+                <button
+                  type="button"
+                  onClick={closeRandomBox}
+                  className="border border-[var(--workspace-border)] px-3 py-2 text-[10px] font-semibold tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col gap-4 p-4">
+              <div className="flex items-center justify-between gap-3 border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-3 py-2">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[var(--workspace-text-faint)]">
+                    Pick
+                  </p>
+                  <p className="mt-1 text-xs text-[var(--workspace-text-subtle)]">
+                    Randomly selects one non-empty line from the list.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={chooseRandomBoxItem}
+                  className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition hover:brightness-110"
+                >
+                  Random
+                </button>
+              </div>
+              <textarea
+                value={randomBoxSelectedItem}
+                onChange={(event) => setRandomBoxSelectedItem(event.target.value)}
+                placeholder="Random item will show here…"
+                rows={3}
+                className="min-h-[6rem] resize-none border border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-brand)_8%,var(--workspace-surface-muted))] px-4 py-3 text-base font-semibold leading-7 text-[var(--workspace-text)] outline-none transition focus:border-[var(--workspace-accent)]"
+              />
+              <div className="min-h-0 flex-1 border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)]">
+                <button
+                  type="button"
+                  onClick={() => setIsRandomBoxListCollapsed((current) => !current)}
+                  className="flex w-full items-center justify-between gap-3 border-b border-[var(--workspace-border)] px-4 py-3 text-left text-xs font-semibold uppercase tracking-[0.2em] text-[var(--workspace-text-muted)] transition hover:text-[var(--workspace-text)]"
+                >
+                  <span>Items</span>
+                  <span>{isRandomBoxListCollapsed ? "Show" : "Hide"}</span>
+                </button>
+                {!isRandomBoxListCollapsed ? (
+                  <div className="h-[calc(100%-2.75rem)] min-h-[10rem] p-3">
+                    <textarea
+                      id={WORKSPACE_RANDOM_BOX_TEXTAREA_ID}
+                      value={randomBoxDraft}
+                      onChange={(event) => {
+                        setRandomBoxDraft(event.target.value);
+                        setIsRandomBoxDirty(true);
+                        setRandomBoxSaveError("");
+                      }}
+                      placeholder={"Write one item per line…\nExample one\nExample two"}
+                      className="h-full w-full resize-none border border-[var(--workspace-border)] bg-[var(--workspace-surface)] px-4 py-3 text-sm leading-7 text-[var(--workspace-text)] outline-none transition focus:border-[var(--workspace-accent)]"
+                    />
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            {randomBoxSaveError ? (
+              <div className="border-t border-[var(--workspace-border)] px-4 py-3 text-sm text-[var(--workspace-danger)]">
+                {randomBoxSaveError}
               </div>
             ) : null}
           </div>
