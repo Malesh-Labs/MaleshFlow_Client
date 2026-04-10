@@ -70,6 +70,7 @@ import {
   applyOptimisticNodeCreates,
   applyOptimisticNodeBatchUpdates,
   applyOptimisticNodeMoves,
+  applyOptimisticNodeSplit,
   applyOptimisticNodeTreeArchive,
   applyOptimisticNodeUpdate,
   applyOptimisticPagePinnedInAllSidebar,
@@ -417,10 +418,11 @@ type SetNodeTreesArchivedBatchArgs = Parameters<
 type CreateNodesBatchArgs = Parameters<
   ReturnType<typeof useMutation<typeof api.workspace.createNodesBatch>>
 >[0];
+type SplitNodeArgs = Parameters<ReturnType<typeof useMutation<typeof api.workspace.splitNode>>>[0];
 type UpdateNodeMutation = (args: UpdateNodeArgs) => Promise<unknown>;
 type CreateNodesBatchMutation = (args: CreateNodesBatchArgs) => Promise<Doc<"nodes">[]>;
 type MoveNodeMutation = (args: MoveNodeArgs) => Promise<unknown>;
-type SplitNodeMutation = ReturnType<typeof useMutation<typeof api.workspace.splitNode>>;
+type SplitNodeMutation = (args: SplitNodeArgs) => Promise<unknown>;
 type ReplaceNodeAndInsertSiblingsMutation = ReturnType<
   typeof useMutation<typeof api.workspace.replaceNodeAndInsertSiblings>
 >;
@@ -2853,7 +2855,7 @@ function ConfiguredWorkspace({
   const updateNodesBatchRaw = useMutation(api.workspace.updateNodesBatch);
   const moveNodeRaw = useMutation(api.workspace.moveNode);
   const moveNodesBatchRaw = useMutation(api.workspace.moveNodesBatch);
-  const splitNode = useMutation(api.workspace.splitNode);
+  const splitNodeRaw = useMutation(api.workspace.splitNode);
   const replaceNodeAndInsertSiblings = useMutation(
     api.workspace.replaceNodeAndInsertSiblings,
   );
@@ -2918,6 +2920,9 @@ function ConfiguredWorkspace({
       applyOptimisticNodeCreates(localStore, args);
     },
   );
+  const splitNodeMutation = splitNodeRaw.withOptimisticUpdate((localStore, args) => {
+    applyOptimisticNodeSplit(localStore, args);
+  });
   const renamePage = useCallback(
     (args: RenamePageArgs) =>
       runTrackedMutation(
@@ -3021,6 +3026,17 @@ function ConfiguredWorkspace({
         args.nodes.length <= 1 ? "Could not add that item." : "Could not add those items.",
       ),
     [createNodesBatchMutation, runTrackedMutation],
+  );
+  const splitNode = useCallback(
+    (args: SplitNodeArgs) =>
+      runTrackedMutation(
+        async () => await splitNodeMutation(args),
+        {
+          nodeIds: [args.nodeId],
+        },
+        "Could not split that item.",
+      ),
+    [runTrackedMutation, splitNodeMutation],
   );
   const rewriteModelSection = useAction(api.chat.rewriteModelSection);
   const generateJournalFeedback = useAction(api.chat.generateJournalFeedback);

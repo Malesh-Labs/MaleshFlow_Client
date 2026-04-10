@@ -76,6 +76,17 @@ export type OptimisticNodeCreateInput = {
   recurrenceFrequency?: RecurrenceFrequency | null;
 };
 
+export type OptimisticNodeSplitArgs = {
+  ownerKey: string;
+  nodeId: Id<"nodes">;
+  headText: string;
+  headKind: "note" | "task";
+  headTaskStatus?: NodeTaskStatus;
+  tailText: string;
+  tailKind: "note" | "task";
+  tailTaskStatus?: NodeTaskStatus;
+};
+
 function getTimestamp() {
   return Date.now();
 }
@@ -645,6 +656,58 @@ export function applyOptimisticNodeCreates(
           }
         : group,
     ),
+  );
+}
+
+function applyOptimisticSplitToNodes(nodes: NodeDoc[], args: OptimisticNodeSplitArgs) {
+  const sourceNode = nodes.find((node) => node._id === args.nodeId) ?? null;
+  if (!sourceNode) {
+    return nodes;
+  }
+
+  const updatedNodes = patchNodeList(nodes, args.nodeId, (node) =>
+    applyNodeUpdatePatch(node, {
+      text: args.headText,
+      kind: args.headKind,
+      taskStatus: args.headKind === "task" ? (args.headTaskStatus ?? "todo") : null,
+    }),
+  );
+
+  return applyOptimisticCreatesToNodes(
+    updatedNodes,
+    sourceNode.pageId,
+    [
+      {
+        clientId: `split:${args.nodeId}`,
+        parentNodeId: (sourceNode.parentNodeId as Id<"nodes"> | null) ?? null,
+        afterNodeId: args.nodeId,
+        text: args.tailText,
+        kind: args.tailKind,
+        taskStatus: args.tailKind === "task" ? (args.tailTaskStatus ?? "todo") : null,
+      },
+    ],
+    [`optimistic-node:split:${args.nodeId}` as Id<"nodes">],
+    getTimestamp(),
+  );
+}
+
+export function applyOptimisticNodeSplit(
+  localStore: OptimisticLocalStore,
+  args: OptimisticNodeSplitArgs,
+) {
+  updatePageTreeQueries(localStore, args.ownerKey, (result) => ({
+    ...result,
+    nodes: applyOptimisticSplitToNodes(result.nodes, args),
+  }));
+  updateSidebarTreeQueries(localStore, args.ownerKey, (result) => ({
+    ...result,
+    nodes: applyOptimisticSplitToNodes(result.nodes, args),
+  }));
+  updateSimpleTaskViewQueries(localStore, args.ownerKey, (groups) =>
+    groups.map((group) => ({
+      ...group,
+      nodes: applyOptimisticSplitToNodes(group.nodes, args),
+    })),
   );
 }
 
