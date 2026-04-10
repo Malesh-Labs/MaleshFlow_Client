@@ -9,3 +9,10 @@ tsconfig.tsbuildinfo
 AGENTS.md
 CLAUDE.md
 skills-lock.json
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
