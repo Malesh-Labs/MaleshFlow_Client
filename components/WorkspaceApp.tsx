@@ -1415,23 +1415,38 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
     return [];
   }
 
-  const pageSuggestions: LinkSuggestion[] = results.pages.map((page) => ({
-    key: `page:${page._id}`,
-    kind: "page",
-    title: page.title,
-    subtitle: "Page",
-    insertText: buildPageLinkInsertText(page),
-  }));
+  const pageSuggestions: LinkSuggestion[] = results.pages
+    .map((page) => ({
+      key: `page:${page._id}`,
+      kind: "page" as const,
+      title: page.title,
+      subtitle: "Page",
+      insertText: buildPageLinkInsertText(page),
+    }))
+    .sort((left, right) => {
+      const lengthDelta = left.title.trim().length - right.title.trim().length;
+      if (lengthDelta !== 0) {
+        return lengthDelta;
+      }
+      return left.title.localeCompare(right.title);
+    });
 
   const nodeSuggestions: LinkSuggestion[] = results.nodes
     .filter((entry) => entry.page !== null)
     .map((entry) => ({
       key: `node:${entry.node._id}`,
-      kind: "node",
+      kind: "node" as const,
       title: sanitizeLinkLabel(entry.node.text),
       subtitle: entry.page ? `Node • ${entry.page.title}` : "Node",
       insertText: buildNodeLinkInsertText(entry.node),
-    }));
+    }))
+    .sort((left, right) => {
+      const lengthDelta = left.title.trim().length - right.title.trim().length;
+      if (lengthDelta !== 0) {
+        return lengthDelta;
+      }
+      return left.title.localeCompare(right.title);
+    });
 
   return [...pageSuggestions, ...nodeSuggestions];
 }
