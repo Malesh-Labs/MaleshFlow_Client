@@ -2091,7 +2091,7 @@ export const searchLinkTargets = query({
     assertOwnerKey(args.ownerKey);
 
     const normalizedQuery = normalizeLinkSearchQuery(args.query);
-    const limit = Math.max(1, Math.min(args.limit ?? 8, 12));
+    const limit = Math.max(1, Math.min(args.limit ?? 12, 24));
 
     const pages = await ctx.db
       .query("pages")
@@ -2108,6 +2108,10 @@ export const searchLinkTargets = query({
         const rightScore = linkSearchScore(right.title, normalizedQuery);
         if (leftScore !== rightScore) {
           return leftScore - rightScore;
+        }
+        const lengthDelta = left.title.trim().length - right.title.trim().length;
+        if (lengthDelta !== 0) {
+          return lengthDelta;
         }
         return left.position - right.position;
       })
@@ -2131,6 +2135,10 @@ export const searchLinkTargets = query({
         const rightScore = linkSearchScore(right.text, normalizedQuery);
         if (leftScore !== rightScore) {
           return leftScore - rightScore;
+        }
+        const lengthDelta = left.text.trim().length - right.text.trim().length;
+        if (lengthDelta !== 0) {
+          return lengthDelta;
         }
         return right.updatedAt - left.updatedAt;
       })

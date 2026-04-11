@@ -1422,14 +1422,7 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
       title: page.title,
       subtitle: "Page",
       insertText: buildPageLinkInsertText(page),
-    }))
-    .sort((left, right) => {
-      const lengthDelta = left.title.trim().length - right.title.trim().length;
-      if (lengthDelta !== 0) {
-        return lengthDelta;
-      }
-      return left.title.localeCompare(right.title);
-    });
+    }));
 
   const nodeSuggestions: LinkSuggestion[] = results.nodes
     .filter((entry) => entry.page !== null)
@@ -1439,16 +1432,20 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
       title: sanitizeLinkLabel(entry.node.text),
       subtitle: entry.page ? `Node • ${entry.page.title}` : "Node",
       insertText: buildNodeLinkInsertText(entry.node),
-    }))
-    .sort((left, right) => {
-      const lengthDelta = left.title.trim().length - right.title.trim().length;
-      if (lengthDelta !== 0) {
-        return lengthDelta;
-      }
-      return left.title.localeCompare(right.title);
-    });
+    }));
 
-  return [...pageSuggestions, ...nodeSuggestions];
+  return [...pageSuggestions, ...nodeSuggestions].sort((left, right) => {
+    const lengthDelta = left.title.trim().length - right.title.trim().length;
+    if (lengthDelta !== 0) {
+      return lengthDelta;
+    }
+
+    if (left.kind !== right.kind) {
+      return left.kind === "page" ? -1 : 1;
+    }
+
+    return left.title.localeCompare(right.title);
+  });
 }
 
 function buildTagSuggestions(
@@ -11470,7 +11467,7 @@ function WorkspaceAiChatPanel({
       ? {
           ownerKey,
           query: activeLinkToken.query,
-          limit: 6,
+          limit: 12,
         }
       : SKIP,
   ) as LinkTargetSearchResults | undefined;
@@ -12074,7 +12071,7 @@ function OutlineNodeEditor({
       ? {
           ownerKey,
           query: activeLinkToken.query,
-          limit: 6,
+          limit: 12,
           excludeNodeId: node._id as Id<"nodes">,
         }
       : SKIP,
@@ -14312,7 +14309,7 @@ function InlineComposer({
       ? {
           ownerKey,
           query: activeLinkToken.query,
-          limit: 6,
+          limit: 12,
         }
       : SKIP,
   ) as LinkTargetSearchResults | undefined;
