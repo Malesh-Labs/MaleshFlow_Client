@@ -130,7 +130,7 @@ export function getEffectiveTaskDueDateRange<
   TMapNode extends TaskDueInheritanceNode,
 >(
   node: TNode,
-  nodeMap: Map<string, TMapNode>,
+  _nodeMap: Map<string, TMapNode>,
 ) {
   if (node.kind !== "task") {
     return {
@@ -144,30 +144,6 @@ export function getEffectiveTaskDueDateRange<
       dueAt: node.dueAt,
       dueEndAt: node.dueEndAt ?? null,
     };
-  }
-
-  const visitedNodeIds = new Set<string>([node._id]);
-  let parentNodeId = node.parentNodeId ?? null;
-
-  while (parentNodeId) {
-    if (visitedNodeIds.has(parentNodeId)) {
-      break;
-    }
-    visitedNodeIds.add(parentNodeId);
-
-    const parentNode = nodeMap.get(parentNodeId) ?? null;
-    if (!parentNode) {
-      break;
-    }
-
-    if (parentNode.kind === "task" && parentNode.dueAt) {
-      return {
-        dueAt: parentNode.dueAt,
-        dueEndAt: parentNode.dueEndAt ?? null,
-      };
-    }
-
-    parentNodeId = parentNode.parentNodeId ?? null;
   }
 
   return {

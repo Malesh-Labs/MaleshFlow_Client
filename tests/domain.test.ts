@@ -513,7 +513,7 @@ test("collectRootSubtreeLines preserves nesting and task markers", () => {
   ]);
 });
 
-test("getEffectiveTaskDueDateRange inherits due dates from ancestor task items", () => {
+test("getEffectiveTaskDueDateRange only uses the task item's own due date", () => {
   const parentTask = {
     _id: "parent",
     kind: "task",
@@ -540,12 +540,12 @@ test("getEffectiveTaskDueDateRange inherits due dates from ancestor task items",
   );
 
   assert.deepEqual(getEffectiveTaskDueDateRange(childTask, nodes), {
-    dueAt: parentTask.dueAt,
-    dueEndAt: parentTask.dueEndAt,
+    dueAt: null,
+    dueEndAt: null,
   });
   assert.deepEqual(getEffectiveTaskDueDateRange(grandchildTask, nodes), {
-    dueAt: parentTask.dueAt,
-    dueEndAt: parentTask.dueEndAt,
+    dueAt: null,
+    dueEndAt: null,
   });
 });
 
