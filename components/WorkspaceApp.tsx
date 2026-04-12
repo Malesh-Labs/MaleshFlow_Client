@@ -400,6 +400,9 @@ type RenamePageArgs = Parameters<ReturnType<typeof useMutation<typeof api.worksp
 type SetPlannerScanExcludedArgs = Parameters<
   ReturnType<typeof useMutation<typeof api.workspace.setPlannerScanExcluded>>
 >[0];
+type SetTaskPageDoneArchiveEnabledArgs = Parameters<
+  ReturnType<typeof useMutation<typeof api.workspace.setTaskPageDoneArchiveEnabled>>
+>[0];
 type SetPagePinnedInAllSidebarArgs = Parameters<
   ReturnType<typeof useMutation<typeof api.workspace.setPagePinnedInAllSidebar>>
 >[0];
@@ -421,10 +424,14 @@ type CreateNodesBatchArgs = Parameters<
   ReturnType<typeof useMutation<typeof api.workspace.createNodesBatch>>
 >[0];
 type SplitNodeArgs = Parameters<ReturnType<typeof useMutation<typeof api.workspace.splitNode>>>[0];
+type CompleteTaskPageTaskArgs = Parameters<
+  ReturnType<typeof useMutation<typeof api.workspace.completeTaskPageTask>>
+>[0];
 type UpdateNodeMutation = (args: UpdateNodeArgs) => Promise<unknown>;
 type CreateNodesBatchMutation = (args: CreateNodesBatchArgs) => Promise<Doc<"nodes">[]>;
 type MoveNodeMutation = (args: MoveNodeArgs) => Promise<unknown>;
 type SplitNodeMutation = (args: SplitNodeArgs) => Promise<unknown>;
+type CompleteTaskPageTaskMutation = (args: CompleteTaskPageTaskArgs) => Promise<unknown>;
 type ReplaceNodeAndInsertSiblingsMutation = ReturnType<
   typeof useMutation<typeof api.workspace.replaceNodeAndInsertSiblings>
 >;
@@ -2854,6 +2861,10 @@ function ConfiguredWorkspace({
   const renamePageRaw = useMutation(api.workspace.renamePage);
   const archivePage = useMutation(api.workspace.archivePage);
   const setPlannerScanExcludedRaw = useMutation(api.workspace.setPlannerScanExcluded);
+  const setTaskPageDoneArchiveEnabledRaw = useMutation(
+    api.workspace.setTaskPageDoneArchiveEnabled,
+  );
+  const completeTaskPageTaskRaw = useMutation(api.workspace.completeTaskPageTask);
   const setModelPageCustomPrompt = useMutation(api.workspace.setModelPageCustomPrompt);
   const setWorkspaceInbox = useMutation(api.workspace.setWorkspaceInbox);
   const setWorkspaceRandomBox = useMutation(api.workspace.setWorkspaceRandomBox);
@@ -2954,6 +2965,15 @@ function ConfiguredWorkspace({
         "Could not update planner scan settings.",
       ),
     [runTrackedMutation, setPlannerScanExcludedMutation],
+  );
+  const setTaskPageDoneArchiveEnabled = useCallback(
+    (args: SetTaskPageDoneArchiveEnabledArgs) =>
+      runTrackedMutation(
+        () => setTaskPageDoneArchiveEnabledRaw(args),
+        { pageIds: [args.pageId] },
+        "Could not update Done archiving settings.",
+      ),
+    [runTrackedMutation, setTaskPageDoneArchiveEnabledRaw],
   );
   const setPagePinnedInAllSidebar = useCallback(
     (args: SetPagePinnedInAllSidebarArgs) =>
@@ -3248,6 +3268,8 @@ function ConfiguredWorkspace({
       : null;
   const isSelectedPageExcludedFromPlannerScan =
     selectedPageSourceMeta?.excludeFromPlannerScan === true;
+  const isSelectedPageDoneArchiveEnabled =
+    selectedPageSourceMeta?.archiveCompletedRootTasksToDone === true;
   const pageTitleEditorId = selectedPage ? getPageTitleEditorId(selectedPage._id) : null;
   const pageTitleTarget = useMemo(
     () =>
@@ -6295,6 +6317,24 @@ function ConfiguredWorkspace({
         continue;
       }
 
+      const pageSourceMeta =
+        page && typeof page.sourceMeta === "object" && page.sourceMeta
+          ? (page.sourceMeta as Record<string, unknown>)
+          : null;
+      if (
+        node.kind === "task" &&
+        getPageMeta(page).pageType === "task" &&
+        pageSourceMeta?.archiveCompletedRootTasksToDone === true
+      ) {
+        await completeTaskPageTaskRaw({
+          ownerKey,
+          nodeId: node._id as Id<"nodes">,
+          completionMode: recurringCompletionMode,
+        });
+        clearNodeSelection();
+        continue;
+      }
+
       const beforeSnapshot = toNodeValueSnapshot(node);
       const afterSnapshot: NodeValueSnapshot =
         node.kind === "task"
@@ -6359,7 +6399,7 @@ function ConfiguredWorkspace({
       focusAfterUndoId: historyEntries[0]!.focusEditorId,
       focusAfterRedoId: historyEntries[historyEntries.length - 1]!.focusEditorId,
     });
-  }, [clearNodeSelection, completePlannerTask, executeNodeUpdateBatch, history, ownerKey, pagesById, recurringCompletionMode, selectSingleNode, selectedNodeIds, visibleNodeOrder, workspaceNodeMap]);
+  }, [clearNodeSelection, completePlannerTask, completeTaskPageTaskRaw, executeNodeUpdateBatch, history, ownerKey, pagesById, recurringCompletionMode, selectSingleNode, selectedNodeIds, visibleNodeOrder, workspaceNodeMap]);
 
   const deleteHighlightedNodes = useCallback(async () => {
     if (selectedNodeIds.size === 0) {
@@ -7392,6 +7432,39 @@ function ConfiguredWorkspace({
     pageMeta.pageType,
     selectedPage,
     setPlannerScanExcluded,
+  ]);
+
+  const handleToggleSelectedTaskPageDoneArchive = useCallback(async () => {
+    if (!selectedPage || pageMeta.pageType !== "task" || isPageArchived) {
+      return;
+    }
+
+    const nextEnabled = !isSelectedPageDoneArchiveEnabled;
+    try {
+      await setTaskPageDoneArchiveEnabled({
+        ownerKey,
+        pageId: selectedPage._id,
+        enabled: nextEnabled,
+      });
+      setCopySnackbarMessage(
+        nextEnabled
+          ? 'Enabled "Done" archiving for this task page'
+          : 'Disabled "Done" archiving for this task page',
+      );
+    } catch (error) {
+      setCopySnackbarMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not update Done archiving settings.",
+      );
+    }
+  }, [
+    isPageArchived,
+    isSelectedPageDoneArchiveEnabled,
+    ownerKey,
+    pageMeta.pageType,
+    selectedPage,
+    setTaskPageDoneArchiveEnabled,
   ]);
 
   const handleSelectPage = useCallback((pageId: Id<"pages">) => {
@@ -8972,21 +9045,38 @@ function ConfiguredWorkspace({
                     ) : null}
                   </div>
                   {pageMeta.pageType === "task" ? (
-                    <button
-                      type="button"
-                      onClick={() => void handleToggleSelectedTaskPagePlannerScan()}
-                      disabled={isPageArchived}
-                      className={clsx(
-                        "shrink-0 border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition disabled:cursor-not-allowed disabled:opacity-60",
-                        isSelectedPageExcludedFromPlannerScan
-                          ? "border-[var(--workspace-brand)] text-[var(--workspace-brand)] hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
-                          : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
-                      )}
+                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleSelectedTaskPageDoneArchive()}
+                        disabled={isPageArchived}
+                        className={clsx(
+                          "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition disabled:cursor-not-allowed disabled:opacity-60",
+                          isSelectedPageDoneArchiveEnabled
+                            ? "border-[var(--workspace-brand)] text-[var(--workspace-brand)] hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
+                            : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                        )}
                       >
-                      {isSelectedPageExcludedFromPlannerScan
-                        ? "Include In Planner"
-                        : "Exclude From Planner"}
-                    </button>
+                        {isSelectedPageDoneArchiveEnabled
+                          ? "Done Archive On"
+                          : "Done Archive Off"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleSelectedTaskPagePlannerScan()}
+                        disabled={isPageArchived}
+                        className={clsx(
+                          "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition disabled:cursor-not-allowed disabled:opacity-60",
+                          isSelectedPageExcludedFromPlannerScan
+                            ? "border-[var(--workspace-brand)] text-[var(--workspace-brand)] hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
+                            : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                        )}
+                      >
+                        {isSelectedPageExcludedFromPlannerScan
+                          ? "Include In Planner"
+                          : "Exclude From Planner"}
+                      </button>
+                    </div>
                   ) : null}
                 </div>
                 <div className="mt-6 h-px bg-[var(--workspace-border-subtle)]" />
@@ -10588,6 +10678,7 @@ function PageSection({
   onOpenTag,
   onOpenFindQuery,
   recurringCompletionMode,
+  completeTaskPageTask = async () => undefined,
   depthOffset = 0,
   mobileIndentStep = 0,
   action = null,
@@ -10644,6 +10735,7 @@ function PageSection({
   onOpenTag: (tag: string) => void;
   onOpenFindQuery: (query: string) => void;
   recurringCompletionMode: RecurringCompletionMode;
+  completeTaskPageTask?: CompleteTaskPageTaskMutation;
   depthOffset?: number;
   mobileIndentStep?: number;
   action?: ReactNode;
@@ -10731,6 +10823,7 @@ function PageSection({
           onOpenTag={onOpenTag}
           onOpenFindQuery={onOpenFindQuery}
           recurringCompletionMode={recurringCompletionMode}
+          completeTaskPageTask={completeTaskPageTask}
           mobileIndentStep={mobileIndentStep}
         />
       </div>
@@ -10783,6 +10876,7 @@ function OutlineNodeList({
   onOpenTag,
   onOpenFindQuery,
   recurringCompletionMode,
+  completeTaskPageTask = async () => undefined,
   mobileIndentStep = 0,
 }: {
   nodes: TreeNode[];
@@ -10834,6 +10928,7 @@ function OutlineNodeList({
   onOpenTag: (tag: string) => void;
   onOpenFindQuery: (query: string) => void;
   recurringCompletionMode: RecurringCompletionMode;
+  completeTaskPageTask?: CompleteTaskPageTaskMutation;
   mobileIndentStep?: number;
 }) {
   return (
@@ -10922,6 +11017,7 @@ function OutlineNodeList({
           onOpenTag={onOpenTag}
           onOpenFindQuery={onOpenFindQuery}
           recurringCompletionMode={recurringCompletionMode}
+          completeTaskPageTask={completeTaskPageTask}
           mobileIndentStep={mobileIndentStep}
         />
       ))}
@@ -11899,6 +11995,7 @@ function OutlineNodeEditor({
   onOpenTag,
   onOpenFindQuery,
   recurringCompletionMode,
+  completeTaskPageTask = async () => undefined,
   mobileIndentStep = 0,
 }: {
   node: TreeNode;
@@ -11955,6 +12052,7 @@ function OutlineNodeEditor({
   onOpenTag: (tag: string) => void;
   onOpenFindQuery: (query: string) => void;
   recurringCompletionMode: RecurringCompletionMode;
+  completeTaskPageTask?: CompleteTaskPageTaskMutation;
   mobileIndentStep?: number;
 }) {
   const history = useWorkspaceHistory();
@@ -12720,6 +12818,26 @@ function OutlineNodeEditor({
       await completePlannerTaskMutation({
         ownerKey,
         plannerNodeId: node._id as Id<"nodes">,
+        completionMode: recurringCompletionMode,
+      });
+      history.resetTrackedValue(editorId, editorTarget, saveResult.parsed.text);
+      setDraft(saveResult.parsed.text);
+      return;
+    }
+
+    const currentPage = pagesById.get(pageId as string) ?? null;
+    const currentPageSourceMeta =
+      currentPage && typeof currentPage.sourceMeta === "object" && currentPage.sourceMeta
+        ? (currentPage.sourceMeta as Record<string, unknown>)
+        : null;
+    if (
+      node.kind === "task" &&
+      getPageMeta(currentPage).pageType === "task" &&
+      currentPageSourceMeta?.archiveCompletedRootTasksToDone === true
+    ) {
+      await completeTaskPageTask({
+        ownerKey,
+        nodeId: node._id as Id<"nodes">,
         completionMode: recurringCompletionMode,
       });
       history.resetTrackedValue(editorId, editorTarget, saveResult.parsed.text);

@@ -8,12 +8,14 @@ import {
   query,
   type DatabaseReader,
   type DatabaseWriter,
+  type MutationCtx,
   type QueryCtx,
 } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { assertOwnerKey, isOwnerKeyValid } from "./lib/auth";
 import {
   buildUniquePageSlug,
+  collectNodeTree,
   computeNodePosition,
   deleteNodeTree,
   enqueueNodeEmbeddingRefresh,
@@ -34,6 +36,7 @@ import {
   PLANNER_SIDEBAR_SLOT,
   PLANNER_TEMPLATE_SLOT,
   buildPlannerChatPromptContext,
+  clonePlannerSubtree,
   ensurePlannerSections,
   findPlannerSectionNode,
   getPlannerDayRoots,
@@ -50,6 +53,11 @@ import {
   collectRootSubtreeLines,
   shouldGenerateEmbeddingForNodeText,
 } from "../lib/domain/embeddings";
+import {
+  advanceRecurringDueDateRange,
+  parseRecurrenceFrequency,
+  type RecurringCompletionMode,
+} from "../lib/domain/recurrence";
 import {
   extractLinkMatches,
   extractLinks,
@@ -243,6 +251,175 @@ function getPageSourceMeta(page: Pick<Doc<"pages">, "sourceMeta"> | null | undef
   return page && typeof page.sourceMeta === "object" && page.sourceMeta
     ? (page.sourceMeta as Record<string, unknown>)
     : {};
+}
+
+function getNodeSourceMeta(node: Pick<Doc<"nodes">, "sourceMeta"> | null | undefined) {
+  return node && typeof node.sourceMeta === "object" && node.sourceMeta
+    ? (node.sourceMeta as Record<string, unknown>)
+    : {};
+}
+
+function isTaskPageDoneArchiveEnabled(
+  page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined,
+) {
+  return getPageSourceMeta(page).archiveCompletedRootTasksToDone === true;
+}
+
+function buildTaskArchiveChildrenByParent(nodes: Doc<"nodes">[]) {
+  const map = new Map<string | null, Doc<"nodes">[]>();
+  for (const node of nodes) {
+    const key = (node.parentNodeId as string | null) ?? null;
+    const siblings = map.get(key) ?? [];
+    siblings.push(node);
+    map.set(key, siblings);
+  }
+
+  for (const siblings of map.values()) {
+    siblings.sort((left, right) => left.position - right.position);
+  }
+
+  return map;
+}
+
+function buildTaskArchiveNodeMap(nodes: Doc<"nodes">[]) {
+  return new Map(nodes.map((node) => [node._id as string, node]));
+}
+
+function isTaskArchiveNodeCompleted(node: Doc<"nodes">) {
+  if (node.kind === "task") {
+    return node.taskStatus === "done";
+  }
+
+  return getNodeSourceMeta(node).noteCompleted === true;
+}
+
+function isTaskPageSubtreeCompleted(
+  nodeId: Id<"nodes">,
+  nodeMap: Map<string, Doc<"nodes">>,
+  childrenByParent: Map<string | null, Doc<"nodes">[]>,
+  isRoot = true,
+) {
+  const rootNode = nodeMap.get(nodeId as string);
+  if (!rootNode) {
+    return false;
+  }
+
+  if (
+    rootNode.kind === "task"
+      ? rootNode.taskStatus !== "done"
+      : isRoot && !isTaskArchiveNodeCompleted(rootNode)
+  ) {
+    return false;
+  }
+
+  const descendants = childrenByParent.get(nodeId as string) ?? [];
+  for (const child of descendants) {
+    if (!isTaskPageSubtreeCompleted(child._id, nodeMap, childrenByParent, false)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function findArchivableTaskPageRoot(
+  startNode: Doc<"nodes">,
+  nodeMap: Map<string, Doc<"nodes">>,
+  childrenByParent: Map<string | null, Doc<"nodes">[]>,
+) {
+  let currentNode: Doc<"nodes"> | null = startNode;
+  while (currentNode?.parentNodeId) {
+    currentNode = nodeMap.get(currentNode.parentNodeId as string) ?? null;
+  }
+
+  if (!currentNode || currentNode.kind !== "task") {
+    return null;
+  }
+
+  return isTaskPageSubtreeCompleted(currentNode._id, nodeMap, childrenByParent)
+    ? currentNode
+    : null;
+}
+
+async function ensureDoneArchivePage(ctx: MutationCtx) {
+  const archivedPages = await ctx.db
+    .query("pages")
+    .withIndex("by_archived_position", (query) => query.eq("archived", true))
+    .take(200);
+  const existing = [...archivedPages]
+    .filter((page) => page.title === "Done")
+    .sort((left, right) => {
+      const leftTaskScore = isTaskSourcePage(left) ? 1 : 0;
+      const rightTaskScore = isTaskSourcePage(right) ? 1 : 0;
+      if (leftTaskScore !== rightTaskScore) {
+        return rightTaskScore - leftTaskScore;
+      }
+
+      if (left.updatedAt !== right.updatedAt) {
+        return right.updatedAt - left.updatedAt;
+      }
+
+      return right.createdAt - left.createdAt;
+    })[0] ?? null;
+  if (existing) {
+    return existing;
+  }
+
+  const slug = await buildUniquePageSlug(ctx.db, "Done");
+  const pageId = await ctx.db.insert("pages", {
+    title: "Done",
+    slug,
+    icon: null,
+    archived: true,
+    position: Date.now(),
+    sourceMeta: {
+      sourceType: "system",
+      pageType: "task",
+      archivedPurpose: "taskHistory",
+    },
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+
+  const page = await ctx.db.get(pageId);
+  if (!page) {
+    throw new Error("Could not create Done.");
+  }
+  return page;
+}
+
+async function archiveTaskPageSubtreeToDone(
+  ctx: MutationCtx,
+  taskRootNode: Doc<"nodes">,
+  now: number,
+) {
+  const taskSubtree = await collectNodeTree(ctx.db, taskRootNode._id);
+  const donePage = await ensureDoneArchivePage(ctx);
+  const existingDoneRoots = (await listPageNodes(ctx.db, donePage._id)).filter(
+    (node) => node.parentNodeId === null,
+  );
+  const afterNodeId =
+    existingDoneRoots.sort((left, right) => left.position - right.position)[
+      existingDoneRoots.length - 1
+    ]?._id ?? null;
+
+  await clonePlannerSubtree(ctx, {
+    sourceNodes: taskSubtree,
+    rootNodeId: taskRootNode._id,
+    targetPageId: donePage._id,
+    targetParentNodeId: null,
+    targetAfterNodeId: afterNodeId,
+    transformSourceMeta: (_sourceNode, sourceMeta) => ({
+      ...sourceMeta,
+      sourceType: "taskPageArchive",
+      archivedFromTaskPageNodeId: taskRootNode._id,
+      archivedAt: now,
+    }),
+  });
+
+  await setNodeTreeArchivedState(ctx.db, taskRootNode._id, true, now);
+  await enqueuePageRootEmbeddingRefresh(ctx, taskRootNode.pageId);
+  await enqueuePageRootEmbeddingRefresh(ctx, donePage._id);
 }
 
 function isSidebarSpecialPage(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
@@ -2553,6 +2730,132 @@ export const setPlannerScanExcluded = mutation({
     });
 
     return args.excluded;
+  },
+});
+
+export const setTaskPageDoneArchiveEnabled = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+    enabled: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived || !isTaskSourcePage(page)) {
+      throw new Error("Only active task pages can toggle Done archiving.");
+    }
+
+    const nextSourceMeta = {
+      ...getPageSourceMeta(page),
+      archiveCompletedRootTasksToDone: args.enabled,
+    };
+    await ctx.db.patch(args.pageId, {
+      sourceMeta: nextSourceMeta,
+      updatedAt: getTimestamp(),
+    });
+
+    return args.enabled;
+  },
+});
+
+export const completeTaskPageTask = mutation({
+  args: {
+    ownerKey: v.string(),
+    nodeId: v.id("nodes"),
+    completionMode: v.union(v.literal("dueDate"), v.literal("today")),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const node = await ctx.db.get(args.nodeId);
+    if (!node || node.archived) {
+      throw new Error("Task item not found.");
+    }
+    if (node.kind !== "task") {
+      throw new Error("Only task items can be completed this way.");
+    }
+
+    const page = await ctx.db.get(node.pageId);
+    if (!page || page.archived || !isTaskSourcePage(page)) {
+      throw new Error("Task page not found.");
+    }
+
+    const now = getTimestamp();
+    const recurrenceFrequency = parseRecurrenceFrequency(
+      getNodeSourceMeta(node).recurrenceFrequency,
+    );
+
+    if (recurrenceFrequency && node.dueAt) {
+      if (node.taskStatus === "done") {
+        await ctx.db.patch(node._id, {
+          taskStatus: "todo",
+          updatedAt: now,
+        });
+      } else {
+        const nextRange = advanceRecurringDueDateRange({
+          dueAt: node.dueAt,
+          dueEndAt: node.dueEndAt ?? null,
+          frequency: recurrenceFrequency,
+          mode: args.completionMode as RecurringCompletionMode,
+        });
+        await ctx.db.patch(node._id, {
+          taskStatus: "todo",
+          dueAt: nextRange.dueAt,
+          dueEndAt: nextRange.dueEndAt,
+          updatedAt: now,
+        });
+      }
+    } else {
+      await ctx.db.patch(node._id, {
+        taskStatus: node.taskStatus === "done" ? "todo" : "done",
+        updatedAt: now,
+      });
+    }
+
+    const refreshedNode = await ctx.db.get(node._id);
+    if (!refreshedNode) {
+      throw new Error("Task item not found after completion.");
+    }
+
+    await syncLinksForNode(ctx.db, refreshedNode);
+    await enqueueNodeAiWork(ctx, refreshedNode._id);
+
+    if (!isTaskPageDoneArchiveEnabled(page)) {
+      await enqueuePageRootEmbeddingRefresh(ctx, refreshedNode.pageId);
+      return {
+        archivedRootNodeId: null as Id<"nodes"> | null,
+      };
+    }
+
+    const pageNodes = await listPageNodes(ctx.db, refreshedNode.pageId);
+    const nodeMap = buildTaskArchiveNodeMap(pageNodes);
+    const childrenByParent = buildTaskArchiveChildrenByParent(pageNodes);
+    const currentNode = nodeMap.get(refreshedNode._id as string);
+    if (!currentNode) {
+      await enqueuePageRootEmbeddingRefresh(ctx, refreshedNode.pageId);
+      return {
+        archivedRootNodeId: null as Id<"nodes"> | null,
+      };
+    }
+
+    const archivableRoot = findArchivableTaskPageRoot(
+      currentNode,
+      nodeMap,
+      childrenByParent,
+    );
+    if (!archivableRoot) {
+      await enqueuePageRootEmbeddingRefresh(ctx, refreshedNode.pageId);
+      return {
+        archivedRootNodeId: null as Id<"nodes"> | null,
+      };
+    }
+
+    await archiveTaskPageSubtreeToDone(ctx, archivableRoot, now);
+    return {
+      archivedRootNodeId: archivableRoot._id,
+    };
   },
 });
 
