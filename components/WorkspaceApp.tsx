@@ -9145,6 +9145,7 @@ function ConfiguredWorkspace({
                       onOpenTag={openFindPaletteForQuery}
                       onOpenFindQuery={openFindPaletteForQuery}
                       recurringCompletionMode={recurringCompletionMode}
+                      completeTaskPageTask={completeTaskPageTaskRaw}
                     />
                   </div>
                 ) : pageMeta.pageType === "planner" ? (
