@@ -692,8 +692,8 @@ export async function appendPlannerLinkedTaskCopy(
     kind: "task",
     taskStatus: args.sourceTask.taskStatus ?? "todo",
     priority: args.sourceTask.priority,
-    dueAt: args.sourceTask.dueAt,
-    dueEndAt: args.sourceTask.dueEndAt ?? null,
+    dueAt: null,
+    dueEndAt: null,
     archived: false,
     sourceMeta: {
       sourceType: "planner",
