@@ -992,6 +992,48 @@ function isNodeNoteCompleted(
   return sourceMeta.noteCompleted === true;
 }
 
+function hasCompletedAncestorNode(
+  node:
+    | Pick<Doc<"nodes">, "parentNodeId">
+    | Pick<TreeNode, "parentNodeId">
+    | null
+    | undefined,
+  nodeMap:
+    | Map<
+        string,
+        Pick<Doc<"nodes">, "_id" | "parentNodeId" | "kind" | "taskStatus" | "sourceMeta">
+      >
+    | Map<
+        string,
+        Pick<TreeNode, "_id" | "parentNodeId" | "kind" | "taskStatus" | "sourceMeta">
+      >,
+) {
+  let currentParentId = (node?.parentNodeId as string | null) ?? null;
+
+  while (currentParentId) {
+    const parentNode = nodeMap.get(currentParentId) ?? null;
+    if (!parentNode) {
+      return false;
+    }
+
+    const parentSourceMeta =
+      parentNode.sourceMeta && typeof parentNode.sourceMeta === "object"
+        ? (parentNode.sourceMeta as Record<string, unknown>)
+        : {};
+
+    if (
+      (parentNode.kind === "task" && parentNode.taskStatus === "done") ||
+      (parentNode.kind === "note" && parentSourceMeta.noteCompleted === true)
+    ) {
+      return true;
+    }
+
+    currentParentId = (parentNode.parentNodeId as string | null) ?? null;
+  }
+
+  return false;
+}
+
 function getNodeRecurrenceFrequency(
   node:
     | {
@@ -12079,6 +12121,7 @@ function OutlineNodeEditor({
   const isNoteCompleted = node.kind === "note" && nodeMeta.noteCompleted === true;
   const isTaskCompleted = node.kind === "task" && node.taskStatus === "done";
   const isCompleted = isTaskCompleted || isNoteCompleted;
+  const isDimmedByCompletedAncestor = hasCompletedAncestorNode(node, nodeMap);
   const isLocked = nodeMeta.locked === true;
   const sectionSlot =
     typeof nodeMeta.sectionSlot === "string" ? nodeMeta.sectionSlot : null;
@@ -12162,6 +12205,13 @@ function OutlineNodeEditor({
     (isDimmedLine || isHeadingLine || hasInlineFormattingPreview) &&
     !hasPageLinkPreview;
   const hasDisplayPreview = hasPageLinkPreview || hasPlainTextPreview;
+  const completedTextClass = isCompleted
+    ? "text-[var(--workspace-text-faint)] line-through"
+    : isDimmedByCompletedAncestor
+      ? "text-[var(--workspace-text-faint)]"
+      : isDimmedLine
+        ? "text-[var(--workspace-text-subtle)]"
+        : "text-[var(--workspace-text)]";
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
   const activeTagToken = activeLinkToken ? null : getActiveTagToken(draft, caretPosition);
   const linkTargetResults = useQuery(
@@ -14022,10 +14072,7 @@ function OutlineNodeEditor({
                 "w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 text-[15px] outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]",
                 previewTypographyClass,
                 isDraggingAnotherNode ? "pointer-events-none select-none" : "",
-                isCompleted ? "text-[var(--workspace-text-faint)] line-through" : "",
-                isDimmedLine && !isCompleted
-                  ? "text-[var(--workspace-text-subtle)]"
-                  : "",
+                completedTextClass,
                 (isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder
                   ? "text-transparent"
                   : "",
@@ -14043,11 +14090,7 @@ function OutlineNodeEditor({
                 isCompleted={isCompleted}
                 className={clsx(
                   previewTypographyClass,
-                  isCompleted
-                    ? "text-[var(--workspace-text-faint)] line-through"
-                    : isDimmedLine
-                      ? "text-[var(--workspace-text-subtle)]"
-                      : "text-[var(--workspace-text)]",
+                  completedTextClass,
                 )}
               />
             ) : hasPlainTextPreview ? (
@@ -14056,11 +14099,7 @@ function OutlineNodeEditor({
                 text={displayDraft}
                 className={clsx(
                   previewTypographyClass,
-                  isCompleted
-                    ? "text-[var(--workspace-text-faint)] line-through"
-                    : isDimmedLine
-                      ? "text-[var(--workspace-text-subtle)]"
-                      : "text-[var(--workspace-text)]",
+                  completedTextClass,
                 )}
               />
             ) : null}
@@ -14075,11 +14114,7 @@ function OutlineNodeEditor({
                 isCompleted={isCompleted}
                 className={clsx(
                   previewTypographyClass,
-                  isCompleted
-                    ? "text-[var(--workspace-text-faint)] line-through"
-                    : isDimmedLine
-                      ? "text-[var(--workspace-text-subtle)]"
-                      : "text-[var(--workspace-text)]",
+                  completedTextClass,
                 )}
               />
             ) : hasPlainTextPreview ? (
@@ -14089,11 +14124,7 @@ function OutlineNodeEditor({
                 isDisabled={isDisabled || activeDraggedNodeId !== null}
                 className={clsx(
                   previewTypographyClass,
-                  isCompleted
-                    ? "text-[var(--workspace-text-faint)] line-through"
-                    : isDimmedLine
-                      ? "text-[var(--workspace-text-subtle)]"
-                      : "text-[var(--workspace-text)]",
+                  completedTextClass,
                 )}
               />
             ) : null}

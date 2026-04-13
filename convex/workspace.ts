@@ -54,8 +54,6 @@ import {
   shouldGenerateEmbeddingForNodeText,
 } from "../lib/domain/embeddings";
 import {
-  advanceRecurringDueDateRange,
-  parseRecurrenceFrequency,
   type RecurringCompletionMode,
 } from "../lib/domain/recurrence";
 import {
@@ -2783,36 +2781,10 @@ export const completeTaskPageTask = mutation({
     }
 
     const now = getTimestamp();
-    const recurrenceFrequency = parseRecurrenceFrequency(
-      getNodeSourceMeta(node).recurrenceFrequency,
-    );
-
-    if (recurrenceFrequency && node.dueAt) {
-      if (node.taskStatus === "done") {
-        await ctx.db.patch(node._id, {
-          taskStatus: "todo",
-          updatedAt: now,
-        });
-      } else {
-        const nextRange = advanceRecurringDueDateRange({
-          dueAt: node.dueAt,
-          dueEndAt: node.dueEndAt ?? null,
-          frequency: recurrenceFrequency,
-          mode: args.completionMode as RecurringCompletionMode,
-        });
-        await ctx.db.patch(node._id, {
-          taskStatus: "todo",
-          dueAt: nextRange.dueAt,
-          dueEndAt: nextRange.dueEndAt,
-          updatedAt: now,
-        });
-      }
-    } else {
-      await ctx.db.patch(node._id, {
-        taskStatus: node.taskStatus === "done" ? "todo" : "done",
-        updatedAt: now,
-      });
-    }
+    await ctx.db.patch(node._id, {
+      taskStatus: node.taskStatus === "done" ? "todo" : "done",
+      updatedAt: now,
+    });
 
     const refreshedNode = await ctx.db.get(node._id);
     if (!refreshedNode) {
