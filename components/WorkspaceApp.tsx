@@ -71,6 +71,7 @@ import {
   applyOptimisticNodeBatchUpdates,
   applyOptimisticNodeMoves,
   applyOptimisticPlannerTaskCompletion,
+  applyOptimisticTaskPageTaskCompletion,
   applyOptimisticNodeSplit,
   applyOptimisticNodeTreeArchive,
   applyOptimisticNodeUpdate,
@@ -2936,6 +2937,11 @@ function ConfiguredWorkspace({
       applyOptimisticPlannerScanExcluded(localStore, args);
     },
   );
+  const completeTaskPageTaskMutation = completeTaskPageTaskRaw.withOptimisticUpdate(
+    (localStore, args) => {
+      applyOptimisticTaskPageTaskCompletion(localStore, args);
+    },
+  );
   const setPagePinnedInAllSidebarMutation = setPagePinnedInAllSidebarRaw.withOptimisticUpdate(
     (localStore, args) => {
       applyOptimisticPagePinnedInAllSidebar(localStore, args);
@@ -3138,6 +3144,17 @@ function ConfiguredWorkspace({
         "Could not complete that planner item.",
       ),
     [completePlannerTaskMutation, runTrackedMutation],
+  );
+  const completeTaskPageTask = useCallback(
+    (args: CompleteTaskPageTaskArgs) =>
+      runTrackedMutation(
+        async () => await completeTaskPageTaskMutation(args),
+        {
+          nodeIds: [args.nodeId as string],
+        },
+        "Could not complete that task item.",
+      ),
+    [completeTaskPageTaskMutation, runTrackedMutation],
   );
   const findNodesText = useAction(api.ai.findNodesText);
   const searchNodes = useAction(api.ai.searchNodes);
@@ -6368,7 +6385,7 @@ function ConfiguredWorkspace({
         getPageMeta(page).pageType === "task" &&
         pageSourceMeta?.archiveCompletedRootTasksToDone === true
       ) {
-        await completeTaskPageTaskRaw({
+        await completeTaskPageTask({
           ownerKey,
           nodeId: node._id as Id<"nodes">,
           completionMode: recurringCompletionMode,
@@ -6441,7 +6458,7 @@ function ConfiguredWorkspace({
       focusAfterUndoId: historyEntries[0]!.focusEditorId,
       focusAfterRedoId: historyEntries[historyEntries.length - 1]!.focusEditorId,
     });
-  }, [clearNodeSelection, completePlannerTask, completeTaskPageTaskRaw, executeNodeUpdateBatch, history, ownerKey, pagesById, recurringCompletionMode, selectSingleNode, selectedNodeIds, visibleNodeOrder, workspaceNodeMap]);
+  }, [clearNodeSelection, completePlannerTask, completeTaskPageTask, executeNodeUpdateBatch, history, ownerKey, pagesById, recurringCompletionMode, selectSingleNode, selectedNodeIds, visibleNodeOrder, workspaceNodeMap]);
 
   const deleteHighlightedNodes = useCallback(async () => {
     if (selectedNodeIds.size === 0) {
@@ -9187,7 +9204,7 @@ function ConfiguredWorkspace({
                       onOpenTag={openFindPaletteForQuery}
                       onOpenFindQuery={openFindPaletteForQuery}
                       recurringCompletionMode={recurringCompletionMode}
-                      completeTaskPageTask={completeTaskPageTaskRaw}
+                      completeTaskPageTask={completeTaskPageTask}
                     />
                   </div>
                 ) : pageMeta.pageType === "planner" ? (

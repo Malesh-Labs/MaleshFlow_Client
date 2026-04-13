@@ -93,6 +93,12 @@ export type OptimisticPlannerTaskCompletionArgs = {
   completionMode: "dueDate" | "today";
 };
 
+export type OptimisticTaskPageTaskCompletionArgs = {
+  ownerKey: string;
+  nodeId: Id<"nodes">;
+  completionMode: "dueDate" | "today";
+};
+
 function getTimestamp() {
   return Date.now();
 }
@@ -725,6 +731,19 @@ export function applyOptimisticPlannerTaskCompletion(
     applyNodeUpdatePatch(node, {
       taskStatus: node.kind === "task" ? "done" : undefined,
       noteCompleted: node.kind === "note" ? true : undefined,
+    }),
+  );
+}
+
+export function applyOptimisticTaskPageTaskCompletion(
+  localStore: OptimisticLocalStore,
+  args: OptimisticTaskPageTaskCompletionArgs,
+) {
+  patchNodeInWorkspaceQueries(localStore, args.ownerKey, args.nodeId, (node) =>
+    applyNodeUpdatePatch(node, {
+      taskStatus: node.kind === "task"
+        ? (node.taskStatus === "done" ? "todo" : "done")
+        : undefined,
     }),
   );
 }
