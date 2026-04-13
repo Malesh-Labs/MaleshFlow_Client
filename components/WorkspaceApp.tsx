@@ -3118,7 +3118,7 @@ function ConfiguredWorkspace({
   const generateJournalFeedback = useAction(api.chat.generateJournalFeedback);
   const appendPlannerDay = useMutation(api.planner.appendPlannerDay);
   const updatePlannerFocus = useMutation(api.planner.updatePlannerFocus);
-  const completePlannerDayWithAi = useAction(api.plannerAi.completePlannerDayWithAi);
+  const completePlannerDay = useMutation(api.planner.completePlannerDay);
   const suggestRandomPlannerTask = useAction(api.plannerAi.suggestRandomPlannerTask);
   const addRandomPlannerTaskWithAi = useAction(api.plannerAi.addRandomPlannerTaskWithAi);
   const suggestNextPlannerTask = useAction(api.plannerAi.suggestNextPlannerTask);
@@ -7777,7 +7777,7 @@ function ConfiguredWorkspace({
     setIsPlannerCompletingDay(true);
     setPlannerStatus("");
     try {
-      const result = await completePlannerDayWithAi({
+      const result = await completePlannerDay({
         ownerKey,
         pageId: selectedPageId,
       });
@@ -7804,7 +7804,7 @@ function ConfiguredWorkspace({
       setIsPlannerCompletingDay(false);
     }
   }, [
-    completePlannerDayWithAi,
+    completePlannerDay,
     focusPlannerNode,
     isPageArchived,
     ownerKey,

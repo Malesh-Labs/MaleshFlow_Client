@@ -723,10 +723,14 @@ export const completePlannerDay = mutation({
       }
     }
 
-    const candidateIds = [
-      ...focusDirectChildren.map((node) => node._id as Id<"nodes">),
-      ...keptCarryChildren.map((node) => node._id as Id<"nodes">),
-    ];
+    const orderedCarryChildren = [...keptCarryChildren].sort((left, right) =>
+      comparePlannerTaskOrder(left, right),
+    );
+    const candidateNodes = [...focusDirectChildren, ...orderedCarryChildren];
+    const candidateNodeMap = new Map(
+      candidateNodes.map((node) => [node._id as string, node]),
+    );
+    const candidateIds = candidateNodes.map((node) => node._id as Id<"nodes">);
     const candidateIdSet = new Set(candidateIds.map((id) => id as string));
     let orderedNodeIds = candidateIds;
     if (args.orderedNodeIds && args.orderedNodeIds.length === candidateIds.length) {
@@ -748,9 +752,7 @@ export const completePlannerDay = mutation({
     const carryIdSet = new Set(keptCarryChildren.map((node) => node._id as string));
     let afterNodeId: Id<"nodes"> | null = null;
     for (const nodeId of orderedNodeIds) {
-      const node = candidateIds.find((candidateId) => candidateId === nodeId)
-        ? (await ctx.db.get(nodeId))
-        : null;
+      const node = candidateNodeMap.get(nodeId as string) ?? null;
       if (!node || node.archived) {
         continue;
       }
