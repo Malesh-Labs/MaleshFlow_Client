@@ -420,6 +420,53 @@ async function archiveTaskPageSubtreeToDone(
   await enqueuePageRootEmbeddingRefresh(ctx, donePage._id);
 }
 
+export const archiveCompletedTaskPageRootIfReady = internalMutation({
+  args: {
+    nodeId: v.id("nodes"),
+  },
+  handler: async (ctx, args) => {
+    const node = await ctx.db.get(args.nodeId);
+    if (!node || node.archived || node.kind !== "task") {
+      return {
+        archivedRootNodeId: null as Id<"nodes"> | null,
+      };
+    }
+
+    const page = await ctx.db.get(node.pageId);
+    if (!page || page.archived || !isTaskSourcePage(page) || !isTaskPageDoneArchiveEnabled(page)) {
+      return {
+        archivedRootNodeId: null as Id<"nodes"> | null,
+      };
+    }
+
+    const pageNodes = await listPageNodes(ctx.db, node.pageId);
+    const nodeMap = buildTaskArchiveNodeMap(pageNodes);
+    const childrenByParent = buildTaskArchiveChildrenByParent(pageNodes);
+    const currentNode = nodeMap.get(node._id as string);
+    if (!currentNode) {
+      return {
+        archivedRootNodeId: null as Id<"nodes"> | null,
+      };
+    }
+
+    const archivableRoot = findArchivableTaskPageRoot(
+      currentNode,
+      nodeMap,
+      childrenByParent,
+    );
+    if (!archivableRoot) {
+      return {
+        archivedRootNodeId: null as Id<"nodes"> | null,
+      };
+    }
+
+    await archiveTaskPageSubtreeToDone(ctx, archivableRoot, getTimestamp());
+    return {
+      archivedRootNodeId: archivableRoot._id,
+    };
+  },
+});
+
 function isSidebarSpecialPage(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
   return getPageSourceMeta(page).specialPage === "sidebar";
 }
@@ -2780,10 +2827,9 @@ export const completeTaskPageTask = mutation({
       throw new Error("Task page not found.");
     }
 
-    const now = getTimestamp();
     await ctx.db.patch(node._id, {
       taskStatus: node.taskStatus === "done" ? "todo" : "done",
-      updatedAt: now,
+      updatedAt: getTimestamp(),
     });
 
     const refreshedNode = await ctx.db.get(node._id);
@@ -2793,40 +2839,23 @@ export const completeTaskPageTask = mutation({
 
     await syncLinksForNode(ctx.db, refreshedNode);
     await enqueueNodeAiWork(ctx, refreshedNode._id);
+    await enqueuePageRootEmbeddingRefresh(ctx, refreshedNode.pageId);
 
     if (!isTaskPageDoneArchiveEnabled(page)) {
-      await enqueuePageRootEmbeddingRefresh(ctx, refreshedNode.pageId);
       return {
         archivedRootNodeId: null as Id<"nodes"> | null,
       };
     }
 
-    const pageNodes = await listPageNodes(ctx.db, refreshedNode.pageId);
-    const nodeMap = buildTaskArchiveNodeMap(pageNodes);
-    const childrenByParent = buildTaskArchiveChildrenByParent(pageNodes);
-    const currentNode = nodeMap.get(refreshedNode._id as string);
-    if (!currentNode) {
-      await enqueuePageRootEmbeddingRefresh(ctx, refreshedNode.pageId);
-      return {
-        archivedRootNodeId: null as Id<"nodes"> | null,
-      };
-    }
-
-    const archivableRoot = findArchivableTaskPageRoot(
-      currentNode,
-      nodeMap,
-      childrenByParent,
+    await ctx.scheduler.runAfter(
+      0,
+      internal.workspace.archiveCompletedTaskPageRootIfReady,
+      {
+        nodeId: refreshedNode._id,
+      },
     );
-    if (!archivableRoot) {
-      await enqueuePageRootEmbeddingRefresh(ctx, refreshedNode.pageId);
-      return {
-        archivedRootNodeId: null as Id<"nodes"> | null,
-      };
-    }
-
-    await archiveTaskPageSubtreeToDone(ctx, archivableRoot, now);
     return {
-      archivedRootNodeId: archivableRoot._id,
+      archivedRootNodeId: null as Id<"nodes"> | null,
     };
   },
 });
