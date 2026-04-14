@@ -14316,13 +14316,14 @@ function OutlineNodeEditor({
               availableTags={availableTags}
               pagesByTitle={pagesByTitle}
               pagesById={pagesById}
-          onOpenPage={onOpenPage}
-          onOpenNode={onOpenNode}
-          onOpenTag={onOpenTag}
-          onOpenFindQuery={onOpenFindQuery}
-          recurringCompletionMode={recurringCompletionMode}
-          mobileIndentStep={mobileIndentStep}
-        />
+              onOpenPage={onOpenPage}
+              onOpenNode={onOpenNode}
+              onOpenTag={onOpenTag}
+              onOpenFindQuery={onOpenFindQuery}
+              recurringCompletionMode={recurringCompletionMode}
+              completeTaskPageTask={completeTaskPageTask}
+              mobileIndentStep={mobileIndentStep}
+            />
           </div>
         </div>
       ) : null}
