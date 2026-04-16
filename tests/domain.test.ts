@@ -388,6 +388,22 @@ test("extractTagMatches recognizes tags inside italic markers", () => {
   );
 });
 
+test("extractTags ignores hash fragments inside markdown links", () => {
+  const tags = extractTags(
+    "See [Wikimedia](https://wikimediafoundation.org/about/jobs/#section-1) and keep #real-tag.",
+  );
+
+  assert.deepEqual(tags, ["real-tag"]);
+});
+
+test("extractTags ignores hash fragments inside plain urls", () => {
+  const tags = extractTags(
+    "Use https://example.com/docs#section-2 for context, then check #follow-up.",
+  );
+
+  assert.deepEqual(tags, ["follow-up"]);
+});
+
 test("parseHeadingSyntax recognizes markdown-style heading prefixes", () => {
   assert.deepEqual(parseHeadingSyntax("# Big heading"), {
     level: 1,
