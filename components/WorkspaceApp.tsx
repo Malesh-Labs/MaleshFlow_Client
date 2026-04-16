@@ -188,6 +188,9 @@ const SHORTCUT_SECTIONS = [
   {
     title: "Clipboard",
     items: [
+      { keys: ["⌘", "C"], description: "Copy highlighted items as an outline block" },
+      { keys: ["⌘", "X"], description: "Cut highlighted items as an outline block" },
+      { keys: ["⌘", "V"], description: "Paste copied or cut highlighted items" },
       { keys: ["⌘", "⇧", "K"], description: "Copy a node link" },
       { keys: ["Paste"], description: "Paste multiple lines to create multiple items" },
     ],
