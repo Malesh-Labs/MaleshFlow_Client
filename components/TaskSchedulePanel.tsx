@@ -312,6 +312,7 @@ export function TaskSchedulePanel({
             type="button"
             onClick={() => {
               setDueDateDraft("");
+              setDueEndDateDraft("");
               setRecurrenceModeDraft("");
               setCustomIntervalDraft("");
               setCustomUnitDraft("day");
@@ -319,6 +320,7 @@ export function TaskSchedulePanel({
             disabled={
               isSaving ||
               (!dueDateDraft &&
+                !dueEndDateDraft &&
                 recurrenceModeDraft === "" &&
                 customIntervalDraft.length === 0)
             }

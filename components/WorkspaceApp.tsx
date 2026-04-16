@@ -5113,18 +5113,15 @@ function ConfiguredWorkspace({
     }
 
     const beforeSnapshot = toNodeValueSnapshot(node);
-    const afterSnapshot = withNodeScheduleSnapshot(
-      {
-        text: node.text,
-        kind: "task",
-        taskStatus: (node.taskStatus ?? "todo") as NodeValueSnapshot["taskStatus"],
-        noteCompleted: false,
-        dueAt,
-        dueEndAt,
-        recurrenceFrequency,
-      },
-      node,
-    );
+    const afterSnapshot: NodeValueSnapshot = {
+      text: node.text,
+      kind: "task",
+      taskStatus: (node.taskStatus ?? "todo") as NodeValueSnapshot["taskStatus"],
+      noteCompleted: false,
+      dueAt,
+      dueEndAt,
+      recurrenceFrequency,
+    };
 
     if (
       beforeSnapshot.text === afterSnapshot.text &&
@@ -13818,11 +13815,13 @@ function OutlineNodeEditor({
       let createEntry: HistoryEntry | null = null;
 
       if (isStartOfLineSplit) {
+        const optimisticCreatedNodeClientId = `split-above:${node._id}:${Date.now()}`;
         const createNodesPromise = createNodesBatch({
           ownerKey,
           pageId,
           nodes: [
             {
+              clientId: optimisticCreatedNodeClientId,
               parentNodeId,
               afterNodeId: previousSibling?._id ? (previousSibling._id as Id<"nodes">) : null,
               text: normalizedHead.text,
@@ -13842,6 +13841,24 @@ function OutlineNodeEditor({
           dueEndAt: normalizedTail.kind === "task" ? (node.dueEndAt ?? null) : null,
           recurrenceFrequency: normalizedTail.kind === "task" ? recurrenceFrequency : null,
         });
+
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => {
+            const optimisticEditorId = getNodeEditorId(
+              `optimistic-node:${optimisticCreatedNodeClientId}` as Id<"nodes">,
+            );
+            const target = document.querySelector<HTMLElement>(
+              `[data-history-editor-id="${optimisticEditorId}"]`,
+            );
+            if (!(target instanceof HTMLTextAreaElement) && !(target instanceof HTMLInputElement)) {
+              return;
+            }
+
+            target.focus();
+            target.setSelectionRange(0, 0);
+          });
+        });
+
         const [createdNodes] = await Promise.all([createNodesPromise, updateNodePromise]);
         const createdNode = createdNodes[0] ?? null;
 
