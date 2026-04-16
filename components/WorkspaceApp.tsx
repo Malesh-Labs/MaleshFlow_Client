@@ -7235,9 +7235,11 @@ function ConfiguredWorkspace({
         return;
       }
 
+      const targetIsTextEntry = isTextEntryElement(event.target);
+
       if (
         selectedNodeIds.size === 0 &&
-        !isTextEntryElement(event.target) &&
+        !targetIsTextEntry &&
         !event.shiftKey &&
         !event.altKey &&
         !isModifier &&
@@ -7248,26 +7250,38 @@ function ConfiguredWorkspace({
         return;
       }
 
-      if (selectedNodeIds.size > 0 && !isTextEntryElement(event.target)) {
+      if (selectedNodeIds.size > 0) {
         if (isModifier && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+          if (targetIsTextEntry) {
+            return;
+          }
           event.preventDefault();
           setHighlightedNodeCollapsedByKeyboard(event.key === "ArrowLeft");
           return;
         }
 
         if (event.key === "Delete" || event.key === "Backspace") {
+          if (targetIsTextEntry && selectedNodeIds.size <= 1) {
+            return;
+          }
           event.preventDefault();
           void deleteHighlightedNodes();
           return;
         }
 
         if (event.key === "Tab") {
+          if (targetIsTextEntry) {
+            return;
+          }
           event.preventDefault();
           void indentHighlightedNodeByKeyboard(event.shiftKey);
           return;
         }
 
         if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+          if (targetIsTextEntry) {
+            return;
+          }
           event.preventDefault();
           const direction = event.key === "ArrowDown" ? 1 : -1;
 
@@ -13556,6 +13570,106 @@ function OutlineNodeEditor({
     ) {
       event.preventDefault();
       focusAdjacentVisibleNode(event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+
+    if (
+      (event.key === "Backspace" || event.key === "Delete") &&
+      selectionStart === 0 &&
+      selectionEnd === 0 &&
+      !isDisabled &&
+      previousSibling &&
+      node.children.length === 0 &&
+      getNodeMeta(previousSibling).locked !== true
+    ) {
+      event.preventDefault();
+      const previousEditorId = getNodeEditorId(previousSibling._id as Id<"nodes">);
+      const previousBeforeSnapshot = withNodeScheduleSnapshot(
+        toNodeValueSnapshot({
+          text: previousSibling.text,
+          kind: previousSibling.kind as "note" | "task",
+          taskStatus: (previousSibling.taskStatus ??
+            null) as NodeValueSnapshot["taskStatus"],
+          dueAt: previousSibling.dueAt ?? null,
+          dueEndAt: previousSibling.dueEndAt ?? null,
+          sourceMeta: previousSibling.sourceMeta ?? null,
+        }),
+        previousSibling,
+      );
+      const previousAfterSnapshot = {
+        ...previousBeforeSnapshot,
+        text: `${previousSibling.text}${draft}`,
+      } satisfies NodeValueSnapshot;
+
+      await updateNode({
+        ownerKey,
+        nodeId: previousSibling._id as Id<"nodes">,
+        text: previousAfterSnapshot.text,
+        kind: previousAfterSnapshot.kind,
+        taskStatus: previousAfterSnapshot.taskStatus,
+        noteCompleted: previousAfterSnapshot.noteCompleted,
+        dueAt: previousAfterSnapshot.dueAt,
+        dueEndAt: previousAfterSnapshot.dueEndAt,
+        recurrenceFrequency: previousAfterSnapshot.recurrenceFrequency,
+      });
+
+      try {
+        await setNodeTreeArchived({
+          ownerKey,
+          nodeId: node._id as Id<"nodes">,
+          archived: true,
+        });
+      } catch (error) {
+        await updateNode({
+          ownerKey,
+          nodeId: previousSibling._id as Id<"nodes">,
+          text: previousBeforeSnapshot.text,
+          kind: previousBeforeSnapshot.kind,
+          taskStatus: previousBeforeSnapshot.taskStatus,
+          noteCompleted: previousBeforeSnapshot.noteCompleted,
+          dueAt: previousBeforeSnapshot.dueAt,
+          dueEndAt: previousBeforeSnapshot.dueEndAt,
+          recurrenceFrequency: previousBeforeSnapshot.recurrenceFrequency,
+        });
+        throw error;
+      }
+
+      history.resetTrackedValue(editorId, editorTarget);
+      history.pushUndoEntry({
+        type: "compound",
+        pageId,
+        entries: [
+          {
+            type: "update_node",
+            pageId,
+            nodeId: previousSibling._id as Id<"nodes">,
+            before: previousBeforeSnapshot,
+            after: previousAfterSnapshot,
+            focusEditorId: previousEditorId,
+          },
+          {
+            type: "archive_node_tree",
+            pageId,
+            nodeId: node._id as Id<"nodes">,
+            focusAfterUndoId: editorId,
+            focusAfterRedoId: previousEditorId,
+          },
+        ],
+        focusAfterUndoId: editorId,
+        focusAfterRedoId: previousEditorId,
+      });
+
+      window.setTimeout(() => {
+        const previousTextarea = document.querySelector<HTMLTextAreaElement>(
+          `[data-node-id="${previousSibling._id}"] textarea`,
+        );
+        if (!previousTextarea) {
+          return;
+        }
+        previousTextarea.focus();
+        const nextCaretPosition = previousBeforeSnapshot.text.length;
+        previousTextarea.setSelectionRange(nextCaretPosition, nextCaretPosition);
+      }, 0);
       return;
     }
 
