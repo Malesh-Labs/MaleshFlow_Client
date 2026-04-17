@@ -139,6 +139,30 @@ export function TaskSchedulePanel({
     }
   };
 
+  const handleClear = async () => {
+    setIsSaving(true);
+    setErrorMessage("");
+    try {
+      await onSave({
+        dueAt: null,
+        dueEndAt: null,
+        recurrenceFrequency: null,
+      });
+      setDueDateDraft("");
+      setDueEndDateDraft("");
+      setRecurrenceModeDraft("");
+      setCustomIntervalDraft("");
+      setCustomUnitDraft("day");
+      onSaved();
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error ? error.message : "Could not clear that task schedule.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   return (
     <div className="flex h-[min(72vh,640px)] flex-col">
       <div className="border-b border-[var(--workspace-border-subtle)] px-5 py-4">
@@ -310,13 +334,7 @@ export function TaskSchedulePanel({
         <div className="flex flex-wrap items-center justify-end gap-2">
           <button
             type="button"
-            onClick={() => {
-              setDueDateDraft("");
-              setDueEndDateDraft("");
-              setRecurrenceModeDraft("");
-              setCustomIntervalDraft("");
-              setCustomUnitDraft("day");
-            }}
+            onClick={() => void handleClear()}
             disabled={
               isSaving ||
               (!dueDateDraft &&
@@ -326,7 +344,7 @@ export function TaskSchedulePanel({
             }
             className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition enabled:hover:border-[var(--workspace-accent)] enabled:hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            Clear
+            {isSaving ? "Clearing…" : "Clear"}
           </button>
           <button
             type="button"
