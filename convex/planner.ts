@@ -35,23 +35,45 @@ import {
   comparePlannerTaskOrder,
   getEffectiveTaskDueDateRange,
 } from "../lib/domain/planner";
+import {
+  getExplicitWikiLinkPreviewText,
+  replaceLinkMarkupWithLabels,
+} from "../lib/domain/links";
+import { stripInlineFormattingMarkers } from "../lib/domain/inlineFormatting";
 
 const PURE_NODE_WIKI_LINK_PATTERN = /^\[\[(?:(.*?)\|)?node:([a-zA-Z0-9_-]+)\]\]$/;
+const PURE_PAREN_NODE_LINK_PATTERN = /^\(\(([a-zA-Z0-9_-]+)\)\)$/;
+const PURE_RAW_NODE_REFERENCE_PATTERN = /^node:([a-zA-Z0-9_-]+)$/;
+
+function normalizePlannerSuggestionText(text: string) {
+  return stripInlineFormattingMarkers(replaceLinkMarkupWithLabels(text)).trim();
+}
 
 async function resolvePlannerSuggestionText(db: DatabaseReader, text: string) {
   const trimmed = text.trim();
-  const match = trimmed.match(PURE_NODE_WIKI_LINK_PATTERN);
-  if (!match) {
-    return text;
+  const wikiMatch = trimmed.match(PURE_NODE_WIKI_LINK_PATTERN);
+  const parenMatch = trimmed.match(PURE_PAREN_NODE_LINK_PATTERN);
+  const rawMatch = trimmed.match(PURE_RAW_NODE_REFERENCE_PATTERN);
+
+  const explicitLabel = wikiMatch?.[1]
+    ? getExplicitWikiLinkPreviewText(wikiMatch[1]).trim()
+    : "";
+  if (explicitLabel) {
+    return explicitLabel;
   }
 
-  const targetNodeId = match[2]?.trim();
+  const targetNodeId =
+    wikiMatch?.[2]?.trim() ??
+    parenMatch?.[1]?.trim() ??
+    rawMatch?.[1]?.trim() ??
+    "";
   if (!targetNodeId) {
     return text;
   }
 
   const targetNode = await db.get(targetNodeId as Id<"nodes">);
-  return targetNode?.text?.trim() ? targetNode.text : text;
+  const resolvedText = targetNode?.text ? normalizePlannerSuggestionText(targetNode.text) : "";
+  return resolvedText || text;
 }
 
 async function buildPlannerTaskSelectionSummary(ctx: MutationCtx, plannerNode: Doc<"nodes">) {

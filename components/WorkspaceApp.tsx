@@ -14085,7 +14085,7 @@ function OutlineNodeEditor({
         ) : null}
         <div
           className={clsx(
-            "flex items-start rounded-md transition",
+            "flex flex-wrap items-start rounded-md transition sm:flex-nowrap",
             hidePlannerTemplateWeekdayMarker ? "gap-0" : "gap-1.5",
             isHeadingRow ? headingRowMinHeightClass : "min-h-0",
             isPlannerFocusRoot
@@ -14296,7 +14296,8 @@ function OutlineNodeEditor({
           </div>
           <div
             className={clsx(
-              "ml-1 flex flex-none gap-1",
+              "order-3 basis-full flex flex-wrap items-center gap-1 pt-1 sm:order-none sm:ml-1 sm:basis-auto sm:flex-none sm:flex-nowrap sm:pt-0",
+              hidePlannerTemplateWeekdayMarker ? "pl-0" : "pl-[1.375rem] sm:pl-0",
               isHeadingRow
                 ? clsx("items-start", headingControlOffsetClass)
                 : isTaskRow
@@ -14311,11 +14312,11 @@ function OutlineNodeEditor({
               />
             ) : null}
             {node.kind === "task" && (effectiveDueRange.dueAt || recurrenceFrequency) ? (
-              <div className="flex items-center gap-1 pt-px text-[10px] leading-none">
+              <div className="flex flex-wrap items-center gap-1 pt-px text-[10px] leading-none">
                 {effectiveDueRange.dueAt ? (
                   <span
                     className={clsx(
-                      "rounded-full border px-1.5 py-1 text-[var(--workspace-text-faint)]",
+                      "rounded-full border px-1.5 py-1 text-[var(--workspace-text-faint)] break-words",
                       isOverdueTask
                         ? "border-[var(--workspace-danger)]/50 text-[var(--workspace-danger)]"
                         : "border-[var(--workspace-border)]",
@@ -14329,7 +14330,7 @@ function OutlineNodeEditor({
                 {recurrenceFrequency ? (
                   <span
                     className={clsx(
-                      "rounded-full border border-[var(--workspace-border)] px-1.5 py-1 text-[var(--workspace-text-faint)]",
+                      "rounded-full border border-[var(--workspace-border)] px-1.5 py-1 text-[var(--workspace-text-faint)] break-words",
                       isCompleted ? "opacity-70" : "",
                     )}
                     title={`Repeats ${getRecurrenceLabel(recurrenceFrequency).toLowerCase()}`}
