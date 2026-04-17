@@ -2678,7 +2678,6 @@ function ConfiguredWorkspace({
   const [isPlannerAppendingDay, setIsPlannerAppendingDay] = useState(false);
   const [isPlannerCompletingDay, setIsPlannerCompletingDay] = useState(false);
   const [isPlannerAddingRandomTask, setIsPlannerAddingRandomTask] = useState(false);
-  const [isPlannerUpdatingFocus, setIsPlannerUpdatingFocus] = useState(false);
   const [isPlannerResolvingNextTask, setIsPlannerResolvingNextTask] = useState(false);
   const [isWorkspaceChatOpen, setIsWorkspaceChatOpen] = useState(() =>
     readStoredBoolean(WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY, false),
@@ -3126,7 +3125,6 @@ function ConfiguredWorkspace({
   const rewriteModelSection = useAction(api.chat.rewriteModelSection);
   const generateJournalFeedback = useAction(api.chat.generateJournalFeedback);
   const appendPlannerDay = useMutation(api.planner.appendPlannerDay);
-  const updatePlannerFocus = useMutation(api.planner.updatePlannerFocus);
   const completePlannerDay = useMutation(api.planner.completePlannerDay);
   const suggestRandomPlannerTask = useAction(api.plannerAi.suggestRandomPlannerTask);
   const addRandomPlannerTaskWithAi = useAction(api.plannerAi.addRandomPlannerTaskWithAi);
@@ -7755,51 +7753,6 @@ function ConfiguredWorkspace({
     selectedPageId,
   ]);
 
-  const handleUpdatePlannerFocus = useCallback(async () => {
-    if (!selectedPageId || pageMeta.pageType !== "planner" || isPageArchived) {
-      return;
-    }
-
-    setIsPlannerUpdatingFocus(true);
-    setPlannerStatus("");
-    try {
-      const result = await updatePlannerFocus({
-        ownerKey,
-        pageId: selectedPageId,
-        seed: Date.now(),
-      });
-      const movedNodeIds = Array.isArray(result?.movedNodeIds)
-        ? result.movedNodeIds.map((value) => String(value))
-        : [];
-      const movedCount =
-        typeof result?.movedCount === "number" ? result.movedCount : movedNodeIds.length;
-      const focusTargetId =
-        movedNodeIds[0] ??
-        (typeof result?.focusSectionId === "string" ? result.focusSectionId : null);
-      if (focusTargetId) {
-        focusPlannerNode(focusTargetId);
-      }
-      setPlannerStatus(
-        movedCount > 0
-          ? `Updated Focus with ${movedCount} item${movedCount === 1 ? "" : "s"}.`
-          : "Focus is up to date. No eligible items were moved from the top day.",
-      );
-    } catch (error) {
-      setPlannerStatus(
-        error instanceof Error ? error.message : "Could not update Focus right now.",
-      );
-    } finally {
-      setIsPlannerUpdatingFocus(false);
-    }
-  }, [
-    focusPlannerNode,
-    isPageArchived,
-    ownerKey,
-    pageMeta.pageType,
-    selectedPageId,
-    updatePlannerFocus,
-  ]);
-
   const handleCompletePlannerDay = useCallback(async () => {
     if (!selectedPageId || pageMeta.pageType !== "planner" || isPageArchived) {
       return;
@@ -7871,7 +7824,7 @@ function ConfiguredWorkspace({
           dueEndAt: typeof result.dueEndAt === "number" ? result.dueEndAt : null,
         });
       }
-      setPlannerStatus("Suggested a random open task for today.");
+      setPlannerStatus("Suggested a random open task for Focus.");
     } catch (error) {
       setPlannerStatus(
         error instanceof Error ? error.message : "Could not suggest a random task right now.",
@@ -7922,7 +7875,7 @@ function ConfiguredWorkspace({
       }
       setPlannerRandomTaskSuggestion(null);
       setPlannerRandomTaskExcludedSourceIds([]);
-      setPlannerStatus("Added the selected task to the top day.");
+      setPlannerStatus("Added the selected task to Focus.");
     } catch (error) {
       setPlannerStatus(
         error instanceof Error ? error.message : "Could not add that task right now.",
@@ -9250,14 +9203,6 @@ function ConfiguredWorkspace({
                       </button>
                       <button
                         type="button"
-                        onClick={() => void handleUpdatePlannerFocus()}
-                        disabled={isPlannerUpdatingFocus || isPageArchived}
-                        className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {isPlannerUpdatingFocus ? "Updating…" : "Update Focus"}
-                      </button>
-                      <button
-                        type="button"
                         onClick={() => void handleStartNextPlannerTask()}
                         disabled={isPlannerResolvingNextTask || isPageArchived}
                         className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-60"
@@ -9303,7 +9248,7 @@ function ConfiguredWorkspace({
                             </button>
                           </div>
                           <div className="mt-4 flex flex-wrap gap-2 text-xs uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                            <span>Will add to the top day</span>
+                            <span>Will add to Focus</span>
                             {plannerRandomTaskSuggestion.sourcePageTitle ? (
                               <span>From {plannerRandomTaskSuggestion.sourcePageTitle}</span>
                             ) : null}

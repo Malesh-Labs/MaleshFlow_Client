@@ -666,7 +666,7 @@ export async function appendPlannerLinkedTaskCopy(
   ctx: MutationCtx,
   args: {
     plannerPageId: Id<"pages">;
-    dayNodeId: Id<"nodes">;
+    parentNodeId: Id<"nodes">;
     plannerDate: number;
     sourceTask: PlannerSourceTask;
     afterNodeId: Id<"nodes"> | null;
@@ -681,12 +681,12 @@ export async function appendPlannerLinkedTaskCopy(
   const position = await computeNodePosition(
     ctx.db,
     args.plannerPageId,
-    args.dayNodeId,
+    args.parentNodeId,
     args.afterNodeId,
   );
   const nodeId = await ctx.db.insert("nodes", {
     pageId: args.plannerPageId,
-    parentNodeId: args.dayNodeId,
+    parentNodeId: args.parentNodeId,
     position,
     text: `[[node:${args.sourceTask._id}]]${pageLinkText}`,
     kind: "task",
@@ -1034,7 +1034,7 @@ export async function appendPlannerDayCore(
   for (const task of sortedEligible) {
     const insertedId = await appendPlannerLinkedTaskCopy(ctx, {
       plannerPageId: args.page._id,
-      dayNodeId,
+      parentNodeId: dayNodeId,
       plannerDate: args.plannerDate,
       sourceTask: task,
       afterNodeId: afterChildId,

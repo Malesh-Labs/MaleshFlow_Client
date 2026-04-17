@@ -280,6 +280,7 @@ export const suggestNextPlannerTask = action({
     }
 
     const topDay = getPlannerDayRoots(plannerContext.nodes)[0] ?? null;
+    const focusSection = findPlannerSectionNode(plannerContext.nodes, PLANNER_FOCUS_SLOT);
     if (!topDay) {
       throw new Error("Add the first planner day before choosing the next task.");
     }
@@ -294,16 +295,19 @@ export const suggestNextPlannerTask = action({
       .filter(
         (node) =>
           isNodeWithinRootSubtree(node, topDay._id, nodeMap) ||
+          (focusSection ? isNodeWithinRootSubtree(node, focusSection._id, nodeMap) : false) ||
           (plannerContext.plannerSidebarSection
             ? isNodeWithinRootSubtree(node, plannerContext.plannerSidebarSection._id, nodeMap)
             : false),
       )
       .map((node) => {
         const effectiveDue = getEffectiveTaskDueDateRange(node, nodeMap);
-        const sectionTitle = plannerContext.plannerSidebarSection &&
-          isNodeWithinRootSubtree(node, plannerContext.plannerSidebarSection._id, nodeMap)
-          ? "Sidebar"
-          : topDay.text;
+        const sectionTitle = focusSection && isNodeWithinRootSubtree(node, focusSection._id, nodeMap)
+          ? "Focus"
+          : plannerContext.plannerSidebarSection &&
+              isNodeWithinRootSubtree(node, plannerContext.plannerSidebarSection._id, nodeMap)
+            ? "Sidebar"
+            : topDay.text;
         return {
           ...node,
           dueAt: effectiveDue.dueAt,
@@ -313,7 +317,7 @@ export const suggestNextPlannerTask = action({
       });
 
     if (candidateNodes.length === 0) {
-      throw new Error("No open tasks are in today's plan or the planner sidebar.");
+      throw new Error("No open tasks are in Focus, today's plan, or the planner sidebar.");
     }
 
     let chosenNode = [...candidateNodes].sort((left, right) =>
@@ -428,7 +432,7 @@ export const addRandomPlannerTaskWithAi = action({
       sourcePageTitle: string | null;
       linkedSourceTaskId: Id<"nodes"> | null;
       created: boolean;
-      dayNodeId: Id<"nodes">;
+      targetSectionNodeId: Id<"nodes">;
     };
 
     const plannerContext = (await ctx.runQuery(getPlannerPageContextRef, {
@@ -444,15 +448,16 @@ export const addRandomPlannerTaskWithAi = action({
       return inserted;
     }
 
-    const dayNode = plannerContext.nodes.find((node) => node._id === inserted.dayNodeId) ?? null;
-    if (!dayNode) {
+    const focusSection =
+      plannerContext.nodes.find((node) => node._id === inserted.targetSectionNodeId) ?? null;
+    if (!focusSection) {
       return inserted;
     }
 
-    const dayChildren = plannerContext.nodes
-      .filter((node) => node.parentNodeId === dayNode._id && !node.archived)
+    const focusChildren = plannerContext.nodes
+      .filter((node) => node.parentNodeId === focusSection._id && !node.archived)
       .sort((left, right) => left.position - right.position);
-    if (dayChildren.length <= 1) {
+    if (focusChildren.length <= 1) {
       return inserted;
     }
 
@@ -467,17 +472,17 @@ export const addRandomPlannerTaskWithAi = action({
               {
                 role: "system",
                 content:
-                  "You are arranging a single day's planner outline. Return a single ordered list of the provided root node ids. Keep every id exactly once, do not invent ids, and place the newly inserted task where it fits best among routines, sections, and related work. If uncertain, preserve the current order.",
+                  "You are arranging a planner Focus outline. Return a single ordered list of the provided root node ids. Keep every id exactly once, do not invent ids, and place the newly inserted task where it fits best among routines, sections, and related work. If uncertain, preserve the current order.",
               },
               {
                 role: "user",
                 content: [
                   `Planner page: ${plannerContext.page.title}`,
-                  `Planner day: ${dayNode.text}`,
+                  `Focus section: ${focusSection.text}`,
                   `Newly inserted task id: ${inserted.plannerNodeId}`,
                   "",
-                  "Current day root items:",
-                  dayChildren
+                  "Current Focus root items:",
+                  focusChildren
                     .map(
                       (node) =>
                         `- ${node._id}: ${node.text} [${node.kind}/${node.taskStatus ?? "n/a"}]`,
@@ -497,7 +502,7 @@ export const addRandomPlannerTaskWithAi = action({
         );
 
         const parsed = response.output_parsed;
-        const candidateIds = new Set(dayChildren.map((node) => node._id as string));
+        const candidateIds = new Set(focusChildren.map((node) => node._id as string));
         if (
           parsed &&
           parsed.orderedNodeIds.length === candidateIds.size &&
@@ -511,10 +516,10 @@ export const addRandomPlannerTaskWithAi = action({
     }
 
     if (orderedNodeIds) {
-      await ctx.runMutation(api.planner.reorderPlannerDay, {
+      await ctx.runMutation(api.planner.reorderPlannerFocusSection, {
         ownerKey: args.ownerKey,
         pageId: args.pageId,
-        dayNodeId: inserted.dayNodeId,
+        focusSectionId: inserted.targetSectionNodeId,
         orderedNodeIds,
       });
     }

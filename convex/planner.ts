@@ -119,14 +119,6 @@ function isPlannerPlaceholderTaskText(text: string) {
   return text.trim() === "__small__";
 }
 
-function buildFocusShuffleScore(seed: number, nodeId: string) {
-  let hash = Math.abs(Math.trunc(seed)) || 1;
-  for (let index = 0; index < nodeId.length; index += 1) {
-    hash = (hash * 33 + nodeId.charCodeAt(index)) % 2147483647;
-  }
-  return hash;
-}
-
 async function updateMovedPlannerSubtreeDate(
   ctx: MutationCtx,
   rootNodeId: Id<"nodes">,
@@ -222,7 +214,7 @@ export const appendPlannerDay = mutation({
   },
 });
 
-export const updatePlannerFocus = mutation({
+export const addRandomPlannerTask = mutation({
   args: {
     ownerKey: v.string(),
     pageId: v.id("pages"),
@@ -248,84 +240,6 @@ export const updatePlannerFocus = mutation({
 
     const currentDay = getCurrentPlannerDay(nodes);
     if (!currentDay) {
-      throw new Error("Add the first planner day before updating Focus.");
-    }
-
-    const topDayTree = await collectNodeTree(ctx.db, currentDay._id);
-    const directChildren = topDayTree
-      .filter((node) => node.parentNodeId === currentDay._id && !node.archived)
-      .sort((left, right) => left.position - right.position);
-
-    const candidates = directChildren.filter((node) => {
-      if (isPlannerPlaceholderTaskText(node.text)) {
-        return false;
-      }
-      if (node.kind === "task") {
-        return node.taskStatus !== "done" && node.taskStatus !== "cancelled";
-      }
-      return true;
-    });
-    if (candidates.length === 0) {
-      throw new Error("No active items are available in the top day.");
-    }
-
-    const selectionCount = Math.min(3, candidates.length);
-    const selectedNodes = [...candidates]
-      .sort(
-        (left, right) =>
-          buildFocusShuffleScore(args.seed, left._id as string) -
-          buildFocusShuffleScore(args.seed, right._id as string),
-      )
-      .slice(0, selectionCount);
-
-    const focusTree = await collectNodeTree(ctx.db, focusSection._id);
-    const focusChildren = focusTree
-      .filter((node) => node.parentNodeId === focusSection._id && !node.archived)
-      .sort((left, right) => left.position - right.position);
-
-    let afterNodeId = focusChildren[focusChildren.length - 1]?._id ?? null;
-    const now = Date.now();
-    for (const node of selectedNodes) {
-      const nextPosition = await computeNodePosition(
-        ctx.db,
-        page._id,
-        focusSection._id,
-        afterNodeId,
-      );
-      await ctx.db.patch(node._id, {
-        parentNodeId: focusSection._id,
-        position: nextPosition,
-        updatedAt: now,
-      });
-      afterNodeId = node._id;
-    }
-
-    await enqueuePageRootEmbeddingRefresh(ctx, page._id);
-
-    return {
-      focusSectionId: focusSection._id,
-      movedNodeIds: selectedNodes.map((node) => node._id),
-      movedCount: selectedNodes.length,
-    };
-  },
-});
-
-export const addRandomPlannerTask = mutation({
-  args: {
-    ownerKey: v.string(),
-    pageId: v.id("pages"),
-    seed: v.number(),
-  },
-  handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
-    const page = await ctx.db.get(args.pageId);
-    if (!page || page.archived || !isPlannerPage(page)) {
-      throw new Error("Planner page not found.");
-    }
-
-    const nodes = await listPageNodes(ctx.db, page._id);
-    const currentDay = getCurrentPlannerDay(nodes);
-    if (!currentDay) {
       throw new Error("Add the first planner day before pulling in tasks.");
     }
 
@@ -335,8 +249,9 @@ export const addRandomPlannerTask = mutation({
     }
 
     const currentDayTree = await collectNodeTree(ctx.db, currentDay._id);
+    const focusTree = await collectNodeTree(ctx.db, focusSection._id);
     const existingSourceIds = new Set(
-      currentDayTree
+      [...currentDayTree, ...focusTree]
         .map((node) => getPlannerLinkedSourceTaskId(node))
         .filter((value): value is Id<"nodes"> => value !== null)
         .map((value) => value as string),
@@ -350,15 +265,15 @@ export const addRandomPlannerTask = mutation({
       throw new Error("No remaining open tasks are available for today.");
     }
 
-    const dayChildren = currentDayTree
-      .filter((node) => node.parentNodeId === currentDay._id)
+    const focusChildren = focusTree
+      .filter((node) => node.parentNodeId === focusSection._id && !node.archived)
       .sort((left, right) => left.position - right.position);
-    const afterNodeId = dayChildren[dayChildren.length - 1]?._id ?? null;
+    const afterNodeId = focusChildren[focusChildren.length - 1]?._id ?? null;
     const index = Math.abs(Math.trunc(args.seed)) % candidates.length;
     const sourceTask = candidates[index]!;
     const plannerNodeId = await appendPlannerLinkedTaskCopy(ctx, {
       plannerPageId: page._id,
-      dayNodeId: currentDay._id,
+      parentNodeId: focusSection._id,
       plannerDate,
       sourceTask,
       afterNodeId,
@@ -372,7 +287,7 @@ export const addRandomPlannerTask = mutation({
 
     return {
       created: true,
-      dayNodeId: currentDay._id,
+      targetSectionNodeId: focusSection._id,
       ...summary,
     };
   },
@@ -393,6 +308,7 @@ export const suggestRandomPlannerTaskCandidate = internalQuery({
     }
 
     const nodes = await listPageNodes(ctx.db, page._id);
+    const focusSection = findPlannerSectionNode(nodes, PLANNER_FOCUS_SLOT);
     const currentDay = getCurrentPlannerDay(nodes);
     if (!currentDay) {
       throw new Error("Add the first planner day before pulling in tasks.");
@@ -404,8 +320,9 @@ export const suggestRandomPlannerTaskCandidate = internalQuery({
     }
 
     const currentDayTree = await collectNodeTree(ctx.db, currentDay._id);
+    const focusTree = focusSection ? await collectNodeTree(ctx.db, focusSection._id) : [];
     const existingSourceIds = new Set(
-      currentDayTree
+      [...currentDayTree, ...focusTree]
         .map((node) => getPlannerLinkedSourceTaskId(node))
         .filter((value): value is Id<"nodes"> => value !== null)
         .map((value) => value as string),
@@ -425,7 +342,7 @@ export const suggestRandomPlannerTaskCandidate = internalQuery({
     const index = Math.abs(Math.trunc(args.seed)) % candidates.length;
     const sourceTask = candidates[index]!;
     return {
-      dayNodeId: currentDay._id,
+      targetSectionNodeId: focusSection?._id ?? null,
       ...(await buildPlannerSourceTaskSummary(ctx.db, sourceTask)),
     };
   },
@@ -457,7 +374,17 @@ export const addPlannerSourceTask = mutation({
       throw new Error("Planner page not found.");
     }
 
+    const ensuredSections = await ensurePlannerSections(ctx, page);
     const nodes = await listPageNodes(ctx.db, page._id);
+    const focusSection =
+      findPlannerSectionNode(nodes, PLANNER_FOCUS_SLOT) ??
+      (ensuredSections.focusSectionId
+        ? ((await ctx.db.get(ensuredSections.focusSectionId)) ?? null)
+        : null);
+    if (!focusSection) {
+      throw new Error("Could not prepare the Focus section.");
+    }
+
     const currentDay = getCurrentPlannerDay(nodes);
     if (!currentDay) {
       throw new Error("Add the first planner day before pulling in tasks.");
@@ -469,8 +396,9 @@ export const addPlannerSourceTask = mutation({
     }
 
     const currentDayTree = await collectNodeTree(ctx.db, currentDay._id);
+    const focusTree = await collectNodeTree(ctx.db, focusSection._id);
     const existingSourceIds = new Set(
-      currentDayTree
+      [...currentDayTree, ...focusTree]
         .map((node) => getPlannerLinkedSourceTaskId(node))
         .filter((value): value is Id<"nodes"> => value !== null)
         .map((value) => value as string),
@@ -489,13 +417,13 @@ export const addPlannerSourceTask = mutation({
       throw new Error("That task is no longer eligible for today.");
     }
 
-    const dayChildren = currentDayTree
-      .filter((node) => node.parentNodeId === currentDay._id)
+    const focusChildren = focusTree
+      .filter((node) => node.parentNodeId === focusSection._id && !node.archived)
       .sort((left, right) => left.position - right.position);
-    const afterNodeId = dayChildren[dayChildren.length - 1]?._id ?? null;
+    const afterNodeId = focusChildren[focusChildren.length - 1]?._id ?? null;
     const plannerNodeId = await appendPlannerLinkedTaskCopy(ctx, {
       plannerPageId: page._id,
-      dayNodeId: currentDay._id,
+      parentNodeId: focusSection._id,
       plannerDate,
       sourceTask,
       afterNodeId,
@@ -509,7 +437,7 @@ export const addPlannerSourceTask = mutation({
 
     return {
       created: true,
-      dayNodeId: currentDay._id,
+      targetSectionNodeId: focusSection._id,
       ...summary,
     };
   },
@@ -567,6 +495,71 @@ export const reorderPlannerDay = mutation({
       );
       await ctx.db.patch(nodeId, {
         parentNodeId: args.dayNodeId,
+        position: nextPosition,
+        updatedAt: Date.now(),
+      });
+      afterNodeId = nodeId;
+    }
+
+    await enqueuePageRootEmbeddingRefresh(ctx, args.pageId);
+  },
+});
+
+export const reorderPlannerFocusSection = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+    focusSectionId: v.id("nodes"),
+    orderedNodeIds: v.array(v.id("nodes")),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived || !isPlannerPage(page)) {
+      throw new Error("Planner page not found.");
+    }
+
+    const focusSection = await ctx.db.get(args.focusSectionId);
+    if (!focusSection || focusSection.archived || focusSection.pageId !== args.pageId) {
+      throw new Error("Planner Focus section not found.");
+    }
+    if (getNodeSourceMeta(focusSection).sectionSlot !== PLANNER_FOCUS_SLOT) {
+      throw new Error("That section is not the planner Focus section.");
+    }
+
+    const focusTree = await collectNodeTree(ctx.db, args.focusSectionId);
+    const directChildren = focusTree
+      .filter((node) => node.parentNodeId === args.focusSectionId && !node.archived)
+      .sort((left, right) => left.position - right.position);
+    const directChildIds = directChildren.map((node) => node._id as string);
+    if (directChildIds.length !== args.orderedNodeIds.length) {
+      throw new Error("Planner Focus order did not match the visible items.");
+    }
+
+    const expectedIds = new Set(directChildIds);
+    const seenIds = new Set<string>();
+    const isValid = args.orderedNodeIds.every((nodeId) => {
+      const key = nodeId as string;
+      if (!expectedIds.has(key) || seenIds.has(key)) {
+        return false;
+      }
+      seenIds.add(key);
+      return true;
+    });
+    if (!isValid || seenIds.size !== directChildren.length) {
+      throw new Error("Planner Focus order contained unexpected items.");
+    }
+
+    let afterNodeId: Id<"nodes"> | null = null;
+    for (const nodeId of args.orderedNodeIds) {
+      const nextPosition = await computeNodePosition(
+        ctx.db,
+        args.pageId,
+        args.focusSectionId,
+        afterNodeId,
+      );
+      await ctx.db.patch(nodeId, {
+        parentNodeId: args.focusSectionId,
         position: nextPosition,
         updatedAt: Date.now(),
       });
@@ -644,7 +637,7 @@ export const resolveNextPlannerTask = mutation({
     const afterNodeId = dayChildren[dayChildren.length - 1]?._id ?? null;
     const plannerNodeId = await appendPlannerLinkedTaskCopy(ctx, {
       plannerPageId: page._id,
-      dayNodeId: currentDay._id,
+      parentNodeId: currentDay._id,
       plannerDate,
       sourceTask: nextSourceTask,
       afterNodeId,
