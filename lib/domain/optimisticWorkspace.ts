@@ -1,7 +1,11 @@
 import type { OptimisticLocalStore } from "convex/browser";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
-import type { RecurrenceFrequency } from "@/lib/domain/recurrence";
+import {
+  advanceRecurringDueDateRange,
+  parseRecurrenceFrequency,
+  type RecurrenceFrequency,
+} from "@/lib/domain/recurrence";
 
 type PageDoc = Doc<"pages">;
 type NodeDoc = Doc<"nodes">;
@@ -739,13 +743,40 @@ export function applyOptimisticTaskPageTaskCompletion(
   localStore: OptimisticLocalStore,
   args: OptimisticTaskPageTaskCompletionArgs,
 ) {
-  patchNodeInWorkspaceQueries(localStore, args.ownerKey, args.nodeId, (node) =>
-    applyNodeUpdatePatch(node, {
-      taskStatus: node.kind === "task"
-        ? (node.taskStatus === "done" ? "todo" : "done")
-        : undefined,
-    }),
-  );
+  patchNodeInWorkspaceQueries(localStore, args.ownerKey, args.nodeId, (node) => {
+    if (node.kind !== "task") {
+      return node;
+    }
+
+    const recurrenceFrequency = parseRecurrenceFrequency(
+      getSourceMeta(node).recurrenceFrequency,
+    );
+    if (recurrenceFrequency && node.dueAt) {
+      if (node.taskStatus === "done") {
+        return applyNodeUpdatePatch(node, {
+          taskStatus: "todo",
+          dueAt: node.dueAt,
+          dueEndAt: node.dueEndAt ?? null,
+        });
+      }
+
+      const nextRange = advanceRecurringDueDateRange({
+        dueAt: node.dueAt,
+        dueEndAt: node.dueEndAt ?? null,
+        frequency: recurrenceFrequency,
+        mode: args.completionMode,
+      });
+      return applyNodeUpdatePatch(node, {
+        taskStatus: "todo",
+        dueAt: nextRange.dueAt,
+        dueEndAt: nextRange.dueEndAt,
+      });
+    }
+
+    return applyNodeUpdatePatch(node, {
+      taskStatus: node.taskStatus === "done" ? "todo" : "done",
+    });
+  });
 }
 
 export function applyOptimisticNodeTreeArchive(

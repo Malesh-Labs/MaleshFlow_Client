@@ -54,6 +54,8 @@ import {
   shouldGenerateEmbeddingForNodeText,
 } from "../lib/domain/embeddings";
 import {
+  advanceRecurringDueDateRange,
+  parseRecurrenceFrequency,
   type RecurringCompletionMode,
 } from "../lib/domain/recurrence";
 import {
@@ -2827,10 +2829,38 @@ export const completeTaskPageTask = mutation({
       throw new Error("Task page not found.");
     }
 
-    await ctx.db.patch(node._id, {
+    const recurrenceFrequency = parseRecurrenceFrequency(
+      getNodeSourceMeta(node).recurrenceFrequency,
+    );
+    const nextPatch: {
+      taskStatus: "todo" | "done";
+      dueAt?: number | null;
+      dueEndAt?: number | null;
+      updatedAt: number;
+    } = {
       taskStatus: node.taskStatus === "done" ? "todo" : "done",
       updatedAt: getTimestamp(),
-    });
+    };
+
+    if (recurrenceFrequency && node.dueAt) {
+      if (node.taskStatus === "done") {
+        nextPatch.taskStatus = "todo";
+        nextPatch.dueAt = node.dueAt;
+        nextPatch.dueEndAt = node.dueEndAt ?? null;
+      } else {
+        const nextRange = advanceRecurringDueDateRange({
+          dueAt: node.dueAt,
+          dueEndAt: node.dueEndAt ?? null,
+          frequency: recurrenceFrequency,
+          mode: args.completionMode,
+        });
+        nextPatch.taskStatus = "todo";
+        nextPatch.dueAt = nextRange.dueAt;
+        nextPatch.dueEndAt = nextRange.dueEndAt;
+      }
+    }
+
+    await ctx.db.patch(node._id, nextPatch);
 
     const refreshedNode = await ctx.db.get(node._id);
     if (!refreshedNode) {
@@ -2847,13 +2877,15 @@ export const completeTaskPageTask = mutation({
       };
     }
 
-    await ctx.scheduler.runAfter(
-      0,
-      internal.workspace.archiveCompletedTaskPageRootIfReady,
-      {
-        nodeId: refreshedNode._id,
-      },
-    );
+    if (refreshedNode.taskStatus === "done") {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.workspace.archiveCompletedTaskPageRootIfReady,
+        {
+          nodeId: refreshedNode._id,
+        },
+      );
+    }
     return {
       archivedRootNodeId: null as Id<"nodes"> | null,
     };
