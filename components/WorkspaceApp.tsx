@@ -4107,6 +4107,17 @@ function ConfiguredWorkspace({
 
     await executeNodeArchiveBatch(pendingCutClipboard.nodeIds, false);
 
+    const movedRootNodeIds = pendingCutClipboard.nodeIds.map((nodeId) => nodeId as string);
+    if (movedRootNodeIds.length > 1) {
+      setSelectedNodeIds(new Set(movedRootNodeIds));
+      setDragSelection(null);
+    } else {
+      const firstMovedRootNodeId = movedRootNodeIds[0] ?? null;
+      if (firstMovedRootNodeId) {
+        selectSingleNode(firstMovedRootNodeId);
+      }
+    }
+
     const moves = pendingCutClipboard.nodeIds.map((nodeId, index) => ({
       nodeId,
       pageId: anchorNode.pageId as Id<"pages">,
@@ -4116,17 +4127,6 @@ function ConfiguredWorkspace({
         : pendingCutClipboard.nodeIds[index - 1]!,
     }));
     await executeNodeMoveBatch(moves);
-
-    const movedRootNodeIds = pendingCutClipboard.nodeIds.map((nodeId) => nodeId as string);
-    const firstMovedRootNodeId = movedRootNodeIds[0] ?? null;
-    if (movedRootNodeIds.length > 1) {
-      setSelectedNodeIds(new Set(movedRootNodeIds));
-      setDragSelection(null);
-      setPendingRevealNodeId(firstMovedRootNodeId);
-    } else if (firstMovedRootNodeId) {
-      selectSingleNode(firstMovedRootNodeId);
-      setPendingRevealNodeId(firstMovedRootNodeId);
-    }
 
     pendingCutClipboardRef.current = null;
     setCopySnackbarMessage(
@@ -5685,17 +5685,15 @@ function ConfiguredWorkspace({
         };
       });
 
+      if (rootNodeIds.length === 1) {
+        selectSingleNode(rootNodeIds[0]!);
+      } else {
+        setExplicitSelectedNodeIds(rootNodeIds);
+      }
       await executeNodeMoveBatch(moves);
 
       if (historyEntries.length === 1) {
         history.pushUndoEntry(historyEntries[0]!);
-        selectSingleNode(rootNodeIds[0]!);
-        window.setTimeout(() => {
-          const target = document.querySelector<HTMLElement>(
-            `[data-node-id="${rootNodeIds[0]!}"] textarea`,
-          );
-          focusElementAtEnd(target as HTMLTextAreaElement | null);
-        }, 0);
         return;
       }
 
@@ -5706,7 +5704,6 @@ function ConfiguredWorkspace({
         focusAfterUndoId: historyEntries[0]!.focusEditorId,
         focusAfterRedoId: historyEntries[historyEntries.length - 1]!.focusEditorId,
       });
-      setExplicitSelectedNodeIds(rootNodeIds);
     },
     [executeNodeMoveBatch, history, pagesById, selectSingleNode, setExplicitSelectedNodeIds, sidebarNodes, tree],
   );
@@ -8433,12 +8430,12 @@ function ConfiguredWorkspace({
       >
         <aside
           className={clsx(
-            "overflow-hidden border-b border-[var(--workspace-border)] bg-[var(--workspace-sidebar-bg)] lg:border-b-0 lg:border-r",
+            "border-b border-[var(--workspace-border)] bg-[var(--workspace-sidebar-bg)] lg:border-b-0 lg:border-r",
           )}
         >
           <div
             className={clsx(
-              "flex h-full flex-col transition-[padding] duration-200 ease-out motion-reduce:transition-none",
+              "flex min-h-full flex-col transition-[padding] duration-200 ease-out motion-reduce:transition-none",
               isSidebarCollapsed ? "px-3 py-4 md:px-4 md:py-5" : "p-6",
             )}
           >
@@ -8472,8 +8469,8 @@ function ConfiguredWorkspace({
               )}
             >
               <div aria-hidden={isSidebarCollapsed} className="min-h-0 overflow-hidden">
-                <div className="flex h-full min-h-0 flex-col">
-                  <div className="flex-1 overflow-y-auto">
+                <div className="flex min-h-full flex-col">
+                  <div className="flex-1 overflow-visible">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                     Sidebar

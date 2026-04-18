@@ -674,7 +674,6 @@ export const completePlannerDay = mutation({
   args: {
     ownerKey: v.string(),
     pageId: v.id("pages"),
-    orderedNodeIds: v.optional(v.array(v.id("nodes"))),
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
@@ -738,55 +737,29 @@ export const completePlannerDay = mutation({
       }
     }
 
-    const orderedCarryChildren = [...keptCarryChildren].sort((left, right) =>
-      comparePlannerTaskOrder(left, right),
-    );
-    const candidateNodes = [...focusDirectChildren, ...orderedCarryChildren];
-    const candidateNodeMap = new Map(
-      candidateNodes.map((node) => [node._id as string, node]),
-    );
-    const candidateIds = candidateNodes.map((node) => node._id as Id<"nodes">);
-    const candidateIdSet = new Set(candidateIds.map((id) => id as string));
-    let orderedNodeIds = candidateIds;
-    if (args.orderedNodeIds && args.orderedNodeIds.length === candidateIds.length) {
-      const seen = new Set<string>();
-      const isValid =
-        args.orderedNodeIds.every((nodeId) => {
-          const key = nodeId as string;
-          if (!candidateIdSet.has(key) || seen.has(key)) {
-            return false;
-          }
-          seen.add(key);
-          return true;
-        }) && seen.size === candidateIds.length;
-      if (isValid) {
-        orderedNodeIds = [...args.orderedNodeIds];
-      }
-    }
-
-    const carryIdSet = new Set(keptCarryChildren.map((node) => node._id as string));
+    const orderedCarryChildren = [...keptCarryChildren];
     let afterNodeId: Id<"nodes"> | null = null;
-    for (const nodeId of orderedNodeIds) {
-      const node = candidateNodeMap.get(nodeId as string) ?? null;
-      if (!node || node.archived) {
+    for (const node of focusDirectChildren) {
+      if (node.archived) {
         continue;
       }
+      afterNodeId = node._id;
+    }
+
+    for (const node of orderedCarryChildren) {
       const nextPosition = await computeNodePosition(
         ctx.db,
         page._id,
         focusSection._id,
         afterNodeId,
       );
-      const isCarryNode = carryIdSet.has(nodeId as string);
       await ctx.db.patch(node._id, {
         parentNodeId: focusSection._id,
         position: nextPosition,
         updatedAt: now,
       });
-      if (isCarryNode) {
-        await updateMovedPlannerSubtreeDate(ctx, node._id, topDayDate, now);
-        movedCount += 1;
-      }
+      await updateMovedPlannerSubtreeDate(ctx, node._id, topDayDate, now);
+      movedCount += 1;
       afterNodeId = node._id;
     }
 
