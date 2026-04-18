@@ -49,6 +49,17 @@ export default defineSchema({
       filterFields: ["pageId", "archived", "kind"],
     }),
 
+  sidebarFavorites: defineTable({
+    targetKind: v.union(v.literal("page"), v.literal("node")),
+    targetPageId: v.id("pages"),
+    targetNodeId: v.union(v.id("nodes"), v.null()),
+    position: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_position", ["position"])
+    .index("by_target", ["targetKind", "targetPageId", "targetNodeId"]),
+
   links: defineTable({
     sourcePageId: nullablePageIdValidator,
     sourceNodeId: nullableNodeIdValidator,

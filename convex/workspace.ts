@@ -477,6 +477,30 @@ function isPagePendingDeletion(page: Pick<Doc<"pages">, "sourceMeta"> | null | u
   return getPageSourceMeta(page).deletingForever === true;
 }
 
+function normalizeFavoriteNodeText(node: Pick<Doc<"nodes">, "text">) {
+  const replacedText = replaceLinkMarkupWithLabels(node.text).trim();
+  return replacedText.length > 0 ? replacedText : node.text.trim();
+}
+
+async function getSidebarFavoriteByTarget(
+  db: DatabaseReader | DatabaseWriter,
+  args: {
+    targetKind: "page" | "node";
+    targetPageId: Id<"pages">;
+    targetNodeId: Id<"nodes"> | null;
+  },
+) {
+  return await db
+    .query("sidebarFavorites")
+    .withIndex("by_target", (query) =>
+      query
+        .eq("targetKind", args.targetKind)
+        .eq("targetPageId", args.targetPageId)
+        .eq("targetNodeId", args.targetNodeId),
+    )
+    .unique();
+}
+
 async function takePageDeletionNodeBatch(
   ctx: QueryCtx,
   pageId: Id<"pages">,
@@ -1192,6 +1216,75 @@ export const listPages = query({
       .collect()).filter(
       (page) => !isSidebarSpecialPage(page) && !isPagePendingDeletion(page),
     );
+  },
+});
+
+export const listSidebarFavorites = query({
+  args: {
+    ownerKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const favorites = await ctx.db
+      .query("sidebarFavorites")
+      .withIndex("by_position")
+      .collect();
+
+    const results: Array<{
+      favoriteId: Id<"sidebarFavorites">;
+      targetKind: "page" | "node";
+      pageId: Id<"pages">;
+      pageTitle: string;
+      nodeId: Id<"nodes"> | null;
+      nodeText: string | null;
+      isSidebarSpecialPage: boolean;
+    }> = [];
+
+    for (const favorite of favorites) {
+      const page = await ctx.db.get(favorite.targetPageId);
+      if (!page || page.archived || isPagePendingDeletion(page)) {
+        continue;
+      }
+
+      if (favorite.targetKind === "page") {
+        if (isSidebarSpecialPage(page)) {
+          continue;
+        }
+
+        results.push({
+          favoriteId: favorite._id,
+          targetKind: "page",
+          pageId: page._id,
+          pageTitle: page.title,
+          nodeId: null,
+          nodeText: null,
+          isSidebarSpecialPage: false,
+        });
+        continue;
+      }
+
+      if (!favorite.targetNodeId) {
+        continue;
+      }
+
+      const node = await ctx.db.get(favorite.targetNodeId);
+      if (!node || node.archived || node.pageId !== page._id) {
+        continue;
+      }
+
+      results.push({
+        favoriteId: favorite._id,
+        targetKind: "node",
+        pageId: page._id,
+        pageTitle: page.title,
+        nodeId: node._id,
+        nodeText: normalizeFavoriteNodeText(node),
+        isSidebarSpecialPage: isSidebarSpecialPage(page),
+      });
+    }
+
+    return results;
   },
 });
 
@@ -2982,6 +3075,76 @@ export const mergePinnedPagesInAllSidebar = mutation({
     }
 
     return uniquePageIds.length;
+  },
+});
+
+export const setSidebarFavorite = mutation({
+  args: {
+    ownerKey: v.string(),
+    targetKind: v.union(v.literal("page"), v.literal("node")),
+    pageId: v.id("pages"),
+    nodeId: v.optional(v.union(v.id("nodes"), v.null())),
+    favorited: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived || isPagePendingDeletion(page)) {
+      throw new Error("Favorite target page not found.");
+    }
+
+    const targetNodeId =
+      args.targetKind === "node" ? (args.nodeId ?? null) : null;
+    const existingFavorite = await getSidebarFavoriteByTarget(ctx.db, {
+      targetKind: args.targetKind,
+      targetPageId: args.pageId,
+      targetNodeId,
+    });
+
+    if (!args.favorited) {
+      if (existingFavorite) {
+        await ctx.db.delete(existingFavorite._id);
+      }
+      return null as Id<"sidebarFavorites"> | null;
+    }
+
+    if (args.targetKind === "page") {
+      if (isSidebarSpecialPage(page)) {
+        throw new Error("The sidebar system page cannot be favorited directly.");
+      }
+      if (existingFavorite) {
+        return existingFavorite._id;
+      }
+    } else {
+      if (!targetNodeId) {
+        throw new Error("Node favorites require a node target.");
+      }
+
+      const node = await ctx.db.get(targetNodeId);
+      if (!node || node.archived || node.pageId !== args.pageId) {
+        throw new Error("Favorite target item not found.");
+      }
+
+      if (existingFavorite) {
+        return existingFavorite._id;
+      }
+    }
+
+    const lastFavorite = await ctx.db
+      .query("sidebarFavorites")
+      .withIndex("by_position")
+      .order("desc")
+      .first();
+    const now = getTimestamp();
+    return await ctx.db.insert("sidebarFavorites", {
+      targetKind: args.targetKind,
+      targetPageId: args.pageId,
+      targetNodeId,
+      position: (lastFavorite?.position ?? 0) + 1,
+      createdAt: now,
+      updatedAt: now,
+    });
   },
 });
 

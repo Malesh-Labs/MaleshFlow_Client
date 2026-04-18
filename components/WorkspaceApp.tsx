@@ -118,6 +118,8 @@ const SIDEBAR_TEXT_SECTION_COLLAPSE_STORAGE_KEY =
 const UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY =
   "maleshflow-uncategorized-section-collapsed";
 const ALL_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-all-section-collapsed";
+const FAVORITES_SECTION_COLLAPSE_STORAGE_KEY =
+  "maleshflow-favorites-section-collapsed";
 const ALL_PAGE_TYPE_SECTIONS_COLLAPSE_STORAGE_KEY =
   "maleshflow-all-page-type-sections-collapsed";
 const PINNED_ALL_PAGES_STORAGE_KEY = "maleshflow-pinned-all-pages";
@@ -393,6 +395,15 @@ type PlannerRandomTaskSuggestion = {
   dueAt: number | null;
   dueEndAt: number | null;
 };
+type SidebarFavoriteResult = {
+  favoriteId: Id<"sidebarFavorites">;
+  targetKind: "page" | "node";
+  pageId: Id<"pages">;
+  pageTitle: string;
+  nodeId: Id<"nodes"> | null;
+  nodeText: string | null;
+  isSidebarSpecialPage: boolean;
+};
 type NodeDropTarget = {
   placement: "before" | "after" | "nest";
   parentNodeId: Id<"nodes"> | null;
@@ -409,6 +420,9 @@ type SetTaskPageDoneArchiveEnabledArgs = Parameters<
 >[0];
 type SetPagePinnedInAllSidebarArgs = Parameters<
   ReturnType<typeof useMutation<typeof api.workspace.setPagePinnedInAllSidebar>>
+>[0];
+type SetSidebarFavoriteArgs = Parameters<
+  ReturnType<typeof useMutation<typeof api.workspace.setSidebarFavorite>>
 >[0];
 type UpdateNodeArgs = Parameters<ReturnType<typeof useMutation<typeof api.workspace.updateNode>>>[0];
 type UpdateNodesBatchArgs = Parameters<
@@ -1291,7 +1305,14 @@ function buildNodeLinkInsertText(node: Doc<"nodes">) {
   return `[[${sanitizeLinkLabel(node.text)}|node:${node._id}]]`;
 }
 
+function isOptimisticNodeId(nodeId: string | null | undefined) {
+  return typeof nodeId === "string" && nodeId.startsWith("optimistic-node:");
+}
+
 function buildNodeClipboardLink(node: Pick<Doc<"nodes">, "_id" | "text">) {
+  if (isOptimisticNodeId(node._id as string)) {
+    return null;
+  }
   return `[[${sanitizeLinkLabel(node.text)}|node:${node._id}]]`;
 }
 
@@ -2728,6 +2749,7 @@ function ConfiguredWorkspace({
   const [recurringCompletionMode, setRecurringCompletionMode] =
     useState<RecurringCompletionMode>("dueDate");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
+  const [isFavoritesSectionCollapsed, setIsFavoritesSectionCollapsed] = useState(false);
   const [isSidebarTextSectionCollapsed, setIsSidebarTextSectionCollapsed] = useState(true);
   const [isUncategorizedSectionCollapsed, setIsUncategorizedSectionCollapsed] = useState(true);
   const [isAllSectionCollapsed, setIsAllSectionCollapsed] = useState(false);
@@ -2778,6 +2800,10 @@ function ConfiguredWorkspace({
     api.workspace.listPages,
     ownerKey && isOwnerKeyValid ? { ownerKey, includeArchived: true } : SKIP,
   );
+  const sidebarFavorites = useQuery(
+    api.workspace.listSidebarFavorites,
+    ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
+  ) as SidebarFavoriteResult[] | undefined;
   const embeddingRebuildProgress = useQuery(
     api.workspace.getEmbeddingRebuildStatus,
     ownerKey && isOwnerKeyValid && shouldTrackEmbeddingRebuild ? { ownerKey } : SKIP,
@@ -2914,6 +2940,7 @@ function ConfiguredWorkspace({
   const setWorkspaceInbox = useMutation(api.workspace.setWorkspaceInbox);
   const setWorkspaceRandomBox = useMutation(api.workspace.setWorkspaceRandomBox);
   const setPagePinnedInAllSidebarRaw = useMutation(api.workspace.setPagePinnedInAllSidebar);
+  const setSidebarFavoriteRaw = useMutation(api.workspace.setSidebarFavorite);
   const mergePinnedPagesInAllSidebar = useMutation(api.workspace.mergePinnedPagesInAllSidebar);
   const deletePageForever = useMutation(api.workspace.deletePageForever);
   const rebuildEmbeddings = useMutation(api.workspace.rebuildEmbeddings);
@@ -3033,6 +3060,18 @@ function ConfiguredWorkspace({
         "Could not update sidebar pins.",
       ),
     [runTrackedMutation, setPagePinnedInAllSidebarMutation],
+  );
+  const setSidebarFavorite = useCallback(
+    (args: SetSidebarFavoriteArgs) =>
+      runTrackedMutation(
+        () => setSidebarFavoriteRaw(args),
+        {
+          pageIds: [args.pageId],
+          nodeIds: args.nodeId ? [args.nodeId] : [],
+        },
+        "Could not update favorites.",
+      ),
+    [runTrackedMutation, setSidebarFavoriteRaw],
   );
   const updateNode = useCallback(
     (args: UpdateNodeArgs) =>
@@ -3637,6 +3676,29 @@ function ConfiguredWorkspace({
       pages: grouped.get(label) ?? [],
     }));
   }, [pages]);
+  const favoritedPageIds = useMemo(
+    () =>
+      new Set(
+        (sidebarFavorites ?? [])
+          .filter((favorite) => favorite.targetKind === "page")
+          .map((favorite) => favorite.pageId as string),
+      ),
+    [sidebarFavorites],
+  );
+  const favoritedNodeIds = useMemo(
+    () =>
+      new Set(
+        (sidebarFavorites ?? [])
+          .flatMap((favorite) =>
+            favorite.targetKind === "node" && favorite.nodeId
+              ? [favorite.nodeId as string]
+              : [],
+          ),
+      ),
+    [sidebarFavorites],
+  );
+  const selectedPageIsFavorited =
+    selectedPageId !== null && favoritedPageIds.has(selectedPageId as string);
   const pinnedAllPageIds = useMemo(
     () =>
       new Set(
@@ -3672,6 +3734,7 @@ function ConfiguredWorkspace({
   }, [pages, pinnedAllPageIds]);
   const archivedPages = (pages ?? []).filter((page) => page.archived);
   const showSidebarTextSectionContent = sidebarTree !== null && !isSidebarTextSectionCollapsed;
+  const showFavoritesSectionContent = !isFavoritesSectionCollapsed;
   const showUncategorizedSectionContent =
     uncategorizedPages.length > 0 && !isUncategorizedSectionCollapsed;
   const showAllSectionContent = !isAllSectionCollapsed;
@@ -3827,6 +3890,12 @@ function ConfiguredWorkspace({
     }
 
     const link = buildNodeClipboardLink(node);
+    if (!link) {
+      setCopySnackbarMessage(
+        "Wait for that item to finish syncing before copying a link.",
+      );
+      return;
+    }
     await copyTextToClipboard(link);
     setCopySnackbarMessage("Copied node link");
   }, [selectedNodeIds, workspaceNodeMap]);
@@ -4355,6 +4424,9 @@ function ConfiguredWorkspace({
     }
 
     setIsSidebarCollapsed(readStoredBoolean(SIDEBAR_COLLAPSE_STORAGE_KEY, true));
+    setIsFavoritesSectionCollapsed(
+      readStoredBoolean(FAVORITES_SECTION_COLLAPSE_STORAGE_KEY, false),
+    );
     setIsSidebarTextSectionCollapsed(
       readStoredBoolean(SIDEBAR_TEXT_SECTION_COLLAPSE_STORAGE_KEY, true),
     );
@@ -4478,6 +4550,21 @@ function ConfiguredWorkspace({
       isSidebarCollapsed ? "true" : "false",
     );
   }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!hasHydratedSessionUiStateRef.current) {
+      return;
+    }
+
+    window.sessionStorage.setItem(
+      FAVORITES_SECTION_COLLAPSE_STORAGE_KEY,
+      isFavoritesSectionCollapsed ? "true" : "false",
+    );
+  }, [isFavoritesSectionCollapsed]);
 
   useEffect(() => {
     if (
@@ -4998,6 +5085,7 @@ function ConfiguredWorkspace({
 
     window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
     window.sessionStorage.removeItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
+    window.sessionStorage.removeItem(FAVORITES_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(SIDEBAR_TEXT_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(ALL_SECTION_COLLAPSE_STORAGE_KEY);
@@ -5009,6 +5097,7 @@ function ConfiguredWorkspace({
     window.sessionStorage.removeItem(WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY);
     window.sessionStorage.removeItem(SIMPLE_VIEW_OPEN_STORAGE_KEY);
     window.localStorage.removeItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
+    window.localStorage.removeItem(FAVORITES_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(SIDEBAR_TEXT_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(ALL_SECTION_COLLAPSE_STORAGE_KEY);
@@ -7590,6 +7679,21 @@ function ConfiguredWorkspace({
     clearNodeSelection();
   }, [clearNodeSelection, pagesById]);
 
+  const handleOpenFavoritedNode = useCallback(
+    (pageId: Id<"pages">, nodeId: Id<"nodes">, isSidebarFavoriteNode: boolean) => {
+      if (isSidebarFavoriteNode) {
+        setIsWorkspaceChatOpen(false);
+        setIsSidebarCollapsed(false);
+        setPendingRevealNodeId(nodeId as string);
+        clearNodeSelection();
+        return;
+      }
+
+      handleOpenLinkedNode(pageId, nodeId);
+    },
+    [clearNodeSelection, handleOpenLinkedNode],
+  );
+
   const handleWorkspaceChatSubmit = useCallback(async () => {
     const question = workspaceChatDraft.trim();
     if (question.length === 0) {
@@ -8025,6 +8129,45 @@ function ConfiguredWorkspace({
     });
   };
 
+  const toggleSelectedPageFavorite = useCallback(() => {
+    if (!ownerKey || !selectedPage || isSidebarSpecialPage(selectedPage)) {
+      return;
+    }
+
+    void setSidebarFavorite({
+      ownerKey,
+      targetKind: "page",
+      pageId: selectedPage._id,
+      favorited: !selectedPageIsFavorited,
+    }).catch((error) => {
+      console.error("Failed to toggle page favorite", error);
+    });
+  }, [ownerKey, selectedPage, selectedPageIsFavorited, setSidebarFavorite]);
+
+  const toggleNodeFavorite = useCallback(
+    (pageId: Id<"pages">, nodeId: Id<"nodes">) => {
+      if (!ownerKey || isOptimisticNodeId(nodeId as string)) {
+        if (isOptimisticNodeId(nodeId as string)) {
+          setCopySnackbarMessage(
+            "Wait for that item to finish syncing before favoriting it.",
+          );
+        }
+        return;
+      }
+
+      void setSidebarFavorite({
+        ownerKey,
+        targetKind: "node",
+        pageId,
+        nodeId,
+        favorited: !favoritedNodeIds.has(nodeId as string),
+      }).catch((error) => {
+        console.error("Failed to toggle node favorite", error);
+      });
+    },
+    [favoritedNodeIds, ownerKey, setSidebarFavorite],
+  );
+
   return (
     <WorkspaceHistoryProvider value={history}>
       <main
@@ -8392,6 +8535,7 @@ function ConfiguredWorkspace({
                           availableTags={sortedTags}
                           pagesByTitle={pagesByTitle}
                           pagesById={pagesById}
+                          favoritedNodeIds={favoritedNodeIds}
                           onOpenPage={(pageId) => {
                             setIsSimpleViewOpen(false);
                             handleSelectPage(pageId);
@@ -8402,6 +8546,7 @@ function ConfiguredWorkspace({
                           }}
                           onOpenTag={openFindPaletteForQuery}
                           onOpenFindQuery={openFindPaletteForQuery}
+                          onToggleNodeFavorite={toggleNodeFavorite}
                           recurringCompletionMode={recurringCompletionMode}
                         />
                       </div>
@@ -8413,11 +8558,11 @@ function ConfiguredWorkspace({
           </div>
         </div>
       ) : null}
-      <div
-        className={clsx(
-          "mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 pb-36 transition-[grid-template-columns] duration-200 ease-out motion-reduce:transition-none md:pb-44",
-          isWorkspaceChatOpen || isSimpleViewOpen ? "hidden" : "",
-        )}
+        <div
+          className={clsx(
+            "mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 pb-36 md:pb-44",
+            isWorkspaceChatOpen || isSimpleViewOpen ? "hidden" : "",
+          )}
         style={
           isMobileLayout
             ? undefined
@@ -8435,7 +8580,7 @@ function ConfiguredWorkspace({
         >
           <div
             className={clsx(
-              "flex min-h-full flex-col transition-[padding] duration-200 ease-out motion-reduce:transition-none",
+              "flex min-h-full flex-col",
               isSidebarCollapsed ? "px-3 py-4 md:px-4 md:py-5" : "p-6",
             )}
           >
@@ -8462,6 +8607,105 @@ function ConfiguredWorkspace({
 
             {!isSidebarCollapsed ? (
               <div className="mt-6">
+                <div className="border-t border-[var(--workspace-border-soft)] pt-5 first:border-t-0 first:pt-0">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
+                      Favorites
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setIsFavoritesSectionCollapsed((current) => !current)}
+                      className="flex h-8 w-8 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold leading-none text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                      aria-label={showFavoritesSectionContent ? "Collapse favorites" : "Expand favorites"}
+                    >
+                      {showFavoritesSectionContent ? "−" : "+"}
+                    </button>
+                  </div>
+                  {showFavoritesSectionContent ? (
+                    <div className="mt-3">
+                      {typeof sidebarFavorites === "undefined" ? (
+                        <p className="text-sm text-[var(--workspace-text-faint)]">
+                          Loading favorites…
+                        </p>
+                      ) : sidebarFavorites.length === 0 ? (
+                        <p className="text-sm text-[var(--workspace-text-faint)]">
+                          No favorites yet.
+                        </p>
+                      ) : (
+                        <div className="space-y-1">
+                          {sidebarFavorites.map((favorite) => {
+                            const isSelectedFavoritePage =
+                              selectedPageId === favorite.pageId &&
+                              (favorite.targetKind === "page" || !favorite.isSidebarSpecialPage);
+                            return (
+                              <div
+                                key={favorite.favoriteId}
+                                className={clsx(
+                                  "flex items-center gap-2 px-2 py-1.5 transition",
+                                  isSelectedFavoritePage
+                                    ? "bg-[var(--workspace-surface-accent)]"
+                                    : "hover:bg-[var(--workspace-surface-accent)]",
+                                )}
+                              >
+                                {favorite.targetKind === "page" ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelectPage(favorite.pageId)}
+                                    className={clsx(
+                                      "min-w-0 flex-1 text-left text-sm",
+                                      isSelectedFavoritePage
+                                        ? "text-[var(--workspace-brand)]"
+                                        : "text-[var(--workspace-text-strong)]",
+                                    )}
+                                  >
+                                    <span className="truncate">{favorite.pageTitle}</span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleOpenFavoritedNode(
+                                        favorite.pageId,
+                                        favorite.nodeId as Id<"nodes">,
+                                        favorite.isSidebarSpecialPage,
+                                      )
+                                    }
+                                    className="min-w-0 flex-1 text-left"
+                                  >
+                                    <p className="truncate text-sm text-[var(--workspace-text-strong)]">
+                                      {favorite.nodeText || "Untitled item"}
+                                    </p>
+                                    <p className="mt-0.5 truncate text-[11px] uppercase tracking-[0.14em] text-[var(--workspace-text-faint)]">
+                                      {favorite.pageTitle}
+                                    </p>
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void setSidebarFavorite({
+                                      ownerKey,
+                                      targetKind: favorite.targetKind,
+                                      pageId: favorite.pageId,
+                                      nodeId: favorite.nodeId,
+                                      favorited: false,
+                                    }).catch((error) => {
+                                      console.error("Failed to remove favorite", error);
+                                    })
+                                  }
+                                  className="shrink-0 border border-[var(--workspace-border)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                     Sidebar
@@ -8529,10 +8773,12 @@ function ConfiguredWorkspace({
                           availableTags={sortedTags}
                           pagesByTitle={pagesByTitle}
                           pagesById={pagesById}
+                          favoritedNodeIds={favoritedNodeIds}
                           onOpenPage={handleSelectPage}
                           onOpenNode={handleOpenLinkedNode}
                           onOpenTag={openFindPaletteForQuery}
                           onOpenFindQuery={openFindPaletteForQuery}
+                          onToggleNodeFavorite={toggleNodeFavorite}
                           recurringCompletionMode={recurringCompletionMode}
                           mobileIndentStep={SIDEBAR_MOBILE_INDENT_STEP}
                         />
@@ -9056,38 +9302,57 @@ function ConfiguredWorkspace({
                       </div>
                     ) : null}
                   </div>
-                  {pageMeta.pageType === "task" ? (
+                  {!isSidebarSpecialPage(selectedPage) || pageMeta.pageType === "task" ? (
                     <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void handleToggleSelectedTaskPageDoneArchive()}
-                        disabled={isPageArchived}
-                        className={clsx(
-                          "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition disabled:cursor-not-allowed disabled:opacity-60",
-                          isSelectedPageDoneArchiveEnabled
-                            ? "border-[var(--workspace-brand)] text-[var(--workspace-brand)] hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
-                            : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
-                        )}
-                      >
-                        {isSelectedPageDoneArchiveEnabled
-                          ? "Done Archive On"
-                          : "Done Archive Off"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleToggleSelectedTaskPagePlannerScan()}
-                        disabled={isPageArchived}
-                        className={clsx(
-                          "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition disabled:cursor-not-allowed disabled:opacity-60",
-                          isSelectedPageExcludedFromPlannerScan
-                            ? "border-[var(--workspace-brand)] text-[var(--workspace-brand)] hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
-                            : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
-                        )}
-                      >
-                        {isSelectedPageExcludedFromPlannerScan
-                          ? "Include In Planner"
-                          : "Exclude From Planner"}
-                      </button>
+                      {!isSidebarSpecialPage(selectedPage) ? (
+                        <button
+                          type="button"
+                          onClick={toggleSelectedPageFavorite}
+                          disabled={isPageArchived}
+                          className={clsx(
+                            "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition disabled:cursor-not-allowed disabled:opacity-60",
+                            selectedPageIsFavorited
+                              ? "border-[var(--workspace-brand)] text-[var(--workspace-brand)] hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
+                              : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                          )}
+                        >
+                          {selectedPageIsFavorited ? "Unfavorite" : "Favorite"}
+                        </button>
+                      ) : null}
+                      {pageMeta.pageType === "task" ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => void handleToggleSelectedTaskPageDoneArchive()}
+                            disabled={isPageArchived}
+                            className={clsx(
+                              "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition disabled:cursor-not-allowed disabled:opacity-60",
+                              isSelectedPageDoneArchiveEnabled
+                                ? "border-[var(--workspace-brand)] text-[var(--workspace-brand)] hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
+                                : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                            )}
+                          >
+                            {isSelectedPageDoneArchiveEnabled
+                              ? "Done Archive On"
+                              : "Done Archive Off"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleToggleSelectedTaskPagePlannerScan()}
+                            disabled={isPageArchived}
+                            className={clsx(
+                              "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition disabled:cursor-not-allowed disabled:opacity-60",
+                              isSelectedPageExcludedFromPlannerScan
+                                ? "border-[var(--workspace-brand)] text-[var(--workspace-brand)] hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
+                                : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                            )}
+                          >
+                            {isSelectedPageExcludedFromPlannerScan
+                              ? "Include In Planner"
+                              : "Exclude From Planner"}
+                          </button>
+                        </>
+                      ) : null}
                     </div>
                   ) : null}
                 </div>
@@ -9152,10 +9417,12 @@ function ConfiguredWorkspace({
                       availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
                       pagesById={pagesById}
+                      favoritedNodeIds={favoritedNodeIds}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
                       onOpenFindQuery={openFindPaletteForQuery}
+                      onToggleNodeFavorite={toggleNodeFavorite}
                       recurringCompletionMode={recurringCompletionMode}
                       completeTaskPageTask={completeTaskPageTask}
                     />
@@ -9396,10 +9663,12 @@ function ConfiguredWorkspace({
                           availableTags={sortedTags}
                           pagesByTitle={pagesByTitle}
                           pagesById={pagesById}
+                          favoritedNodeIds={favoritedNodeIds}
                           onOpenPage={handleSelectPage}
                           onOpenNode={handleOpenLinkedNode}
                           onOpenTag={openFindPaletteForQuery}
                           onOpenFindQuery={openFindPaletteForQuery}
+                          onToggleNodeFavorite={toggleNodeFavorite}
                           recurringCompletionMode={recurringCompletionMode}
                         />
                       </div>
@@ -9444,10 +9713,12 @@ function ConfiguredWorkspace({
                             availableTags={sortedTags}
                             pagesByTitle={pagesByTitle}
                             pagesById={pagesById}
+                            favoritedNodeIds={favoritedNodeIds}
                             onOpenPage={handleSelectPage}
                             onOpenNode={handleOpenLinkedNode}
                             onOpenTag={openFindPaletteForQuery}
                             onOpenFindQuery={openFindPaletteForQuery}
+                            onToggleNodeFavorite={toggleNodeFavorite}
                             recurringCompletionMode={recurringCompletionMode}
                             compact
                             showHeader={false}
@@ -9498,10 +9769,12 @@ function ConfiguredWorkspace({
                       availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
                       pagesById={pagesById}
+                      favoritedNodeIds={favoritedNodeIds}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
                       onOpenFindQuery={openFindPaletteForQuery}
+                      onToggleNodeFavorite={toggleNodeFavorite}
                       recurringCompletionMode={recurringCompletionMode}
                       depthOffset={sectionDepthOffset}
                     />
@@ -9548,10 +9821,12 @@ function ConfiguredWorkspace({
                       availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
                       pagesById={pagesById}
+                      favoritedNodeIds={favoritedNodeIds}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
                       onOpenFindQuery={openFindPaletteForQuery}
+                      onToggleNodeFavorite={toggleNodeFavorite}
                       recurringCompletionMode={recurringCompletionMode}
                       depthOffset={sectionDepthOffset}
                       statusMessage={chatStatus}
@@ -9631,10 +9906,12 @@ function ConfiguredWorkspace({
                       availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
                       pagesById={pagesById}
+                      favoritedNodeIds={favoritedNodeIds}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
                       onOpenFindQuery={openFindPaletteForQuery}
+                      onToggleNodeFavorite={toggleNodeFavorite}
                       recurringCompletionMode={recurringCompletionMode}
                       depthOffset={sectionDepthOffset}
                     />
@@ -9682,10 +9959,12 @@ function ConfiguredWorkspace({
                       availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
                       pagesById={pagesById}
+                      favoritedNodeIds={favoritedNodeIds}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
                       onOpenFindQuery={openFindPaletteForQuery}
+                      onToggleNodeFavorite={toggleNodeFavorite}
                       recurringCompletionMode={recurringCompletionMode}
                       depthOffset={sectionDepthOffset}
                     />
@@ -9730,10 +10009,12 @@ function ConfiguredWorkspace({
                       availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
                       pagesById={pagesById}
+                      favoritedNodeIds={favoritedNodeIds}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
                       onOpenFindQuery={openFindPaletteForQuery}
+                      onToggleNodeFavorite={toggleNodeFavorite}
                       recurringCompletionMode={recurringCompletionMode}
                       depthOffset={sectionDepthOffset}
                       statusMessage={journalFeedbackStatus}
@@ -9816,10 +10097,12 @@ function ConfiguredWorkspace({
                         availableTags={sortedTags}
                         pagesByTitle={pagesByTitle}
                         pagesById={pagesById}
+                        favoritedNodeIds={favoritedNodeIds}
                         onOpenPage={handleSelectPage}
                         onOpenNode={handleOpenLinkedNode}
                         onOpenTag={openFindPaletteForQuery}
                         onOpenFindQuery={openFindPaletteForQuery}
+                        onToggleNodeFavorite={toggleNodeFavorite}
                         recurringCompletionMode={recurringCompletionMode}
                         depthOffset={sectionDepthOffset}
                       />
@@ -9864,10 +10147,12 @@ function ConfiguredWorkspace({
                         availableTags={sortedTags}
                         pagesByTitle={pagesByTitle}
                         pagesById={pagesById}
+                        favoritedNodeIds={favoritedNodeIds}
                         onOpenPage={handleSelectPage}
                         onOpenNode={handleOpenLinkedNode}
                         onOpenTag={openFindPaletteForQuery}
                         onOpenFindQuery={openFindPaletteForQuery}
+                        onToggleNodeFavorite={toggleNodeFavorite}
                         recurringCompletionMode={recurringCompletionMode}
                         depthOffset={sectionDepthOffset}
                       />
@@ -9913,10 +10198,12 @@ function ConfiguredWorkspace({
                       availableTags={sortedTags}
                       pagesByTitle={pagesByTitle}
                       pagesById={pagesById}
+                      favoritedNodeIds={favoritedNodeIds}
                       onOpenPage={handleSelectPage}
                       onOpenNode={handleOpenLinkedNode}
                       onOpenTag={openFindPaletteForQuery}
                       onOpenFindQuery={openFindPaletteForQuery}
+                      onToggleNodeFavorite={toggleNodeFavorite}
                       recurringCompletionMode={recurringCompletionMode}
                     />
                   </div>
@@ -10678,10 +10965,12 @@ function PageSection({
   availableTags,
   pagesByTitle,
   pagesById = new Map(),
+  favoritedNodeIds = new Set(),
   onOpenPage,
   onOpenNode,
   onOpenTag,
   onOpenFindQuery,
+  onToggleNodeFavorite = () => {},
   recurringCompletionMode,
   completeTaskPageTask = async () => undefined,
   depthOffset = 0,
@@ -10735,10 +11024,12 @@ function PageSection({
   availableTags: SidebarTagResult[];
   pagesByTitle: Map<string, PageDoc>;
   pagesById?: Map<string, PageDoc>;
+  favoritedNodeIds?: Set<string>;
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   onOpenTag: (tag: string) => void;
   onOpenFindQuery: (query: string) => void;
+  onToggleNodeFavorite?: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   recurringCompletionMode: RecurringCompletionMode;
   completeTaskPageTask?: CompleteTaskPageTaskMutation;
   depthOffset?: number;
@@ -10823,10 +11114,12 @@ function PageSection({
           availableTags={availableTags}
           pagesByTitle={pagesByTitle}
           pagesById={pagesById}
+          favoritedNodeIds={favoritedNodeIds}
           onOpenPage={onOpenPage}
           onOpenNode={onOpenNode}
           onOpenTag={onOpenTag}
           onOpenFindQuery={onOpenFindQuery}
+          onToggleNodeFavorite={onToggleNodeFavorite}
           recurringCompletionMode={recurringCompletionMode}
           completeTaskPageTask={completeTaskPageTask}
           mobileIndentStep={mobileIndentStep}
@@ -10876,10 +11169,12 @@ function OutlineNodeList({
   availableTags,
   pagesByTitle,
   pagesById = new Map(),
+  favoritedNodeIds = new Set(),
   onOpenPage,
   onOpenNode,
   onOpenTag,
   onOpenFindQuery,
+  onToggleNodeFavorite = () => {},
   recurringCompletionMode,
   completeTaskPageTask = async () => undefined,
   mobileIndentStep = 0,
@@ -10928,10 +11223,12 @@ function OutlineNodeList({
   availableTags: SidebarTagResult[];
   pagesByTitle: Map<string, PageDoc>;
   pagesById?: Map<string, PageDoc>;
+  favoritedNodeIds?: Set<string>;
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   onOpenTag: (tag: string) => void;
   onOpenFindQuery: (query: string) => void;
+  onToggleNodeFavorite?: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   recurringCompletionMode: RecurringCompletionMode;
   completeTaskPageTask?: CompleteTaskPageTaskMutation;
   mobileIndentStep?: number;
@@ -11017,10 +11314,12 @@ function OutlineNodeList({
           availableTags={availableTags}
           pagesByTitle={pagesByTitle}
           pagesById={pagesById}
+          favoritedNodeIds={favoritedNodeIds}
           onOpenPage={onOpenPage}
           onOpenNode={onOpenNode}
           onOpenTag={onOpenTag}
           onOpenFindQuery={onOpenFindQuery}
+          onToggleNodeFavorite={onToggleNodeFavorite}
           recurringCompletionMode={recurringCompletionMode}
           completeTaskPageTask={completeTaskPageTask}
           mobileIndentStep={mobileIndentStep}
@@ -11995,10 +12294,12 @@ function OutlineNodeEditor({
   availableTags,
   pagesByTitle,
   pagesById = new Map(),
+  favoritedNodeIds = new Set(),
   onOpenPage,
   onOpenNode,
   onOpenTag,
   onOpenFindQuery,
+  onToggleNodeFavorite = () => {},
   recurringCompletionMode,
   completeTaskPageTask = async () => undefined,
   mobileIndentStep = 0,
@@ -12052,10 +12353,12 @@ function OutlineNodeEditor({
   availableTags: SidebarTagResult[];
   pagesByTitle: Map<string, PageDoc>;
   pagesById?: Map<string, PageDoc>;
+  favoritedNodeIds?: Set<string>;
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   onOpenTag: (tag: string) => void;
   onOpenFindQuery: (query: string) => void;
+  onToggleNodeFavorite?: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   recurringCompletionMode: RecurringCompletionMode;
   completeTaskPageTask?: CompleteTaskPageTaskMutation;
   mobileIndentStep?: number;
@@ -12216,9 +12519,12 @@ function OutlineNodeEditor({
   const isCollapsed = hasChildren && collapsedNodeIds.has(node._id);
   const isTaskRow = node.kind === "task";
   const isPendingSync = pendingSyncNodeIds.has(node._id as string);
+  const isOptimisticRow = isOptimisticNodeId(node._id as string);
+  const isFavoritedNode = favoritedNodeIds.has(node._id as string);
   const isHeadingRow = isHeadingLine;
   const hidePlannerTemplateWeekdayMarker = isPlannerTemplateWeekdayRoot;
   const currentPage = pagesById.get(pageId as string) ?? null;
+  const isFavoriteButtonDisabled = isOptimisticRow || currentPage?.archived === true;
   const isSidebarSpecialRow = isSidebarSpecialPage(currentPage);
   const recurrenceFrequency = getNodeRecurrenceFrequency(node);
   const effectiveDueRange = useMemo(
@@ -14276,6 +14582,31 @@ function OutlineNodeEditor({
                 title="Syncing"
               />
             ) : null}
+            <button
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => onToggleNodeFavorite(pageId, node._id as Id<"nodes">)}
+              disabled={isFavoriteButtonDisabled}
+              title={
+                isOptimisticRow
+                  ? "Wait for this item to finish syncing before favoriting it."
+                  : currentPage?.archived === true
+                    ? "Archived items cannot be favorited."
+                  : isFavoritedNode
+                    ? "Remove from favorites"
+                    : "Add to favorites"
+              }
+              className={clsx(
+                "inline-flex h-6 w-6 items-center justify-center text-sm leading-none transition",
+                isFavoriteButtonDisabled
+                  ? "cursor-not-allowed text-[var(--workspace-text-faint)] opacity-40"
+                  : isFavoritedNode
+                    ? "text-[var(--workspace-accent)] hover:text-[var(--workspace-brand)]"
+                    : "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text)]",
+              )}
+            >
+              {isFavoritedNode ? "★" : "☆"}
+            </button>
             {nodeBacklinkCount > 0 ? (
               <button
                 type="button"
@@ -14387,10 +14718,12 @@ function OutlineNodeEditor({
               availableTags={availableTags}
               pagesByTitle={pagesByTitle}
               pagesById={pagesById}
+              favoritedNodeIds={favoritedNodeIds}
               onOpenPage={onOpenPage}
               onOpenNode={onOpenNode}
               onOpenTag={onOpenTag}
               onOpenFindQuery={onOpenFindQuery}
+              onToggleNodeFavorite={onToggleNodeFavorite}
               recurringCompletionMode={recurringCompletionMode}
               completeTaskPageTask={completeTaskPageTask}
               mobileIndentStep={mobileIndentStep}
