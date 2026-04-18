@@ -14030,7 +14030,7 @@ function OutlineNodeEditor({
         ) : null}
         <div
           className={clsx(
-            "flex flex-wrap items-start rounded-md transition sm:flex-nowrap",
+            "flex flex-wrap items-start rounded-md transition",
             hidePlannerTemplateWeekdayMarker ? "gap-0" : "gap-1.5",
             isHeadingRow ? headingRowMinHeightClass : "min-h-0",
             isPlannerFocusRoot
@@ -14124,7 +14124,10 @@ function OutlineNodeEditor({
           </div>
           <div
             className={clsx(
-              "relative flex min-h-0 min-w-0 flex-1 items-start",
+              "relative flex min-h-0 items-start",
+              node.kind === "task" && (effectiveDueRange.dueAt || recurrenceFrequency)
+                ? "min-w-[min(18rem,100%)] flex-[1_1_18rem]"
+                : "min-w-0 flex-1",
               isHeadingRow ? "self-stretch" : "",
             )}
           >
@@ -14241,8 +14244,7 @@ function OutlineNodeEditor({
           </div>
           <div
             className={clsx(
-              "order-3 basis-full flex flex-wrap items-center gap-1 pt-1 sm:order-none sm:ml-1 sm:basis-auto sm:flex-none sm:flex-nowrap sm:pt-0",
-              hidePlannerTemplateWeekdayMarker ? "pl-0" : "pl-[1.375rem] sm:pl-0",
+              "ml-1 flex max-w-full flex-wrap items-center gap-1 pt-1",
               isHeadingRow
                 ? clsx("items-start", headingControlOffsetClass)
                 : isTaskRow
