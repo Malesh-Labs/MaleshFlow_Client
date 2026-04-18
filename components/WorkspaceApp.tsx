@@ -12232,6 +12232,8 @@ function OutlineNodeEditor({
   const isPendingSync = pendingSyncNodeIds.has(node._id as string);
   const isHeadingRow = isHeadingLine;
   const hidePlannerTemplateWeekdayMarker = isPlannerTemplateWeekdayRoot;
+  const currentPage = pagesById.get(pageId as string) ?? null;
+  const isSidebarSpecialRow = isSidebarSpecialPage(currentPage);
   const recurrenceFrequency = getNodeRecurrenceFrequency(node);
   const effectiveDueRange = useMemo(
     () => getEffectiveTaskDueDateRange(node, nodeMap),
@@ -14007,7 +14009,9 @@ function OutlineNodeEditor({
         className={clsx(
           "outline-depth-shell group relative rounded-sm transition",
           isSelected
-            ? "bg-[var(--workspace-sidebar-bg)] ring-1 ring-[var(--workspace-border-soft)]"
+            ? isSidebarSpecialRow
+              ? "bg-[color-mix(in_srgb,var(--workspace-brand)_18%,var(--workspace-sidebar-bg))] ring-1 ring-[color-mix(in_srgb,var(--workspace-brand)_45%,var(--workspace-border-soft))]"
+              : "bg-[var(--workspace-sidebar-bg)] ring-1 ring-[var(--workspace-border-soft)]"
             : "",
         )}
         style={
