@@ -14030,7 +14030,7 @@ function OutlineNodeEditor({
         ) : null}
         <div
           className={clsx(
-            "flex flex-wrap items-start rounded-md transition",
+            "flex items-start rounded-md transition",
             hidePlannerTemplateWeekdayMarker ? "gap-0" : "gap-1.5",
             isHeadingRow ? headingRowMinHeightClass : "min-h-0",
             isPlannerFocusRoot
@@ -14124,142 +14124,124 @@ function OutlineNodeEditor({
           </div>
           <div
             className={clsx(
-              "relative flex min-h-0 items-start",
-              node.kind === "task" && (effectiveDueRange.dueAt || recurrenceFrequency)
-                ? "min-w-[min(18rem,100%)] flex-[1_1_18rem]"
-                : "min-w-0 flex-1",
+              "flex min-w-0 flex-1 flex-col",
               isHeadingRow ? "self-stretch" : "",
             )}
           >
-            {isVisualSeparatorLine && !shouldRevealVisualPlaceholder ? (
-              <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 border-t border-[var(--workspace-border)]" />
-            ) : null}
-            <textarea
-              ref={textareaRef}
-              value={draft}
-              onMouseDown={() => {
-                onBeginTextEditing();
-              }}
-              onChange={(event) => {
-                onBeginTextEditing();
-                setDraft(event.target.value);
-                history.updateDraftValue(editorId, editorTarget, event.target.value);
-                setCaretPosition(event.target.selectionStart ?? event.target.value.length);
-              }}
-              onFocus={(event) => {
-                onBeginTextEditing();
-                setIsFocused(true);
-                setCaretPosition(event.target.selectionStart ?? event.target.value.length);
-              }}
-              onBlur={() => {
-                setIsFocused(false);
-                void handleSave().catch(() => undefined);
-              }}
-              onSelect={(event) => {
-                setCaretPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length);
-              }}
-              onPaste={(event) => {
-                void handlePaste(event).catch(() => undefined);
-              }}
-              onKeyDown={(event) => {
-                void handleKeyDown(event).catch(() => undefined);
-              }}
-              placeholder="Write a line…"
-              disabled={isDisabled}
-              rows={1}
-              className={clsx(
-                "w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 text-[15px] outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]",
-                previewTypographyClass,
-                isDraggingAnotherNode ? "pointer-events-none select-none" : "",
-                completedTextClass,
-                (isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder
-                  ? "text-transparent"
-                  : "",
-                hasDisplayPreview
-                  ? isDisabled
-                    ? "invisible"
-                    : "text-transparent caret-transparent"
-                  : "",
-              )}
-              />
-            {hasPageLinkPreview ? (
-              <LinkPreviewMeasure
-                measureRef={previewMeasureRef}
-                segments={linkPreviewSegments}
-                isCompleted={isCompleted}
+            <div className="relative flex min-h-0 min-w-0 items-start">
+              {isVisualSeparatorLine && !shouldRevealVisualPlaceholder ? (
+                <div className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 border-t border-[var(--workspace-border)]" />
+              ) : null}
+              <textarea
+                ref={textareaRef}
+                value={draft}
+                onMouseDown={() => {
+                  onBeginTextEditing();
+                }}
+                onChange={(event) => {
+                  onBeginTextEditing();
+                  setDraft(event.target.value);
+                  history.updateDraftValue(editorId, editorTarget, event.target.value);
+                  setCaretPosition(event.target.selectionStart ?? event.target.value.length);
+                }}
+                onFocus={(event) => {
+                  onBeginTextEditing();
+                  setIsFocused(true);
+                  setCaretPosition(event.target.selectionStart ?? event.target.value.length);
+                }}
+                onBlur={() => {
+                  setIsFocused(false);
+                  void handleSave().catch(() => undefined);
+                }}
+                onSelect={(event) => {
+                  setCaretPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length);
+                }}
+                onPaste={(event) => {
+                  void handlePaste(event).catch(() => undefined);
+                }}
+                onKeyDown={(event) => {
+                  void handleKeyDown(event).catch(() => undefined);
+                }}
+                placeholder="Write a line…"
+                disabled={isDisabled}
+                rows={1}
                 className={clsx(
+                  "w-full resize-none overflow-hidden border-0 border-b border-transparent bg-transparent px-0 text-[15px] outline-none transition focus:border-[var(--workspace-border)] disabled:text-[var(--workspace-text-muted)]",
                   previewTypographyClass,
+                  isDraggingAnotherNode ? "pointer-events-none select-none" : "",
                   completedTextClass,
+                  (isVisualEmptyLine || isVisualSeparatorLine) && !shouldRevealVisualPlaceholder
+                    ? "text-transparent"
+                    : "",
+                  hasDisplayPreview
+                    ? isDisabled
+                      ? "invisible"
+                      : "text-transparent caret-transparent"
+                    : "",
                 )}
               />
-            ) : hasPlainTextPreview ? (
-              <PlainTextMeasure
-                measureRef={previewMeasureRef}
-                text={displayDraft}
-                className={clsx(
-                  previewTypographyClass,
-                  completedTextClass,
-                )}
-              />
-            ) : null}
-            {hasPageLinkPreview ? (
-              <LinkedTextPreview
-                segments={linkPreviewSegments}
-                onFocusLine={focusLineEditor}
-                onOpenPage={onOpenPage}
-                onOpenNode={onOpenNode}
-                onOpenTag={onOpenTag}
-                isDisabled={isDisabled || activeDraggedNodeId !== null}
-                isCompleted={isCompleted}
-                className={clsx(
-                  previewTypographyClass,
-                  completedTextClass,
-                )}
-              />
-            ) : hasPlainTextPreview ? (
-              <PlainTextPreview
-                text={displayDraft}
-                onFocusLine={focusLineEditor}
-                isDisabled={isDisabled || activeDraggedNodeId !== null}
-                className={clsx(
-                  previewTypographyClass,
-                  completedTextClass,
-                )}
-              />
-            ) : null}
-            {isFocused && autocompleteToken ? (
-              <LinkAutocompleteMenu
-                anchorRef={textareaRef}
-                suggestions={autocompleteSuggestions}
-                highlightIndex={activeLinkHighlightIndex}
-                onHover={setLinkHighlightIndex}
-                onSelect={applyLinkSuggestion}
-                emptyMessage={
-                  activeLinkToken
-                    ? "No matching pages or nodes."
-                    : "No matching tags."
-                }
-              />
-            ) : null}
-          </div>
-          <div
-            className={clsx(
-              "ml-1 flex max-w-full flex-wrap items-center gap-1 pt-1",
-              isHeadingRow
-                ? clsx("items-start", headingControlOffsetClass)
-                : isTaskRow
-                  ? "items-start pt-[1px]"
-                  : "items-start pt-[2px]",
-            )}
-          >
-            {isPendingSync ? (
-              <span
-                className="mt-1 inline-flex h-2 w-2 flex-none animate-pulse rounded-full bg-[var(--workspace-accent)]"
-                title="Syncing"
-              />
-            ) : null}
+              {hasPageLinkPreview ? (
+                <LinkPreviewMeasure
+                  measureRef={previewMeasureRef}
+                  segments={linkPreviewSegments}
+                  isCompleted={isCompleted}
+                  className={clsx(
+                    previewTypographyClass,
+                    completedTextClass,
+                  )}
+                />
+              ) : hasPlainTextPreview ? (
+                <PlainTextMeasure
+                  measureRef={previewMeasureRef}
+                  text={displayDraft}
+                  className={clsx(
+                    previewTypographyClass,
+                    completedTextClass,
+                  )}
+                />
+              ) : null}
+              {hasPageLinkPreview ? (
+                <LinkedTextPreview
+                  segments={linkPreviewSegments}
+                  onFocusLine={focusLineEditor}
+                  onOpenPage={onOpenPage}
+                  onOpenNode={onOpenNode}
+                  onOpenTag={onOpenTag}
+                  isDisabled={isDisabled || activeDraggedNodeId !== null}
+                  isCompleted={isCompleted}
+                  className={clsx(
+                    previewTypographyClass,
+                    completedTextClass,
+                  )}
+                />
+              ) : hasPlainTextPreview ? (
+                <PlainTextPreview
+                  text={displayDraft}
+                  onFocusLine={focusLineEditor}
+                  isDisabled={isDisabled || activeDraggedNodeId !== null}
+                  className={clsx(
+                    previewTypographyClass,
+                    completedTextClass,
+                  )}
+                />
+              ) : null}
+              {isFocused && autocompleteToken ? (
+                <LinkAutocompleteMenu
+                  anchorRef={textareaRef}
+                  suggestions={autocompleteSuggestions}
+                  highlightIndex={activeLinkHighlightIndex}
+                  onHover={setLinkHighlightIndex}
+                  onSelect={applyLinkSuggestion}
+                  emptyMessage={
+                    activeLinkToken
+                      ? "No matching pages or nodes."
+                      : "No matching tags."
+                  }
+                />
+              ) : null}
+            </div>
             {node.kind === "task" && (effectiveDueRange.dueAt || recurrenceFrequency) ? (
-              <div className="flex flex-wrap items-center gap-1 pt-px text-[10px] leading-none">
+              <div className="mt-2 flex flex-wrap items-center gap-1 text-[10px] leading-none">
                 {effectiveDueRange.dueAt ? (
                   <span
                     className={clsx(
@@ -14286,6 +14268,23 @@ function OutlineNodeEditor({
                   </span>
                 ) : null}
               </div>
+            ) : null}
+          </div>
+          <div
+            className={clsx(
+              "ml-1 flex flex-none items-center gap-1",
+              isHeadingRow
+                ? clsx("items-start", headingControlOffsetClass)
+                : isTaskRow
+                  ? "items-start pt-[1px]"
+                  : "items-start pt-[2px]",
+            )}
+          >
+            {isPendingSync ? (
+              <span
+                className="mt-1 inline-flex h-2 w-2 flex-none animate-pulse rounded-full bg-[var(--workspace-accent)]"
+                title="Syncing"
+              />
             ) : null}
             {nodeBacklinkCount > 0 ? (
               <button
