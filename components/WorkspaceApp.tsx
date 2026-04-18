@@ -8460,17 +8460,8 @@ function ConfiguredWorkspace({
               {!isSidebarCollapsed ? <div className="flex-1" /> : null}
             </div>
 
-            <div
-              className={clsx(
-                "grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out motion-reduce:transition-none",
-                isSidebarCollapsed
-                  ? "pointer-events-none mt-0 grid-rows-[0fr] opacity-0"
-                  : "mt-6 grid-rows-[1fr] opacity-100",
-              )}
-            >
-              <div aria-hidden={isSidebarCollapsed} className="overflow-hidden">
-                <div className="flex flex-col">
-                  <div>
+            {!isSidebarCollapsed ? (
+              <div className="mt-6">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                     Sidebar
@@ -8972,10 +8963,8 @@ function ConfiguredWorkspace({
                     </div>
                   </div>
                 </div>
-                  </div>
-                </div>
               </div>
-            </div>
+            ) : null}
           </div>
         </aside>
 
