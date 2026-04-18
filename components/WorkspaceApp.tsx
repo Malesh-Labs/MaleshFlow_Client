@@ -9403,7 +9403,7 @@ function ConfiguredWorkspace({
                           recurringCompletionMode={recurringCompletionMode}
                         />
                       </div>
-                      <aside className="min-w-0 border-t border-[var(--workspace-border-subtle)] pt-6 lg:sticky lg:top-6 lg:max-h-[calc(100vh-8rem)] lg:overflow-y-auto lg:overscroll-contain lg:border-l lg:border-t-0 lg:pl-6 lg:pr-1 lg:pt-0">
+                      <aside className="min-w-0 border-t border-[var(--workspace-border-subtle)] pt-6 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
                         {plannerSidebarSection ? (
                           <PageSection
                             title="Sidebar"
