@@ -8773,105 +8773,6 @@ function ConfiguredWorkspace({
 
             {!isSidebarCollapsed ? (
               <div className="mt-6">
-                <div className="border-t border-[var(--workspace-border-soft)] pt-5 first:border-t-0 first:pt-0">
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
-                      Favorites
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setIsFavoritesSectionCollapsed((current) => !current)}
-                      className="flex h-8 w-8 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold leading-none text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                      aria-label={showFavoritesSectionContent ? "Collapse favorites" : "Expand favorites"}
-                    >
-                      {showFavoritesSectionContent ? "−" : "+"}
-                    </button>
-                  </div>
-                  {showFavoritesSectionContent ? (
-                    <div className="mt-3">
-                      {typeof sidebarFavorites === "undefined" ? (
-                        <p className="text-sm text-[var(--workspace-text-faint)]">
-                          Loading favorites…
-                        </p>
-                      ) : sidebarFavorites.length === 0 ? (
-                        <p className="text-sm text-[var(--workspace-text-faint)]">
-                          No favorites yet.
-                        </p>
-                      ) : (
-                        <div className="space-y-1">
-                          {sidebarFavorites.map((favorite) => {
-                            const isSelectedFavoritePage =
-                              selectedPageId === favorite.pageId &&
-                              (favorite.targetKind === "page" || !favorite.isSidebarSpecialPage);
-                            return (
-                              <div
-                                key={favorite.favoriteId}
-                                className={clsx(
-                                  "flex items-center gap-2 px-2 py-1.5 transition",
-                                  isSelectedFavoritePage
-                                    ? "bg-[var(--workspace-surface-accent)]"
-                                    : "hover:bg-[var(--workspace-surface-accent)]",
-                                )}
-                              >
-                                {favorite.targetKind === "page" ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleSelectPage(favorite.pageId)}
-                                    className={clsx(
-                                      "min-w-0 flex-1 text-left text-sm",
-                                      isSelectedFavoritePage
-                                        ? "text-[var(--workspace-brand)]"
-                                        : "text-[var(--workspace-text-strong)]",
-                                    )}
-                                  >
-                                    <span className="truncate">{favorite.pageTitle}</span>
-                                  </button>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      handleOpenFavoritedNode(
-                                        favorite.pageId,
-                                        favorite.nodeId as Id<"nodes">,
-                                        favorite.isSidebarSpecialPage,
-                                      )
-                                    }
-                                    className="min-w-0 flex-1 text-left"
-                                  >
-                                    <p className="truncate text-sm text-[var(--workspace-text-strong)]">
-                                      {favorite.nodeText || "Untitled item"}
-                                    </p>
-                                    <p className="mt-0.5 truncate text-[11px] uppercase tracking-[0.14em] text-[var(--workspace-text-faint)]">
-                                      {favorite.pageTitle}
-                                    </p>
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    void setSidebarFavorite({
-                                      ownerKey,
-                                      targetKind: favorite.targetKind,
-                                      pageId: favorite.pageId,
-                                      nodeId: favorite.nodeId,
-                                      favorited: false,
-                                    }).catch((error) => {
-                                      console.error("Failed to remove favorite", error);
-                                    })
-                                  }
-                                  className="shrink-0 border border-[var(--workspace-border)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  ) : null}
-                </div>
-
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                     Sidebar
@@ -9263,6 +9164,105 @@ function ConfiguredWorkspace({
                       )}
                     </div>
                   </div>
+                </div>
+
+                <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
+                      Favorites
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setIsFavoritesSectionCollapsed((current) => !current)}
+                      className="flex h-8 w-8 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold leading-none text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                      aria-label={showFavoritesSectionContent ? "Collapse favorites" : "Expand favorites"}
+                    >
+                      {showFavoritesSectionContent ? "−" : "+"}
+                    </button>
+                  </div>
+                  {showFavoritesSectionContent ? (
+                    <div className="mt-3">
+                      {typeof sidebarFavorites === "undefined" ? (
+                        <p className="text-sm text-[var(--workspace-text-faint)]">
+                          Loading favorites…
+                        </p>
+                      ) : sidebarFavorites.length === 0 ? (
+                        <p className="text-sm text-[var(--workspace-text-faint)]">
+                          No favorites yet.
+                        </p>
+                      ) : (
+                        <div className="space-y-1">
+                          {sidebarFavorites.map((favorite) => {
+                            const isSelectedFavoritePage =
+                              selectedPageId === favorite.pageId &&
+                              (favorite.targetKind === "page" || !favorite.isSidebarSpecialPage);
+                            return (
+                              <div
+                                key={favorite.favoriteId}
+                                className={clsx(
+                                  "flex items-center gap-2 px-2 py-1.5 transition",
+                                  isSelectedFavoritePage
+                                    ? "bg-[var(--workspace-surface-accent)]"
+                                    : "hover:bg-[var(--workspace-surface-accent)]",
+                                )}
+                              >
+                                {favorite.targetKind === "page" ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSelectPage(favorite.pageId)}
+                                    className={clsx(
+                                      "min-w-0 flex-1 text-left text-sm",
+                                      isSelectedFavoritePage
+                                        ? "text-[var(--workspace-brand)]"
+                                        : "text-[var(--workspace-text-strong)]",
+                                    )}
+                                  >
+                                    <span className="truncate">{favorite.pageTitle}</span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleOpenFavoritedNode(
+                                        favorite.pageId,
+                                        favorite.nodeId as Id<"nodes">,
+                                        favorite.isSidebarSpecialPage,
+                                      )
+                                    }
+                                    className="min-w-0 flex-1 text-left"
+                                  >
+                                    <p className="truncate text-sm text-[var(--workspace-text-strong)]">
+                                      {favorite.nodeText || "Untitled item"}
+                                    </p>
+                                    <p className="mt-0.5 truncate text-[11px] uppercase tracking-[0.14em] text-[var(--workspace-text-faint)]">
+                                      {favorite.pageTitle}
+                                    </p>
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void setSidebarFavorite({
+                                      ownerKey,
+                                      targetKind: favorite.targetKind,
+                                      pageId: favorite.pageId,
+                                      nodeId: favorite.nodeId,
+                                      favorited: false,
+                                    }).catch((error) => {
+                                      console.error("Failed to remove favorite", error);
+                                    })
+                                  }
+                                  className="shrink-0 border border-[var(--workspace-border)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
