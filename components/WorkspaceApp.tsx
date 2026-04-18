@@ -7858,11 +7858,23 @@ function ConfiguredWorkspace({
         setIsWorkspaceChatOpen(false);
         setIsSidebarCollapsed(false);
         setPendingRevealNodeId(nodeId as string);
+        setPaletteOpen(false);
+        setPaletteQuery("");
+        setPaletteHighlightIndex(0);
+        setPaletteMode("pages");
+        setTextSearchResults([]);
+        setNodeSearchResults([]);
         clearNodeSelection();
         return;
       }
 
       handleOpenLinkedNode(pageId, nodeId);
+      setPaletteOpen(false);
+      setPaletteQuery("");
+      setPaletteHighlightIndex(0);
+      setPaletteMode("pages");
+      setTextSearchResults([]);
+      setNodeSearchResults([]);
     },
     [clearNodeSelection, handleOpenLinkedNode],
   );
