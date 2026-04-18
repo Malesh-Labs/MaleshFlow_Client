@@ -9180,8 +9180,18 @@ function ConfiguredWorkspace({
                       {showFavoritesSectionContent ? "−" : "+"}
                     </button>
                   </div>
-                  {showFavoritesSectionContent ? (
-                    <div className="mt-3">
+                  <div
+                    className={clsx(
+                      "grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out motion-reduce:transition-none",
+                      showFavoritesSectionContent
+                        ? "mt-3 grid-rows-[1fr] opacity-100"
+                        : "pointer-events-none mt-0 grid-rows-[0fr] opacity-0",
+                    )}
+                  >
+                    <div
+                      aria-hidden={!showFavoritesSectionContent}
+                      className="min-h-0 overflow-hidden"
+                    >
                       {typeof sidebarFavorites === "undefined" ? (
                         <p className="text-sm text-[var(--workspace-text-faint)]">
                           Loading favorites…
@@ -9262,7 +9272,7 @@ function ConfiguredWorkspace({
                         </div>
                       )}
                     </div>
-                  ) : null}
+                  </div>
                 </div>
 
                 <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
