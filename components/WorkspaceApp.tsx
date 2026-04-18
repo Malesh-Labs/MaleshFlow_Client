@@ -404,6 +404,20 @@ type SidebarFavoriteResult = {
   nodeText: string | null;
   isSidebarSpecialPage: boolean;
 };
+type PalettePageFavoriteResult = {
+  _id: string;
+  kind: "page" | "favoritePage" | "favoriteNode";
+  pageId: Id<"pages">;
+  nodeId: Id<"nodes"> | null;
+  title: string;
+  subtitle: string;
+  archived: boolean;
+  position: number;
+  createdAt?: number;
+  updatedAt?: number;
+  searchTerms?: string[];
+  isSidebarSpecialPage?: boolean;
+};
 type NodeDropTarget = {
   placement: "before" | "after" | "nest";
   parentNodeId: Id<"nodes"> | null;
@@ -3276,9 +3290,19 @@ function ConfiguredWorkspace({
   }, []);
 
   const openPalette = useCallback((mode: PaletteMode) => {
+    if (mode === "actions") {
+      const focusedNodeId =
+        typeof document !== "undefined"
+          ? getNodeIdFromTarget(document.activeElement)
+          : null;
+      setActionContextNodeId(
+        focusedNodeId ??
+          (selectedNodeIds.size === 1 ? ([...selectedNodeIds][0] ?? null) : null),
+      );
+    }
     switchPaletteMode(mode);
     setPaletteOpen(true);
-  }, [switchPaletteMode]);
+  }, [selectedNodeIds, switchPaletteMode]);
 
   const openTaskSchedulePalette = useCallback((nodeId: string | null) => {
     setActionContextNodeId(nodeId);
@@ -3697,8 +3721,6 @@ function ConfiguredWorkspace({
       ),
     [sidebarFavorites],
   );
-  const selectedPageIsFavorited =
-    selectedPageId !== null && favoritedPageIds.has(selectedPageId as string);
   const pinnedAllPageIds = useMemo(
     () =>
       new Set(
@@ -3794,6 +3816,34 @@ function ConfiguredWorkspace({
 
     return node;
   }, [paletteContextNodeId, pagesById, workspaceNodeMap]);
+  const favoriteTargetNode = useMemo(() => {
+    if (!paletteContextNodeId) {
+      return null;
+    }
+
+    const node = workspaceNodeMap.get(paletteContextNodeId) ?? null;
+    if (!node || node.archived || isOptimisticNodeId(node._id as string)) {
+      return null;
+    }
+
+    const page = pagesById.get(node.pageId as string) ?? null;
+    if (!page || page.archived) {
+      return null;
+    }
+
+    return node;
+  }, [paletteContextNodeId, pagesById, workspaceNodeMap]);
+  const favoriteTargetPage = useMemo(() => {
+    if (favoriteTargetNode) {
+      return pagesById.get(favoriteTargetNode.pageId as string) ?? null;
+    }
+
+    if (!selectedPage || selectedPage.archived || isSidebarSpecialPage(selectedPage)) {
+      return null;
+    }
+
+    return selectedPage;
+  }, [favoriteTargetNode, pagesById, selectedPage]);
   const taskScheduleEffectiveDueRange = useMemo(
     () =>
       taskScheduleTargetNode
@@ -4252,17 +4302,61 @@ function ConfiguredWorkspace({
       setSelectedPageId,
     ],
   );
-  const paletteResults = filterPagesForCommandPalette(
-    (pages ?? []).map((page) => ({
-      ...page,
-      searchTerms: [
-        getPageTypeLabel(page),
-        getPageMeta(page).sidebarSection,
-      ],
-    })),
-    paletteQuery,
-    14,
-  );
+  const paletteResults = useMemo(() => {
+    const favoriteEntries: PalettePageFavoriteResult[] = (sidebarFavorites ?? []).map(
+      (favorite, index) => ({
+        _id: favorite.favoriteId as string,
+        kind: favorite.targetKind === "page" ? "favoritePage" : "favoriteNode",
+        pageId: favorite.pageId,
+        nodeId: favorite.nodeId,
+        title:
+          favorite.targetKind === "page"
+            ? favorite.pageTitle
+            : favorite.nodeText || "Untitled item",
+        subtitle:
+          favorite.targetKind === "page"
+            ? `Favorite page • ${getPageTypeDisplayLabel(pagesById.get(favorite.pageId as string) ?? null)}`
+            : `Favorite item • ${favorite.pageTitle}`,
+        archived: false,
+        position: index,
+        updatedAt: undefined,
+        createdAt: undefined,
+        isSidebarSpecialPage: favorite.isSidebarSpecialPage,
+        searchTerms: [
+          "favorite",
+          favorite.pageTitle,
+          favorite.targetKind === "page" ? "page" : "item",
+          favorite.nodeText ?? "",
+        ],
+      }),
+    );
+
+    const favoritePageIds = new Set(
+      favoriteEntries
+        .filter((entry) => entry.kind === "favoritePage")
+        .map((entry) => entry.pageId as string),
+    );
+    const pageEntries: PalettePageFavoriteResult[] = (pages ?? [])
+      .filter((page) => !favoritePageIds.has(page._id as string))
+      .map((page) => ({
+        _id: page._id as string,
+        kind: "page",
+        pageId: page._id,
+        nodeId: null,
+        title: page.title,
+        subtitle: getPageTypeDisplayLabel(page),
+        archived: page.archived,
+        position: page.position,
+        createdAt: page.createdAt,
+        updatedAt: page.updatedAt,
+        searchTerms: [getPageTypeLabel(page), getPageMeta(page).sidebarSection],
+      }));
+
+    return [
+      ...filterPagesForCommandPalette(favoriteEntries, paletteQuery, 14),
+      ...filterPagesForCommandPalette(pageEntries, paletteQuery, 14),
+    ].slice(0, 14);
+  }, [pages, pagesById, paletteQuery, sidebarFavorites]);
   const workspaceChatMessages = workspaceKnowledgeThread?.messages ?? [];
   const embeddingProgressLabel = useMemo(() => {
     if (!embeddingRebuildProgress) {
@@ -5248,6 +5342,15 @@ function ConfiguredWorkspace({
   }, [history, ownerKey, taskScheduleTargetNode, updateNode]);
 
   const actionResults = useMemo(() => {
+    const favoriteContextPage = favoriteTargetPage;
+    const favoriteContextNode = favoriteTargetNode;
+    const isFavoriteContextNode =
+      favoriteContextNode !== null &&
+      favoritedNodeIds.has(favoriteContextNode._id as string);
+    const isFavoriteContextPage =
+      favoriteContextNode === null &&
+      favoriteContextPage !== null &&
+      favoritedPageIds.has(favoriteContextPage._id as string);
     const results: ActionPaletteResult[] = [
       ...SIDEBAR_SECTIONS.map((section) => {
         const title = getPageTypeLabelForSection(section);
@@ -5271,6 +5374,70 @@ function ConfiguredWorkspace({
         actionLabel: isCreatingPlannerPage ? "Creating…" : "Create",
         disabled: isCreatingPlannerPage,
         onSelect: () => void handleCreatePlannerPage(),
+      },
+      {
+        key: "toggle-favorite",
+        title:
+          favoriteContextNode !== null
+            ? isFavoriteContextNode
+              ? "Remove From Favorites"
+              : "Add To Favorites"
+            : favoriteContextPage !== null
+              ? isFavoriteContextPage
+                ? "Remove Page From Favorites"
+                : "Add Page To Favorites"
+              : "Add To Favorites",
+        subtitle:
+          favoriteContextNode !== null
+            ? `${favoriteContextNode.text || "(empty item)"} • ${favoriteContextPage?.title ?? "Unknown page"}`
+            : favoriteContextPage !== null
+              ? `${favoriteContextPage.title} • Page favorite`
+              : "Highlight an item, or open Actions while your caret is inside one. If no item is active, this will favorite the current page.",
+        keywords: ["favorite", "favorites", "star", "save", "bookmark", "page", "item"],
+        actionLabel:
+          favoriteContextNode !== null
+            ? isFavoriteContextNode
+              ? "Remove"
+              : "Add"
+            : favoriteContextPage !== null
+              ? isFavoriteContextPage
+                ? "Remove"
+                : "Add"
+              : "Select",
+        disabled: favoriteContextNode === null && favoriteContextPage === null,
+        onSelect: () => {
+          if (!ownerKey) {
+            return;
+          }
+
+          if (favoriteContextNode && favoriteContextPage) {
+            void setSidebarFavorite({
+              ownerKey,
+              targetKind: "node",
+              pageId: favoriteContextPage._id,
+              nodeId: favoriteContextNode._id,
+              favorited: !isFavoriteContextNode,
+            })
+              .then(() => {
+                setPaletteOpen(false);
+              })
+              .catch(() => undefined);
+            return;
+          }
+
+          if (favoriteContextPage) {
+            void setSidebarFavorite({
+              ownerKey,
+              targetKind: "page",
+              pageId: favoriteContextPage._id,
+              favorited: !isFavoriteContextPage,
+            })
+              .then(() => {
+                setPaletteOpen(false);
+              })
+              .catch(() => undefined);
+          }
+        },
       },
       {
         key: "find-replace",
@@ -5432,13 +5599,19 @@ function ConfiguredWorkspace({
     handleCopyTaskCalendarFeed,
     handleRebuildEmbeddings,
     handleResetLocalState,
+    favoriteTargetNode,
+    favoriteTargetPage,
+    favoritedNodeIds,
+    favoritedPageIds,
     isCreatingPage,
     isCreatingPlannerPage,
     isPreparingTaskCalendarFeed,
     isRebuildingEmbeddings,
+    ownerKey,
     openTaskSchedulePalette,
     paletteQuery,
     setOwnerKey,
+    setSidebarFavorite,
     switchPaletteMode,
     taskScheduleSummary,
     taskScheduleTargetNode,
@@ -7694,6 +7867,30 @@ function ConfiguredWorkspace({
     [clearNodeSelection, handleOpenLinkedNode],
   );
 
+  const toggleNodeFavorite = useCallback(
+    (pageId: Id<"pages">, nodeId: Id<"nodes">) => {
+      if (!ownerKey || isOptimisticNodeId(nodeId as string)) {
+        if (isOptimisticNodeId(nodeId as string)) {
+          setCopySnackbarMessage(
+            "Wait for that item to finish syncing before favoriting it.",
+          );
+        }
+        return;
+      }
+
+      void setSidebarFavorite({
+        ownerKey,
+        targetKind: "node",
+        pageId,
+        nodeId,
+        favorited: !favoritedNodeIds.has(nodeId as string),
+      }).catch((error) => {
+        console.error("Failed to toggle node favorite", error);
+      });
+    },
+    [favoritedNodeIds, ownerKey, setSidebarFavorite],
+  );
+
   const handleWorkspaceChatSubmit = useCallback(async () => {
     const question = workspaceChatDraft.trim();
     if (question.length === 0) {
@@ -8072,7 +8269,15 @@ function ConfiguredWorkspace({
       if (paletteMode === "pages") {
         const highlighted = paletteResults[paletteHighlightIndex];
         if (highlighted) {
-          handleSelectPage(highlighted._id);
+          if (highlighted.kind === "favoriteNode" && highlighted.nodeId) {
+            handleOpenFavoritedNode(
+              highlighted.pageId,
+              highlighted.nodeId,
+              highlighted.isSidebarSpecialPage === true,
+            );
+          } else {
+            handleSelectPage(highlighted.pageId);
+          }
         }
         return;
       }
@@ -8128,45 +8333,6 @@ function ConfiguredWorkspace({
       console.error("Failed to toggle All sidebar pin", error);
     });
   };
-
-  const toggleSelectedPageFavorite = useCallback(() => {
-    if (!ownerKey || !selectedPage || isSidebarSpecialPage(selectedPage)) {
-      return;
-    }
-
-    void setSidebarFavorite({
-      ownerKey,
-      targetKind: "page",
-      pageId: selectedPage._id,
-      favorited: !selectedPageIsFavorited,
-    }).catch((error) => {
-      console.error("Failed to toggle page favorite", error);
-    });
-  }, [ownerKey, selectedPage, selectedPageIsFavorited, setSidebarFavorite]);
-
-  const toggleNodeFavorite = useCallback(
-    (pageId: Id<"pages">, nodeId: Id<"nodes">) => {
-      if (!ownerKey || isOptimisticNodeId(nodeId as string)) {
-        if (isOptimisticNodeId(nodeId as string)) {
-          setCopySnackbarMessage(
-            "Wait for that item to finish syncing before favoriting it.",
-          );
-        }
-        return;
-      }
-
-      void setSidebarFavorite({
-        ownerKey,
-        targetKind: "node",
-        pageId,
-        nodeId,
-        favorited: !favoritedNodeIds.has(nodeId as string),
-      }).catch((error) => {
-        console.error("Failed to toggle node favorite", error);
-      });
-    },
-    [favoritedNodeIds, ownerKey, setSidebarFavorite],
-  );
 
   return (
     <WorkspaceHistoryProvider value={history}>
@@ -9302,57 +9468,38 @@ function ConfiguredWorkspace({
                       </div>
                     ) : null}
                   </div>
-                  {!isSidebarSpecialPage(selectedPage) || pageMeta.pageType === "task" ? (
+                  {pageMeta.pageType === "task" ? (
                     <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
-                      {!isSidebarSpecialPage(selectedPage) ? (
-                        <button
-                          type="button"
-                          onClick={toggleSelectedPageFavorite}
-                          disabled={isPageArchived}
-                          className={clsx(
-                            "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition disabled:cursor-not-allowed disabled:opacity-60",
-                            selectedPageIsFavorited
-                              ? "border-[var(--workspace-brand)] text-[var(--workspace-brand)] hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
-                              : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
-                          )}
-                        >
-                          {selectedPageIsFavorited ? "Unfavorite" : "Favorite"}
-                        </button>
-                      ) : null}
-                      {pageMeta.pageType === "task" ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => void handleToggleSelectedTaskPageDoneArchive()}
-                            disabled={isPageArchived}
-                            className={clsx(
-                              "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition disabled:cursor-not-allowed disabled:opacity-60",
-                              isSelectedPageDoneArchiveEnabled
-                                ? "border-[var(--workspace-brand)] text-[var(--workspace-brand)] hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
-                                : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
-                            )}
-                          >
-                            {isSelectedPageDoneArchiveEnabled
-                              ? "Done Archive On"
-                              : "Done Archive Off"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleToggleSelectedTaskPagePlannerScan()}
-                            disabled={isPageArchived}
-                            className={clsx(
-                              "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition disabled:cursor-not-allowed disabled:opacity-60",
-                              isSelectedPageExcludedFromPlannerScan
-                                ? "border-[var(--workspace-brand)] text-[var(--workspace-brand)] hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
-                                : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
-                            )}
-                          >
-                            {isSelectedPageExcludedFromPlannerScan
-                              ? "Include In Planner"
-                              : "Exclude From Planner"}
-                          </button>
-                        </>
-                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleSelectedTaskPageDoneArchive()}
+                        disabled={isPageArchived}
+                        className={clsx(
+                          "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition disabled:cursor-not-allowed disabled:opacity-60",
+                          isSelectedPageDoneArchiveEnabled
+                            ? "border-[var(--workspace-brand)] text-[var(--workspace-brand)] hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
+                            : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                        )}
+                      >
+                        {isSelectedPageDoneArchiveEnabled
+                          ? "Done Archive On"
+                          : "Done Archive Off"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleSelectedTaskPagePlannerScan()}
+                        disabled={isPageArchived}
+                        className={clsx(
+                          "border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition disabled:cursor-not-allowed disabled:opacity-60",
+                          isSelectedPageExcludedFromPlannerScan
+                            ? "border-[var(--workspace-brand)] text-[var(--workspace-brand)] hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
+                            : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                        )}
+                      >
+                        {isSelectedPageExcludedFromPlannerScan
+                          ? "Include In Planner"
+                          : "Exclude From Planner"}
+                      </button>
                     </div>
                   ) : null}
                 </div>
@@ -10298,7 +10445,7 @@ function ConfiguredWorkspace({
                       : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
                   )}
                 >
-                  Pages
+                  Pages/Favorites
                 </button>
                 <button
                   type="button"
@@ -10398,7 +10545,7 @@ function ConfiguredWorkspace({
                     onKeyDown={handlePaletteKeyDown}
                     placeholder={
                       paletteMode === "pages"
-                        ? "Search pages..."
+                        ? "Search pages and favorites..."
                         : paletteMode === "find"
                           ? "Find exact text in notes and tasks... Use || for OR"
                           : paletteMode === "nodes"
@@ -10424,7 +10571,7 @@ function ConfiguredWorkspace({
             >
               {paletteMode === "pages" ? (
                 paletteResults.length === 0 ? (
-                  <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">No matching pages.</p>
+                  <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">No matching pages or favorites.</p>
                 ) : (
                 paletteResults.map((page, index) => {
                   return (
@@ -10433,7 +10580,18 @@ function ConfiguredWorkspace({
                       type="button"
                       data-palette-item-index={index}
                       onMouseEnter={() => setPaletteHighlightIndex(index)}
-                      onClick={() => handleSelectPage(page._id)}
+                      onClick={() => {
+                        if (page.kind === "favoriteNode" && page.nodeId) {
+                          handleOpenFavoritedNode(
+                            page.pageId,
+                            page.nodeId,
+                            page.isSidebarSpecialPage === true,
+                          );
+                          return;
+                        }
+
+                        handleSelectPage(page.pageId);
+                      }}
                       className={clsx(
                         "flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition",
                         index === paletteHighlightIndex
@@ -10446,10 +10604,15 @@ function ConfiguredWorkspace({
                           {page.title}
                         </span>
                         <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                          {getPageTypeDisplayLabel(page)}
+                          {page.subtitle}
                         </span>
                       </span>
                       <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                        {page.kind === "favoriteNode" || page.kind === "favoritePage" ? (
+                          <span className="rounded-full border border-[var(--workspace-border)] px-2 py-1 text-[var(--workspace-accent)]">
+                            Favorite
+                          </span>
+                        ) : null}
                         {page.archived ? (
                           <span className="rounded-full border border-[var(--workspace-border)] px-2 py-1 text-[var(--workspace-text-faint)]">
                             Archived
@@ -12519,12 +12682,9 @@ function OutlineNodeEditor({
   const isCollapsed = hasChildren && collapsedNodeIds.has(node._id);
   const isTaskRow = node.kind === "task";
   const isPendingSync = pendingSyncNodeIds.has(node._id as string);
-  const isOptimisticRow = isOptimisticNodeId(node._id as string);
-  const isFavoritedNode = favoritedNodeIds.has(node._id as string);
   const isHeadingRow = isHeadingLine;
   const hidePlannerTemplateWeekdayMarker = isPlannerTemplateWeekdayRoot;
   const currentPage = pagesById.get(pageId as string) ?? null;
-  const isFavoriteButtonDisabled = isOptimisticRow || currentPage?.archived === true;
   const isSidebarSpecialRow = isSidebarSpecialPage(currentPage);
   const recurrenceFrequency = getNodeRecurrenceFrequency(node);
   const effectiveDueRange = useMemo(
@@ -14582,31 +14742,6 @@ function OutlineNodeEditor({
                 title="Syncing"
               />
             ) : null}
-            <button
-              type="button"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => onToggleNodeFavorite(pageId, node._id as Id<"nodes">)}
-              disabled={isFavoriteButtonDisabled}
-              title={
-                isOptimisticRow
-                  ? "Wait for this item to finish syncing before favoriting it."
-                  : currentPage?.archived === true
-                    ? "Archived items cannot be favorited."
-                  : isFavoritedNode
-                    ? "Remove from favorites"
-                    : "Add to favorites"
-              }
-              className={clsx(
-                "inline-flex h-6 w-6 items-center justify-center text-sm leading-none transition",
-                isFavoriteButtonDisabled
-                  ? "cursor-not-allowed text-[var(--workspace-text-faint)] opacity-40"
-                  : isFavoritedNode
-                    ? "text-[var(--workspace-accent)] hover:text-[var(--workspace-brand)]"
-                    : "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text)]",
-              )}
-            >
-              {isFavoritedNode ? "★" : "☆"}
-            </button>
             {nodeBacklinkCount > 0 ? (
               <button
                 type="button"
