@@ -410,6 +410,9 @@ export function useWorkspaceHistoryController({
       const session = ensureDraftSession(editorId, target, committedValue);
       if (session) {
         session.target = target;
+        if (session.currentValue !== adapter.getValue()) {
+          adapter.setValue(session.currentValue);
+        }
       }
 
       const element = adapter.getElement();
@@ -480,6 +483,34 @@ export function useWorkspaceHistoryController({
       scheduleCheckpoint(editorId);
     },
     [ensureDraftSession, scheduleCheckpoint],
+  );
+
+  const transferTrackedState = useCallback(
+    (
+      fromEditorId: string,
+      toEditorId: string,
+      nextTarget?: TrackedEditorTarget,
+    ) => {
+      if (fromEditorId === toEditorId) {
+        return;
+      }
+
+      clearDraftTimer(fromEditorId);
+      const session = draftSessionsRef.current.get(fromEditorId);
+      if (session) {
+        draftSessionsRef.current.delete(fromEditorId);
+        session.target = nextTarget ?? session.target;
+        draftSessionsRef.current.set(toEditorId, session);
+        if (session.currentValue !== session.lastCheckpointValue) {
+          scheduleCheckpoint(toEditorId);
+        }
+      }
+
+      if (pendingFocusEditorIdRef.current === fromEditorId) {
+        pendingFocusEditorIdRef.current = toEditorId;
+      }
+    },
+    [clearDraftTimer, scheduleCheckpoint],
   );
 
   const commitTrackedValue = useCallback(
@@ -727,6 +758,7 @@ export function useWorkspaceHistoryController({
       isApplyingHistory,
       focusElementAtEnd,
       registerEditor,
+      transferTrackedState,
       syncCommittedValue,
       updateDraftValue,
       flushDraftCheckpoint,
@@ -746,6 +778,7 @@ export function useWorkspaceHistoryController({
       registerEditor,
       resetTrackedValue,
       runHistoryAction,
+      transferTrackedState,
       syncCommittedValue,
       updateDraftValue,
     ],

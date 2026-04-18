@@ -14234,9 +14234,13 @@ function OutlineNodeEditor({
       const normalizedTail = parseSplitSegmentDraft(tailDraft, segmentFallback);
       let updateEntry: HistoryEntry | null = null;
       let createEntry: HistoryEntry | null = null;
+      let shouldRestoreFocusToCreatedNode = true;
 
       if (isStartOfLineSplit) {
         const optimisticCreatedNodeClientId = `split-above:${node._id}:${Date.now()}`;
+        const optimisticEditorId = getNodeEditorId(
+          `optimistic-node:${optimisticCreatedNodeClientId}` as Id<"nodes">,
+        );
         const createNodesPromise = createNodesBatch({
           ownerKey,
           pageId,
@@ -14265,9 +14269,6 @@ function OutlineNodeEditor({
 
         window.requestAnimationFrame(() => {
           window.requestAnimationFrame(() => {
-            const optimisticEditorId = getNodeEditorId(
-              `optimistic-node:${optimisticCreatedNodeClientId}` as Id<"nodes">,
-            );
             const target = document.querySelector<HTMLElement>(
               `[data-history-editor-id="${optimisticEditorId}"]`,
             );
@@ -14282,6 +14283,26 @@ function OutlineNodeEditor({
 
         const [createdNodes] = await Promise.all([createNodesPromise, updateNodePromise]);
         const createdNode = createdNodes[0] ?? null;
+        const createdNodeEditorId = createdNode
+          ? getNodeEditorId(createdNode._id)
+          : null;
+        const activeTrackedEditorId =
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement.dataset.historyEditorId ??
+              document.activeElement.closest<HTMLElement>("[data-history-editor-id]")?.dataset
+                .historyEditorId ??
+              null
+            : null;
+        shouldRestoreFocusToCreatedNode =
+          activeTrackedEditorId === null || activeTrackedEditorId === optimisticEditorId;
+
+        if (createdNode && createdNodeEditorId) {
+          history.transferTrackedState(optimisticEditorId, createdNodeEditorId, {
+            kind: "node",
+            pageId,
+            nodeId: createdNode._id,
+          });
+        }
 
         const beforeValue = history.commitTrackedValue(
           editorId,
@@ -14371,13 +14392,13 @@ function OutlineNodeEditor({
 
       if (isStartOfLineSplit) {
         window.requestAnimationFrame(() => {
-          const createdNodeEditorId = createEntry?.focusAfterRedoId ?? null;
-          if (!createdNodeEditorId) {
+          const focusEditorId = createEntry?.focusAfterRedoId ?? null;
+          if (!focusEditorId || !shouldRestoreFocusToCreatedNode) {
             return;
           }
 
           const target = document.querySelector<HTMLElement>(
-            `[data-history-editor-id="${createdNodeEditorId}"]`,
+            `[data-history-editor-id="${focusEditorId}"]`,
           );
           if (!(target instanceof HTMLTextAreaElement) && !(target instanceof HTMLInputElement)) {
             return;
