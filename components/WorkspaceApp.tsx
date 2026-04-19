@@ -3290,6 +3290,9 @@ function ConfiguredWorkspace({
   }, []);
 
   const openPalette = useCallback((mode: PaletteMode) => {
+    if (selectedNodeIds.size > 1) {
+      clearNodeSelection();
+    }
     if (mode === "actions") {
       const focusedNodeId =
         typeof document !== "undefined"
@@ -3302,9 +3305,12 @@ function ConfiguredWorkspace({
     }
     switchPaletteMode(mode);
     setPaletteOpen(true);
-  }, [selectedNodeIds, switchPaletteMode]);
+  }, [clearNodeSelection, selectedNodeIds, switchPaletteMode]);
 
   const openTaskSchedulePalette = useCallback((nodeId: string | null) => {
+    if (selectedNodeIds.size > 1) {
+      clearNodeSelection();
+    }
     setActionContextNodeId(nodeId);
     setPaletteMode("taskSchedule");
     setPaletteQuery("");
@@ -3312,7 +3318,7 @@ function ConfiguredWorkspace({
     setTextSearchResults([]);
     setNodeSearchResults([]);
     setPaletteOpen(true);
-  }, []);
+  }, [clearNodeSelection, selectedNodeIds]);
 
   const cyclePaletteMode = useCallback((direction: -1 | 1) => {
     const currentIndex = PALETTE_MODE_ORDER.indexOf(paletteMode);
@@ -3328,6 +3334,9 @@ function ConfiguredWorkspace({
   }, [paletteMode, switchPaletteMode]);
 
   const openFindPaletteForQuery = useCallback((query: string) => {
+    if (selectedNodeIds.size > 1) {
+      clearNodeSelection();
+    }
     lastPaletteModeRef.current = "find";
     setPaletteMode("find");
     setPaletteQuery(query);
@@ -3335,7 +3344,7 @@ function ConfiguredWorkspace({
     setTextSearchResults([]);
     setNodeSearchResults([]);
     setPaletteOpen(true);
-  }, []);
+  }, [clearNodeSelection, selectedNodeIds]);
 
   const toggleWorkspaceChat = useCallback(() => {
     setWorkspaceChatError("");
