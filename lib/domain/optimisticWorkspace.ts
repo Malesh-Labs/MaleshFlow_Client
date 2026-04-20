@@ -91,6 +91,18 @@ export type OptimisticNodeSplitArgs = {
   tailTaskStatus?: NodeTaskStatus;
 };
 
+export type OptimisticInsertNodeAboveArgs = {
+  ownerKey: string;
+  nodeId: Id<"nodes">;
+  clientId?: string;
+  insertedText: string;
+  insertedKind: "note" | "task";
+  insertedTaskStatus?: NodeTaskStatus;
+  shiftedText: string;
+  shiftedKind: "note" | "task";
+  shiftedTaskStatus?: NodeTaskStatus;
+};
+
 export type OptimisticPlannerTaskCompletionArgs = {
   ownerKey: string;
   plannerNodeId: Id<"nodes">;
@@ -723,6 +735,93 @@ export function applyOptimisticNodeSplit(
     groups.map((group) => ({
       ...group,
       nodes: applyOptimisticSplitToNodes(group.nodes, args),
+    })),
+  );
+}
+
+function applyOptimisticInsertNodeAboveToNodes(
+  nodes: NodeDoc[],
+  args: OptimisticInsertNodeAboveArgs,
+) {
+  const sourceNode = nodes.find((node) => node._id === args.nodeId) ?? null;
+  if (!sourceNode) {
+    return nodes;
+  }
+
+  const sourceMeta = getSourceMeta(sourceNode);
+  const updatedNodes = patchNodeList(nodes, args.nodeId, (node) =>
+    applyNodeUpdatePatch(node, {
+      text: args.shiftedText,
+      kind: args.shiftedKind,
+      taskStatus: args.shiftedKind === "task" ? (args.shiftedTaskStatus ?? "todo") : null,
+      noteCompleted:
+        args.shiftedKind === "note"
+          ? Boolean(sourceMeta.noteCompleted)
+          : false,
+      dueAt: args.shiftedKind === "task" ? (sourceNode.dueAt ?? null) : null,
+      dueEndAt: args.shiftedKind === "task" ? (sourceNode.dueEndAt ?? null) : null,
+      recurrenceFrequency:
+        args.shiftedKind === "task"
+          ? ((sourceMeta.recurrenceFrequency as RecurrenceFrequency | null | undefined) ?? null)
+          : null,
+    }),
+  );
+
+  return applyOptimisticCreatesToNodes(
+    updatedNodes,
+    sourceNode.pageId,
+    [
+      {
+        clientId: args.clientId ?? `insert-above:${args.nodeId}`,
+        parentNodeId: (sourceNode.parentNodeId as Id<"nodes"> | null) ?? null,
+        afterNodeId:
+          findPreviousSiblingId(nodes, sourceNode.pageId, sourceNode.parentNodeId, sourceNode._id),
+        text: args.insertedText,
+        kind: args.insertedKind,
+        taskStatus: args.insertedKind === "task" ? (args.insertedTaskStatus ?? "todo") : null,
+      },
+    ],
+    [
+      `optimistic-node:${args.clientId ?? `insert-above:${args.nodeId}`}` as Id<"nodes">,
+    ],
+    getTimestamp(),
+  );
+}
+
+function findPreviousSiblingId(
+  nodes: NodeDoc[],
+  pageId: Id<"pages">,
+  parentNodeId: Id<"nodes"> | null,
+  nodeId: Id<"nodes">,
+) {
+  const siblings = nodes
+    .filter(
+      (node) =>
+        node.pageId === pageId &&
+        node.parentNodeId === parentNodeId &&
+        node.archived !== true,
+    )
+    .sort((left, right) => left.position - right.position);
+  const currentIndex = siblings.findIndex((node) => node._id === nodeId);
+  return currentIndex > 0 ? siblings[currentIndex - 1]!._id : null;
+}
+
+export function applyOptimisticInsertNodeAbove(
+  localStore: OptimisticLocalStore,
+  args: OptimisticInsertNodeAboveArgs,
+) {
+  updatePageTreeQueries(localStore, args.ownerKey, (result) => ({
+    ...result,
+    nodes: applyOptimisticInsertNodeAboveToNodes(result.nodes, args),
+  }));
+  updateSidebarTreeQueries(localStore, args.ownerKey, (result) => ({
+    ...result,
+    nodes: applyOptimisticInsertNodeAboveToNodes(result.nodes, args),
+  }));
+  updateSimpleTaskViewQueries(localStore, args.ownerKey, (groups) =>
+    groups.map((group) => ({
+      ...group,
+      nodes: applyOptimisticInsertNodeAboveToNodes(group.nodes, args),
     })),
   );
 }

@@ -22,6 +22,7 @@ import {
   enqueueNodeAiWork,
   enqueuePageRootEmbeddingRefresh,
   listPageNodes,
+  listSiblingNodes,
   setNodeTreeArchivedState,
   syncLinksForNode,
 } from "./lib/workspace";
@@ -3565,6 +3566,108 @@ export const updateNodesBatch = mutation({
     }
 
     return null;
+  },
+});
+
+export const insertNodeAbove = mutation({
+  args: {
+    ownerKey: v.string(),
+    nodeId: v.id("nodes"),
+    clientId: v.optional(v.string()),
+    insertedText: v.string(),
+    insertedKind: nodeKindValidator,
+    insertedTaskStatus: v.optional(taskStatusValidator),
+    shiftedText: v.string(),
+    shiftedKind: nodeKindValidator,
+    shiftedTaskStatus: v.optional(taskStatusValidator),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const node = await ctx.db.get(args.nodeId);
+    if (!node) {
+      throw new Error("Node not found.");
+    }
+
+    const now = getTimestamp();
+    const siblings = (await listSiblingNodes(
+      ctx.db,
+      node.pageId,
+      node.parentNodeId,
+    )).sort((left, right) => left.position - right.position);
+    const currentIndex = siblings.findIndex((sibling) => sibling._id === node._id);
+    const previousSibling = currentIndex > 0 ? siblings[currentIndex - 1] ?? null : null;
+    const insertedPosition = await computeNodePosition(
+      ctx.db,
+      node.pageId,
+      node.parentNodeId,
+      previousSibling?._id ?? null,
+    );
+
+    const insertedNodeId = await ctx.db.insert("nodes", {
+      pageId: node.pageId,
+      parentNodeId: node.parentNodeId,
+      position: insertedPosition,
+      text: args.insertedText.trim(),
+      kind: args.insertedKind,
+      taskStatus:
+        args.insertedKind === "task" ? (args.insertedTaskStatus ?? "todo") : null,
+      priority: null,
+      dueAt: null,
+      dueEndAt: null,
+      archived: false,
+      sourceMeta: {
+        sourceType: "manual",
+        taskKindLocked: false,
+        noteCompleted: false,
+        recurrenceFrequency: null,
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const nextSourceMeta =
+      node.sourceMeta && typeof node.sourceMeta === "object"
+        ? { ...(node.sourceMeta as Record<string, unknown>) }
+        : {};
+    nextSourceMeta.noteCompleted =
+      args.shiftedKind === "note"
+        ? Boolean((node.sourceMeta as Record<string, unknown> | null | undefined)?.noteCompleted)
+        : false;
+    nextSourceMeta.recurrenceFrequency =
+      args.shiftedKind === "task"
+        ? ((node.sourceMeta as Record<string, unknown> | null | undefined)
+            ?.recurrenceFrequency ?? null)
+        : null;
+
+    await ctx.db.patch(args.nodeId, {
+      text: args.shiftedText,
+      kind: args.shiftedKind,
+      taskStatus:
+        args.shiftedKind === "task" ? (args.shiftedTaskStatus ?? "todo") : null,
+      dueAt: args.shiftedKind === "task" ? (node.dueAt ?? null) : null,
+      dueEndAt: args.shiftedKind === "task" ? (node.dueEndAt ?? null) : null,
+      sourceMeta: nextSourceMeta,
+      updatedAt: now,
+    });
+
+    const insertedNode = await ctx.db.get(insertedNodeId);
+    const shiftedNode = await ctx.db.get(args.nodeId);
+
+    if (insertedNode) {
+      await syncLinksForNode(ctx.db, insertedNode);
+      await enqueueNodeAiWork(ctx, insertedNode._id);
+    }
+    if (shiftedNode) {
+      await syncLinksForNode(ctx.db, shiftedNode);
+      await enqueueNodeAiWork(ctx, shiftedNode._id);
+    }
+
+    await enqueuePageRootEmbeddingRefresh(ctx, node.pageId);
+
+    return {
+      insertedNode,
+      shiftedNode,
+    };
   },
 });
 

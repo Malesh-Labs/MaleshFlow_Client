@@ -67,6 +67,7 @@ import {
   getEffectiveTaskDueDateRange,
 } from "@/lib/domain/planner";
 import {
+  applyOptimisticInsertNodeAbove,
   applyOptimisticNodeCreates,
   applyOptimisticNodeBatchUpdates,
   applyOptimisticNodeMoves,
@@ -455,12 +456,19 @@ type SetNodeTreesArchivedBatchArgs = Parameters<
 type CreateNodesBatchArgs = Parameters<
   ReturnType<typeof useMutation<typeof api.workspace.createNodesBatch>>
 >[0];
+type InsertNodeAboveArgs = Parameters<
+  ReturnType<typeof useMutation<typeof api.workspace.insertNodeAbove>>
+>[0];
 type SplitNodeArgs = Parameters<ReturnType<typeof useMutation<typeof api.workspace.splitNode>>>[0];
 type CompleteTaskPageTaskArgs = Parameters<
   ReturnType<typeof useMutation<typeof api.workspace.completeTaskPageTask>>
 >[0];
 type UpdateNodeMutation = (args: UpdateNodeArgs) => Promise<unknown>;
 type CreateNodesBatchMutation = (args: CreateNodesBatchArgs) => Promise<Doc<"nodes">[]>;
+type InsertNodeAboveMutation = (args: InsertNodeAboveArgs) => Promise<{
+  insertedNode: Doc<"nodes"> | null;
+  shiftedNode: Doc<"nodes"> | null;
+}>;
 type MoveNodeMutation = (args: MoveNodeArgs) => Promise<unknown>;
 type SplitNodeMutation = (args: SplitNodeArgs) => Promise<unknown>;
 type CompleteTaskPageTaskMutation = (args: CompleteTaskPageTaskArgs) => Promise<unknown>;
@@ -2962,6 +2970,7 @@ function ConfiguredWorkspace({
   const refreshSidebarLinks = useMutation(api.workspace.refreshSidebarLinks);
   const cancelEmbeddingRebuild = useMutation(api.workspace.cancelEmbeddingRebuild);
   const createNodesBatchRaw = useMutation(api.workspace.createNodesBatch);
+  const insertNodeAboveRaw = useMutation(api.workspace.insertNodeAbove);
   const updateNodeRaw = useMutation(api.workspace.updateNode);
   const updateNodesBatchRaw = useMutation(api.workspace.updateNodesBatch);
   const moveNodeRaw = useMutation(api.workspace.moveNode);
@@ -3034,6 +3043,11 @@ function ConfiguredWorkspace({
   const createNodesBatchMutation = createNodesBatchRaw.withOptimisticUpdate(
     (localStore, args) => {
       applyOptimisticNodeCreates(localStore, args);
+    },
+  );
+  const insertNodeAboveMutation = insertNodeAboveRaw.withOptimisticUpdate(
+    (localStore, args) => {
+      applyOptimisticInsertNodeAbove(localStore, args);
     },
   );
   const splitNodeMutation = splitNodeRaw.withOptimisticUpdate((localStore, args) => {
@@ -3163,6 +3177,21 @@ function ConfiguredWorkspace({
         args.nodes.length <= 1 ? "Could not add that item." : "Could not add those items.",
       ),
     [createNodesBatchMutation, runTrackedMutation],
+  );
+  const insertNodeAbove = useCallback(
+    (args: InsertNodeAboveArgs) =>
+      runTrackedMutation(
+        async () =>
+          (await insertNodeAboveMutation(args)) as {
+            insertedNode: Doc<"nodes"> | null;
+            shiftedNode: Doc<"nodes"> | null;
+          },
+        {
+          nodeIds: [args.nodeId],
+        },
+        "Could not split that item.",
+      ),
+    [insertNodeAboveMutation, runTrackedMutation],
   );
   const splitNode = useCallback(
     (args: SplitNodeArgs) =>
@@ -8694,6 +8723,7 @@ function ConfiguredWorkspace({
                           insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                           updateNode={updateNode}
                           moveNode={moveNode}
+                          insertNodeAbove={insertNodeAbove}
                           splitNode={splitNode}
                           replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                           setNodeTreeArchived={setNodeTreeArchived}
@@ -8833,6 +8863,7 @@ function ConfiguredWorkspace({
                           insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                           updateNode={updateNode}
                           moveNode={moveNode}
+                          insertNodeAbove={insertNodeAbove}
                           splitNode={splitNode}
                           replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                           setNodeTreeArchived={setNodeTreeArchived}
@@ -9567,6 +9598,7 @@ function ConfiguredWorkspace({
                       insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                       updateNode={updateNode}
                       moveNode={moveNode}
+                      insertNodeAbove={insertNodeAbove}
                       splitNode={splitNode}
                       replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
@@ -9813,6 +9845,7 @@ function ConfiguredWorkspace({
                           insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                           updateNode={updateNode}
                           moveNode={moveNode}
+                          insertNodeAbove={insertNodeAbove}
                           splitNode={splitNode}
                           replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                           setNodeTreeArchived={setNodeTreeArchived}
@@ -9863,6 +9896,7 @@ function ConfiguredWorkspace({
                             insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                             updateNode={updateNode}
                             moveNode={moveNode}
+                            insertNodeAbove={insertNodeAbove}
                             splitNode={splitNode}
                             replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                             setNodeTreeArchived={setNodeTreeArchived}
@@ -9919,6 +9953,7 @@ function ConfiguredWorkspace({
                       insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                       updateNode={updateNode}
                       moveNode={moveNode}
+                      insertNodeAbove={insertNodeAbove}
                       splitNode={splitNode}
                       replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
@@ -9971,6 +10006,7 @@ function ConfiguredWorkspace({
                         insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                         updateNode={updateNode}
                         moveNode={moveNode}
+                        insertNodeAbove={insertNodeAbove}
                         splitNode={splitNode}
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
@@ -10056,6 +10092,7 @@ function ConfiguredWorkspace({
                         insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                         updateNode={updateNode}
                         moveNode={moveNode}
+                        insertNodeAbove={insertNodeAbove}
                         splitNode={splitNode}
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
@@ -10109,6 +10146,7 @@ function ConfiguredWorkspace({
                         insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                         updateNode={updateNode}
                         moveNode={moveNode}
+                        insertNodeAbove={insertNodeAbove}
                         splitNode={splitNode}
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
@@ -10159,6 +10197,7 @@ function ConfiguredWorkspace({
                         insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                         updateNode={updateNode}
                         moveNode={moveNode}
+                        insertNodeAbove={insertNodeAbove}
                         splitNode={splitNode}
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
@@ -10247,6 +10286,7 @@ function ConfiguredWorkspace({
                         insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                         updateNode={updateNode}
                         moveNode={moveNode}
+                        insertNodeAbove={insertNodeAbove}
                         splitNode={splitNode}
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                         setNodeTreeArchived={setNodeTreeArchived}
@@ -10297,6 +10337,7 @@ function ConfiguredWorkspace({
                         insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                         updateNode={updateNode}
                         moveNode={moveNode}
+                        insertNodeAbove={insertNodeAbove}
                         splitNode={splitNode}
                         replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                         setNodeTreeArchived={setNodeTreeArchived}
@@ -10348,6 +10389,7 @@ function ConfiguredWorkspace({
                       insertOutlineClipboardNodes={insertOutlineClipboardNodes}
                       updateNode={updateNode}
                       moveNode={moveNode}
+                      insertNodeAbove={insertNodeAbove}
                       splitNode={splitNode}
                       replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
                       setNodeTreeArchived={setNodeTreeArchived}
@@ -11131,6 +11173,7 @@ function PageSection({
   insertOutlineClipboardNodes,
   updateNode,
   moveNode,
+  insertNodeAbove,
   splitNode,
   replaceNodeAndInsertSiblings,
   setNodeTreeArchived,
@@ -11185,6 +11228,7 @@ function PageSection({
   insertOutlineClipboardNodes: InsertOutlineClipboardNodesFn;
   updateNode: UpdateNodeMutation;
   moveNode: MoveNodeMutation;
+  insertNodeAbove: InsertNodeAboveMutation;
   splitNode: SplitNodeMutation;
   replaceNodeAndInsertSiblings: ReplaceNodeAndInsertSiblingsMutation;
   setNodeTreeArchived: SetNodeTreeArchivedMutation;
@@ -11279,6 +11323,7 @@ function PageSection({
           insertOutlineClipboardNodes={insertOutlineClipboardNodes}
           updateNode={updateNode}
           moveNode={moveNode}
+          insertNodeAbove={insertNodeAbove}
           splitNode={splitNode}
           replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
           setNodeTreeArchived={setNodeTreeArchived}
@@ -11333,6 +11378,7 @@ function OutlineNodeList({
   insertOutlineClipboardNodes,
   updateNode,
   moveNode,
+  insertNodeAbove,
   splitNode,
   replaceNodeAndInsertSiblings,
   setNodeTreeArchived,
@@ -11382,6 +11428,7 @@ function OutlineNodeList({
   insertOutlineClipboardNodes: InsertOutlineClipboardNodesFn;
   updateNode: UpdateNodeMutation;
   moveNode: MoveNodeMutation;
+  insertNodeAbove: InsertNodeAboveMutation;
   splitNode: SplitNodeMutation;
   replaceNodeAndInsertSiblings: ReplaceNodeAndInsertSiblingsMutation;
   setNodeTreeArchived: SetNodeTreeArchivedMutation;
@@ -11476,6 +11523,7 @@ function OutlineNodeList({
           insertOutlineClipboardNodes={insertOutlineClipboardNodes}
           updateNode={updateNode}
           moveNode={moveNode}
+          insertNodeAbove={insertNodeAbove}
           splitNode={splitNode}
           replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
           setNodeTreeArchived={setNodeTreeArchived}
@@ -12458,6 +12506,7 @@ function OutlineNodeEditor({
   insertOutlineClipboardNodes,
   updateNode,
   moveNode,
+  insertNodeAbove,
   splitNode,
   replaceNodeAndInsertSiblings,
   setNodeTreeArchived,
@@ -12512,6 +12561,7 @@ function OutlineNodeEditor({
   insertOutlineClipboardNodes: InsertOutlineClipboardNodesFn;
   updateNode: UpdateNodeMutation;
   moveNode: MoveNodeMutation;
+  insertNodeAbove: InsertNodeAboveMutation;
   splitNode: SplitNodeMutation;
   replaceNodeAndInsertSiblings: ReplaceNodeAndInsertSiblingsMutation;
   setNodeTreeArchived: SetNodeTreeArchivedMutation;
@@ -14250,30 +14300,16 @@ function OutlineNodeEditor({
         const optimisticEditorId = getNodeEditorId(
           `optimistic-node:${optimisticCreatedNodeClientId}` as Id<"nodes">,
         );
-        const createNodesPromise = createNodesBatch({
-          ownerKey,
-          pageId,
-          nodes: [
-            {
-              clientId: optimisticCreatedNodeClientId,
-              parentNodeId,
-              afterNodeId: previousSibling?._id ? (previousSibling._id as Id<"nodes">) : null,
-              text: normalizedHead.text,
-              kind: normalizedHead.kind,
-              taskStatus: normalizedHead.taskStatus ?? undefined,
-            },
-          ],
-        });
-        const updateNodePromise = updateNode({
+        const insertNodeAbovePromise = insertNodeAbove({
           ownerKey,
           nodeId: node._id as Id<"nodes">,
-          text: normalizedTail.text,
-          kind: normalizedTail.kind,
-          taskStatus: normalizedTail.taskStatus ?? undefined,
-          noteCompleted: normalizedTail.kind === "note" ? isNoteCompleted : false,
-          dueAt: normalizedTail.kind === "task" ? (node.dueAt ?? null) : null,
-          dueEndAt: normalizedTail.kind === "task" ? (node.dueEndAt ?? null) : null,
-          recurrenceFrequency: normalizedTail.kind === "task" ? recurrenceFrequency : null,
+          clientId: optimisticCreatedNodeClientId,
+          insertedText: normalizedHead.text,
+          insertedKind: normalizedHead.kind,
+          insertedTaskStatus: normalizedHead.taskStatus ?? undefined,
+          shiftedText: normalizedTail.text,
+          shiftedKind: normalizedTail.kind,
+          shiftedTaskStatus: normalizedTail.taskStatus ?? undefined,
         });
 
         window.requestAnimationFrame(() => {
@@ -14290,8 +14326,8 @@ function OutlineNodeEditor({
           });
         });
 
-        const [createdNodes] = await Promise.all([createNodesPromise, updateNodePromise]);
-        const createdNode = createdNodes[0] ?? null;
+        const result = await insertNodeAbovePromise;
+        const createdNode = result?.insertedNode ?? null;
         const createdNodeEditorId = createdNode
           ? getNodeEditorId(createdNode._id)
           : null;
@@ -14876,6 +14912,7 @@ function OutlineNodeEditor({
               insertOutlineClipboardNodes={insertOutlineClipboardNodes}
               updateNode={updateNode}
               moveNode={moveNode}
+              insertNodeAbove={insertNodeAbove}
               splitNode={splitNode}
               replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
               setNodeTreeArchived={setNodeTreeArchived}
