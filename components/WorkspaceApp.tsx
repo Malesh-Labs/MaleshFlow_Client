@@ -261,6 +261,13 @@ type ActionPaletteResult = {
   disabled?: boolean;
   onSelect: () => void | Promise<void>;
 };
+type PendingPalettePageAction =
+  | {
+      kind: "moveNodes";
+      nodeIds: string[];
+      count: number;
+    }
+  | null;
 type LinkTargetSearchResults = {
   pages: PageDoc[];
   nodes: Array<{
@@ -462,6 +469,9 @@ type InsertNodeAboveArgs = Parameters<
 type SplitNodeArgs = Parameters<ReturnType<typeof useMutation<typeof api.workspace.splitNode>>>[0];
 type CompleteTaskPageTaskArgs = Parameters<
   ReturnType<typeof useMutation<typeof api.workspace.completeTaskPageTask>>
+>[0];
+type MoveNodeTreesToPageArgs = Parameters<
+  ReturnType<typeof useMutation<typeof api.workspace.moveNodeTreesToPage>>
 >[0];
 type UpdateNodeMutation = (args: UpdateNodeArgs) => Promise<unknown>;
 type CreateNodesBatchMutation = (args: CreateNodesBatchArgs) => Promise<Doc<"nodes">[]>;
@@ -2744,6 +2754,9 @@ function ConfiguredWorkspace({
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("pages");
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteHighlightIndex, setPaletteHighlightIndex] = useState(0);
+  const [pendingPalettePageAction, setPendingPalettePageAction] =
+    useState<PendingPalettePageAction>(null);
+  const [actionContextSelectedNodeIds, setActionContextSelectedNodeIds] = useState<string[]>([]);
   const [textSearchResults, setTextSearchResults] = useState<NodeSearchResult[]>([]);
   const [nodeSearchResults, setNodeSearchResults] = useState<NodeSearchResult[]>([]);
   const [isTextSearchLoading, setIsTextSearchLoading] = useState(false);
@@ -2970,6 +2983,7 @@ function ConfiguredWorkspace({
   const refreshSidebarLinks = useMutation(api.workspace.refreshSidebarLinks);
   const cancelEmbeddingRebuild = useMutation(api.workspace.cancelEmbeddingRebuild);
   const createNodesBatchRaw = useMutation(api.workspace.createNodesBatch);
+  const moveNodeTreesToPageRaw = useMutation(api.workspace.moveNodeTreesToPage);
   const insertNodeAboveRaw = useMutation(api.workspace.insertNodeAbove);
   const updateNodeRaw = useMutation(api.workspace.updateNode);
   const updateNodesBatchRaw = useMutation(api.workspace.updateNodesBatch);
@@ -3167,6 +3181,20 @@ function ConfiguredWorkspace({
       ),
     [runTrackedMutation, setNodeTreesArchivedBatchMutation],
   );
+  const moveNodeTreesToPage = useCallback(
+    (args: MoveNodeTreesToPageArgs) =>
+      runTrackedMutation(
+        () => moveNodeTreesToPageRaw(args),
+        {
+          pageIds: [args.targetPageId],
+          nodeIds: args.nodeIds,
+        },
+        args.nodeIds.length === 1
+          ? "Could not move that item."
+          : "Could not move those items.",
+      ),
+    [moveNodeTreesToPageRaw, runTrackedMutation],
+  );
   const createNodesBatch = useCallback(
     (args: CreateNodesBatchArgs) =>
       runTrackedMutation(
@@ -3311,6 +3339,9 @@ function ConfiguredWorkspace({
 
   const switchPaletteMode = useCallback((mode: PaletteMode) => {
     lastPaletteModeRef.current = mode;
+    if (mode !== "pages") {
+      setPendingPalettePageAction(null);
+    }
     setPaletteMode(mode);
     setPaletteQuery("");
     setPaletteHighlightIndex(0);
@@ -3319,7 +3350,13 @@ function ConfiguredWorkspace({
   }, []);
 
   const openPalette = useCallback((mode: PaletteMode) => {
-    if (selectedNodeIds.size > 1) {
+    const selectedNodeSnapshot = [...selectedNodeIds];
+    if (mode === "actions") {
+      setActionContextSelectedNodeIds(selectedNodeSnapshot);
+    } else {
+      setActionContextSelectedNodeIds([]);
+    }
+    if (selectedNodeSnapshot.length > 1) {
       clearNodeSelection();
     }
     if (mode === "actions") {
@@ -3340,6 +3377,7 @@ function ConfiguredWorkspace({
     if (selectedNodeIds.size > 1) {
       clearNodeSelection();
     }
+    setActionContextSelectedNodeIds([]);
     setActionContextNodeId(nodeId);
     setPaletteMode("taskSchedule");
     setPaletteQuery("");
@@ -3366,6 +3404,7 @@ function ConfiguredWorkspace({
     if (selectedNodeIds.size > 1) {
       clearNodeSelection();
     }
+    setActionContextSelectedNodeIds([]);
     lastPaletteModeRef.current = "find";
     setPaletteMode("find");
     setPaletteQuery(query);
@@ -4016,6 +4055,84 @@ function ConfiguredWorkspace({
       selectedRoots,
     };
   }, [selectedNodeIds, selectionTrees, visibleNodeOrder, workspaceNodeMap]);
+  const getActionContextRootNodeIds = useCallback(() => {
+    const actionSelectionNodeIds =
+      actionContextSelectedNodeIds.length > 0
+        ? actionContextSelectedNodeIds
+        : selectedNodeIds.size > 0
+          ? [...selectedNodeIds]
+          : actionContextNodeId
+            ? [actionContextNodeId]
+            : [];
+    if (actionSelectionNodeIds.length === 0) {
+      return [] as string[];
+    }
+
+    const actionSelectionSet = new Set(actionSelectionNodeIds);
+    const selectedRootNodeIds = getSelectedRootNodeIds(
+      actionSelectionSet,
+      visibleNodeOrder,
+      workspaceNodeMap,
+    );
+
+    if (selectedRootNodeIds.length > 0) {
+      return selectedRootNodeIds;
+    }
+
+    return actionContextNodeId ? [actionContextNodeId] : [];
+  }, [
+    actionContextNodeId,
+    actionContextSelectedNodeIds,
+    selectedNodeIds,
+    visibleNodeOrder,
+    workspaceNodeMap,
+  ]);
+  const moveSelectedRootsToPage = useCallback(
+    async (targetPageId: Id<"pages">) => {
+      if (!ownerKey || !pendingPalettePageAction || pendingPalettePageAction.kind !== "moveNodes") {
+        return;
+      }
+
+      const targetPage = pagesById.get(targetPageId as string) ?? null;
+      if (!targetPage || targetPage.archived || isSidebarSpecialPage(targetPage)) {
+        setCopySnackbarMessage("Choose an active page as the destination.");
+        return;
+      }
+
+      const movedNodeIds = pendingPalettePageAction.nodeIds.map(
+        (nodeId) => nodeId as Id<"nodes">,
+      );
+      await moveNodeTreesToPage({
+        ownerKey,
+        targetPageId,
+        nodeIds: movedNodeIds,
+      });
+      setPaletteOpen(false);
+      setPendingPalettePageAction(null);
+      setActionContextSelectedNodeIds([]);
+      setPaletteQuery("");
+      setPaletteHighlightIndex(0);
+      setPaletteMode("pages");
+      setTextSearchResults([]);
+      setNodeSearchResults([]);
+      setSelectedPageId(targetPageId);
+      setLocationPageId(targetPageId);
+      writePageIdToHistory(targetPageId, "push", targetPage.title);
+      setPendingRevealNodeId(movedNodeIds[movedNodeIds.length - 1] as string);
+      clearNodeSelection();
+      setCopySnackbarMessage(
+        `Moved ${movedNodeIds.length} item${movedNodeIds.length === 1 ? "" : "s"} to ${targetPage.title}`,
+      );
+    },
+    [
+      clearNodeSelection,
+      moveNodeTreesToPage,
+      ownerKey,
+      pagesById,
+      pendingPalettePageAction,
+      setCopySnackbarMessage,
+    ],
+  );
   const copySelectedNodesToClipboard = useCallback((event: ClipboardEvent) => {
     if (selectedNodeIds.size === 0 || isTextEntryElement(event.target) || !event.clipboardData) {
       return;
@@ -5382,6 +5499,7 @@ function ConfiguredWorkspace({
   const actionResults = useMemo(() => {
     const favoriteContextPage = favoriteTargetPage;
     const favoriteContextNode = favoriteTargetNode;
+    const moveTargetRootNodeIds = getActionContextRootNodeIds();
     const isFavoriteContextNode =
       favoriteContextNode !== null &&
       favoritedNodeIds.has(favoriteContextNode._id as string);
@@ -5516,6 +5634,28 @@ function ConfiguredWorkspace({
         },
       },
       {
+        key: "move-selected",
+        title: "Move",
+        subtitle:
+          moveTargetRootNodeIds.length > 0
+            ? `Move ${moveTargetRootNodeIds.length} highlighted item${moveTargetRootNodeIds.length === 1 ? "" : "s"} to another page.`
+            : "Highlight one or more items, then choose a destination page.",
+        keywords: ["move", "send", "relocate", "page", "highlighted", "selected", "items"],
+        actionLabel: "Choose",
+        disabled: moveTargetRootNodeIds.length === 0,
+        onSelect: () => {
+          if (moveTargetRootNodeIds.length === 0) {
+            return;
+          }
+          setPendingPalettePageAction({
+            kind: "moveNodes",
+            nodeIds: moveTargetRootNodeIds,
+            count: moveTargetRootNodeIds.length,
+          });
+          switchPaletteMode("pages");
+        },
+      },
+      {
         key: "task-schedule",
         title: "Set Task Schedule",
         subtitle: taskScheduleTargetNode
@@ -5641,6 +5781,7 @@ function ConfiguredWorkspace({
     favoriteTargetPage,
     favoritedNodeIds,
     favoritedPageIds,
+    getActionContextRootNodeIds,
     isCreatingPage,
     isCreatingPlannerPage,
     isPreparingTaskCalendarFeed,
@@ -5678,6 +5819,15 @@ function ConfiguredWorkspace({
 
     return () => window.clearTimeout(timeoutId);
   }, [copySnackbarMessage]);
+
+  useEffect(() => {
+    if (paletteOpen) {
+      return;
+    }
+
+    setPendingPalettePageAction(null);
+    setActionContextSelectedNodeIds([]);
+  }, [paletteOpen]);
 
   useEffect(() => {
     if (!syncErrorMessage) {
@@ -7838,6 +7988,8 @@ function ConfiguredWorkspace({
   const handleSelectPage = useCallback((pageId: Id<"pages">) => {
     const page = pagesById.get(pageId as string);
     setIsWorkspaceChatOpen(false);
+    setPendingPalettePageAction(null);
+    setActionContextSelectedNodeIds([]);
     setSelectedPageId(pageId);
     setLocationPageId(pageId);
     writePageIdToHistory(pageId, "push", page?.title ?? null);
@@ -7892,6 +8044,8 @@ function ConfiguredWorkspace({
 
   const handleOpenFavoritedNode = useCallback(
     (pageId: Id<"pages">, nodeId: Id<"nodes">, isSidebarFavoriteNode: boolean) => {
+      setPendingPalettePageAction(null);
+      setActionContextSelectedNodeIds([]);
       if (isSidebarFavoriteNode) {
         setIsWorkspaceChatOpen(false);
         setIsSidebarCollapsed(false);
@@ -7915,6 +8069,27 @@ function ConfiguredWorkspace({
       setNodeSearchResults([]);
     },
     [clearNodeSelection, handleOpenLinkedNode],
+  );
+
+  const handlePalettePageResultSelect = useCallback(
+    async (page: PalettePageFavoriteResult) => {
+      if (pendingPalettePageAction?.kind === "moveNodes") {
+        await moveSelectedRootsToPage(page.pageId);
+        return;
+      }
+
+      if (page.kind === "favoriteNode" && page.nodeId) {
+        handleOpenFavoritedNode(
+          page.pageId,
+          page.nodeId,
+          page.isSidebarSpecialPage === true,
+        );
+        return;
+      }
+
+      handleSelectPage(page.pageId);
+    },
+    [handleOpenFavoritedNode, handleSelectPage, moveSelectedRootsToPage, pendingPalettePageAction],
   );
 
   const toggleNodeFavorite = useCallback(
@@ -8319,15 +8494,7 @@ function ConfiguredWorkspace({
       if (paletteMode === "pages") {
         const highlighted = paletteResults[paletteHighlightIndex];
         if (highlighted) {
-          if (highlighted.kind === "favoriteNode" && highlighted.nodeId) {
-            handleOpenFavoritedNode(
-              highlighted.pageId,
-              highlighted.nodeId,
-              highlighted.isSidebarSpecialPage === true,
-            );
-          } else {
-            handleSelectPage(highlighted.pageId);
-          }
+          void handlePalettePageResultSelect(highlighted);
         }
         return;
       }
@@ -10608,6 +10775,11 @@ function ConfiguredWorkspace({
                 </p>
               ) : (
                 <div className="flex items-center gap-3">
+                  {pendingPalettePageAction?.kind === "moveNodes" && paletteMode === "pages" ? (
+                    <span className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                      Move {pendingPalettePageAction.count} item{pendingPalettePageAction.count === 1 ? "" : "s"} to…
+                    </span>
+                  ) : null}
                   <input
                     ref={paletteInputRef}
                     value={paletteQuery}
@@ -10618,7 +10790,9 @@ function ConfiguredWorkspace({
                     onKeyDown={handlePaletteKeyDown}
                     placeholder={
                       paletteMode === "pages"
-                        ? "Search pages and favorites..."
+                        ? pendingPalettePageAction?.kind === "moveNodes"
+                          ? "Choose a destination page..."
+                          : "Search pages and favorites..."
                         : paletteMode === "find"
                           ? "Find exact text in notes and tasks... Use || for OR"
                           : paletteMode === "nodes"
@@ -10654,16 +10828,7 @@ function ConfiguredWorkspace({
                       data-palette-item-index={index}
                       onMouseEnter={() => setPaletteHighlightIndex(index)}
                       onClick={() => {
-                        if (page.kind === "favoriteNode" && page.nodeId) {
-                          handleOpenFavoritedNode(
-                            page.pageId,
-                            page.nodeId,
-                            page.isSidebarSpecialPage === true,
-                          );
-                          return;
-                        }
-
-                        handleSelectPage(page.pageId);
+                        void handlePalettePageResultSelect(page);
                       }}
                       className={clsx(
                         "flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition",

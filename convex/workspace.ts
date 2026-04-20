@@ -3949,6 +3949,96 @@ export const reorderNode = mutation({
   },
 });
 
+export const moveNodeTreesToPage = mutation({
+  args: {
+    ownerKey: v.string(),
+    targetPageId: v.id("pages"),
+    nodeIds: v.array(v.id("nodes")),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    if (args.nodeIds.length === 0) {
+      return {
+        movedNodeIds: [] as Id<"nodes">[],
+      };
+    }
+
+    const targetPage = await ctx.db.get(args.targetPageId);
+    if (!targetPage || targetPage.archived || isSidebarSpecialPage(targetPage)) {
+      throw new Error("Choose an active page as the destination.");
+    }
+
+    const now = getTimestamp();
+    const touchedPageIds = new Set<Id<"pages">>([args.targetPageId]);
+    const existingTargetRoots = (await listSiblingNodes(
+      ctx.db,
+      args.targetPageId,
+      null,
+    )).sort((left, right) => left.position - right.position);
+    let afterNodeId =
+      ((existingTargetRoots[existingTargetRoots.length - 1]?._id as Id<"nodes"> | undefined) ??
+        null);
+
+    for (const nodeId of args.nodeIds) {
+      const node = await ctx.db.get(nodeId);
+      if (!node || node.archived) {
+        throw new Error("Node not found.");
+      }
+
+      const page = await ctx.db.get(node.pageId);
+      if (!page || page.archived) {
+        throw new Error("Cannot move items from an archived page.");
+      }
+
+      const subtree = await collectNodeTree(ctx.db, nodeId);
+      if (subtree.length === 0) {
+        continue;
+      }
+
+      touchedPageIds.add(node.pageId);
+      const nextPosition = await computeNodePosition(
+        ctx.db,
+        args.targetPageId,
+        null,
+        afterNodeId,
+      );
+
+      await ctx.db.patch(nodeId, {
+        pageId: args.targetPageId,
+        parentNodeId: null,
+        position: nextPosition,
+        updatedAt: now,
+      });
+
+      for (const descendant of subtree) {
+        if (descendant._id === nodeId) {
+          continue;
+        }
+        await ctx.db.patch(descendant._id, {
+          pageId: args.targetPageId,
+          updatedAt: now,
+        });
+      }
+
+      const refreshedSubtree = await collectNodeTree(ctx.db, nodeId);
+      for (const movedNode of refreshedSubtree) {
+        await syncLinksForNode(ctx.db, movedNode);
+        await enqueueNodeEmbeddingRefresh(ctx, movedNode._id);
+      }
+
+      afterNodeId = nodeId;
+    }
+
+    for (const pageId of touchedPageIds) {
+      await enqueuePageRootEmbeddingRefresh(ctx, pageId);
+    }
+
+    return {
+      movedNodeIds: args.nodeIds,
+    };
+  },
+});
+
 export const archiveNode = mutation({
   args: {
     ownerKey: v.string(),
