@@ -8930,7 +8930,7 @@ function ConfiguredWorkspace({
 
             {!isSidebarCollapsed ? (
               <div className="mt-6 flex flex-col">
-                <div className="order-3">
+                <div className="order-3 mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                     Sidebar
