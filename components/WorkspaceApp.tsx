@@ -3798,6 +3798,29 @@ function ConfiguredWorkspace({
       ),
     [sidebarFavorites],
   );
+  const sortedSidebarFavorites = useMemo(() => {
+    if (!sidebarFavorites) {
+      return [];
+    }
+
+    return [...sidebarFavorites].sort((left, right) => {
+      if (left.targetKind !== right.targetKind) {
+        return left.targetKind === "page" ? -1 : 1;
+      }
+
+      if (left.targetKind === "page") {
+        return left.pageTitle.localeCompare(right.pageTitle, undefined, {
+          sensitivity: "base",
+        });
+      }
+
+      const leftLabel = (left.nodeText || left.pageTitle || "Untitled item").trim();
+      const rightLabel = (right.nodeText || right.pageTitle || "Untitled item").trim();
+      return leftLabel.localeCompare(rightLabel, undefined, {
+        sensitivity: "base",
+      });
+    });
+  }, [sidebarFavorites]);
   const pinnedAllPageIds = useMemo(
     () =>
       new Set(
@@ -8990,7 +9013,8 @@ function ConfiguredWorkspace({
             </div>
 
             {!isSidebarCollapsed ? (
-              <div className="mt-6">
+              <div className="mt-6 flex flex-col">
+                <div className="order-3">
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                     Sidebar
@@ -9149,8 +9173,9 @@ function ConfiguredWorkspace({
                     ) : null}
                   </div>
                 )}
+                </div>
 
-                <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
+                <div className="order-4 mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
                   <div className="flex items-center justify-between gap-3">
                     <p
                       className={clsx(
@@ -9223,7 +9248,7 @@ function ConfiguredWorkspace({
                   </div>
                 </div>
 
-                <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
+                <div className="order-2 mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                       All
@@ -9385,7 +9410,7 @@ function ConfiguredWorkspace({
                   </div>
                 </div>
 
-                <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
+                <div className="order-1 mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                       Favorites
@@ -9415,13 +9440,13 @@ function ConfiguredWorkspace({
                         <p className="text-sm text-[var(--workspace-text-faint)]">
                           Loading favorites…
                         </p>
-                      ) : sidebarFavorites.length === 0 ? (
+                      ) : sortedSidebarFavorites.length === 0 ? (
                         <p className="text-sm text-[var(--workspace-text-faint)]">
                           No favorites yet.
                         </p>
                       ) : (
                         <div className="space-y-1">
-                          {sidebarFavorites.map((favorite) => {
+                          {sortedSidebarFavorites.map((favorite) => {
                             const isSelectedFavoritePage =
                               selectedPageId === favorite.pageId &&
                               (favorite.targetKind === "page" || !favorite.isSidebarSpecialPage);
@@ -9494,7 +9519,7 @@ function ConfiguredWorkspace({
                   </div>
                 </div>
 
-                <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
+                <div className="order-5 mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                       Tags
@@ -9549,7 +9574,7 @@ function ConfiguredWorkspace({
                   </div>
                 </div>
 
-                <div className="mt-8 border-t border-[var(--workspace-border-soft)] pt-5 opacity-75">
+                <div className="order-6 mt-8 border-t border-[var(--workspace-border-soft)] pt-5 opacity-75">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                       Archive
