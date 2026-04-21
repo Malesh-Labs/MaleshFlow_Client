@@ -144,6 +144,12 @@ type SetNodeTreeArchivedFn = (args: {
   archived: boolean;
 }) => Promise<unknown>;
 
+type SetNodeTreesArchivedBatchFn = (args: {
+  ownerKey: string;
+  nodeIds: Id<"nodes">[];
+  archived: boolean;
+}) => Promise<unknown>;
+
 type UseWorkspaceHistoryArgs = {
   ownerKey: string;
   selectedPageId: Id<"pages"> | null;
@@ -153,6 +159,7 @@ type UseWorkspaceHistoryArgs = {
   updateNode: UpdateNodeFn;
   moveNode: MoveNodeFn;
   setNodeTreeArchived: SetNodeTreeArchivedFn;
+  setNodeTreesArchivedBatch: SetNodeTreesArchivedBatchFn;
   isDisabled?: boolean;
   draftCheckpointDelayMs?: number;
 };
@@ -270,6 +277,7 @@ export function useWorkspaceHistoryController({
   updateNode,
   moveNode,
   setNodeTreeArchived,
+  setNodeTreesArchivedBatch,
   isDisabled = false,
   draftCheckpointDelayMs = 750,
 }: UseWorkspaceHistoryArgs) {
@@ -646,10 +654,17 @@ export function useWorkspaceHistoryController({
         }
 
         case "create_nodes": {
-          for (const node of entry.nodes) {
+          const nodeIds = entry.nodes.map((node) => node.nodeId);
+          if (nodeIds.length === 1) {
             await setNodeTreeArchived({
               ownerKey,
-              nodeId: node.nodeId,
+              nodeId: nodeIds[0]!,
+              archived: isUndo,
+            });
+          } else if (nodeIds.length > 1) {
+            await setNodeTreesArchivedBatch({
+              ownerKey,
+              nodeIds,
               archived: isUndo,
             });
           }
@@ -668,6 +683,32 @@ export function useWorkspaceHistoryController({
         }
 
         case "compound": {
+          const archiveEntries = entry.entries.filter(
+            (
+              child,
+            ): child is Extract<HistoryEntry, { type: "archive_node_tree" }> =>
+              child.type === "archive_node_tree",
+          );
+          if (archiveEntries.length === entry.entries.length && archiveEntries.length > 0) {
+            const nodeIds = archiveEntries.map((child) => child.nodeId);
+            if (nodeIds.length === 1) {
+              await setNodeTreeArchived({
+                ownerKey,
+                nodeId: nodeIds[0]!,
+                archived: !isUndo,
+              });
+            } else {
+              await setNodeTreesArchivedBatch({
+                ownerKey,
+                nodeIds,
+                archived: !isUndo,
+              });
+            }
+
+            scheduleFocus(isUndo ? entry.focusAfterUndoId : entry.focusAfterRedoId);
+            return;
+          }
+
           const orderedEntries = isUndo
             ? [...entry.entries].reverse()
             : entry.entries;
@@ -687,6 +728,7 @@ export function useWorkspaceHistoryController({
       renamePage,
       scheduleFocus,
       setNodeTreeArchived,
+      setNodeTreesArchivedBatch,
       setSelectedPage,
       syncCommittedValue,
       updateNode,

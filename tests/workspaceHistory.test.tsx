@@ -285,6 +285,7 @@ function HistoryHarness() {
     },
     moveNode: async () => undefined,
     setNodeTreeArchived: async () => undefined,
+    setNodeTreesArchivedBatch: async () => undefined,
     draftCheckpointDelayMs: 20,
   });
 

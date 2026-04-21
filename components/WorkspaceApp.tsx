@@ -3425,6 +3425,7 @@ function ConfiguredWorkspace({
     updateNode: updateNodeRaw,
     moveNode: moveNodeRaw,
     setNodeTreeArchived: setNodeTreeArchivedRaw,
+    setNodeTreesArchivedBatch: setNodeTreesArchivedBatchRaw,
     isDisabled: activePageTree?.page?.archived ?? false,
   });
 
