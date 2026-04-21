@@ -160,20 +160,11 @@ function updateSidebarTreeQueries(
 }
 
 function updateSimpleTaskViewQueries(
-  localStore: OptimisticLocalStore,
-  ownerKey: string,
-  updater: (value: SimpleTaskViewPageResult[]) => SimpleTaskViewPageResult[],
+  _localStore: OptimisticLocalStore,
+  _ownerKey: string,
+  _updater: (value: SimpleTaskViewPageResult[]) => SimpleTaskViewPageResult[],
 ) {
-  for (const queryResult of localStore.getAllQueries(api.workspace.getSimpleTaskView)) {
-    if (queryResult.args.ownerKey !== ownerKey || !queryResult.value) {
-      continue;
-    }
-    localStore.setQuery(
-      api.workspace.getSimpleTaskView,
-      queryResult.args,
-      updater(queryResult.value as SimpleTaskViewPageResult[]) as never,
-    );
-  }
+  return;
 }
 
 function updateListPagesQueries(

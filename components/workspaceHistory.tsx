@@ -498,6 +498,7 @@ export function useWorkspaceHistoryController({
       fromEditorId: string,
       toEditorId: string,
       nextTarget?: TrackedEditorTarget,
+      shouldRestoreFocus = false,
     ) => {
       if (fromEditorId === toEditorId) {
         return;
@@ -515,6 +516,8 @@ export function useWorkspaceHistoryController({
       }
 
       if (pendingFocusEditorIdRef.current === fromEditorId) {
+        pendingFocusEditorIdRef.current = toEditorId;
+      } else if (shouldRestoreFocus) {
         pendingFocusEditorIdRef.current = toEditorId;
       }
     },

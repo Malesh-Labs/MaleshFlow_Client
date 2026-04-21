@@ -132,7 +132,6 @@ const OUTLINE_CLIPBOARD_MIME_TYPE = "application/x-maleshflow-outline";
 const OUTLINE_CUT_CLIPBOARD_MIME_TYPE = "application/x-maleshflow-outline-cut";
 const WORKSPACE_AI_CHAT_TEXTAREA_ID = "workspace-ai-chat-textarea";
 const WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY = "maleshflow-workspace-ai-chat-open";
-const SIMPLE_VIEW_OPEN_STORAGE_KEY = "maleshflow-simple-view-open";
 const WORKSPACE_INBOX_TEXTAREA_ID = "workspace-inbox-textarea";
 const WORKSPACE_RANDOM_BOX_TEXTAREA_ID = "workspace-random-box-textarea";
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
@@ -223,11 +222,6 @@ type SidebarTreeResult = {
   nodes: Doc<"nodes">[];
   linkedPageIds: Id<"pages">[];
   nodeBacklinkCounts: Record<string, number>;
-};
-type SimpleTaskViewPageResult = {
-  page: PageDoc;
-  nodes: Doc<"nodes">[];
-  loadWarning?: string | null;
 };
 type PaletteMode =
   | "pages"
@@ -2722,13 +2716,11 @@ function ConfiguredWorkspace({
   const [isWorkspaceChatOpen, setIsWorkspaceChatOpen] = useState(() =>
     readStoredBoolean(WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY, false),
   );
-  const [isSimpleViewOpen, setIsSimpleViewOpen] = useState(() =>
-    readStoredBoolean(SIMPLE_VIEW_OPEN_STORAGE_KEY, false),
-  );
   const [isInboxOpen, setIsInboxOpen] = useState(false);
   const [inboxDraft, setInboxDraft] = useState("");
   const [isInboxDirty, setIsInboxDirty] = useState(false);
   const [isInboxSaving, setIsInboxSaving] = useState(false);
+  const [isInboxClearing, setIsInboxClearing] = useState(false);
   const [inboxSaveError, setInboxSaveError] = useState("");
   const [isRandomBoxOpen, setIsRandomBoxOpen] = useState(false);
   const [randomBoxDraft, setRandomBoxDraft] = useState("");
@@ -2865,10 +2857,6 @@ function ConfiguredWorkspace({
     api.workspace.getSidebarTree,
     ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
   ) as SidebarTreeResult | null | undefined;
-  const simpleTaskView = useQuery(
-    api.workspace.getSimpleTaskView,
-    ownerKey && isOwnerKeyValid && isSimpleViewOpen ? { ownerKey } : SKIP,
-  ) as SimpleTaskViewPageResult[] | undefined;
 
   const recomputePendingSyncSnapshot = useCallback(() => {
     const nodeIds = new Set<string>();
@@ -2960,6 +2948,7 @@ function ConfiguredWorkspace({
   const completeTaskPageTaskRaw = useMutation(api.workspace.completeTaskPageTask);
   const setModelPageCustomPrompt = useMutation(api.workspace.setModelPageCustomPrompt);
   const setWorkspaceInbox = useMutation(api.workspace.setWorkspaceInbox);
+  const clearWorkspaceInbox = useMutation(api.workspace.clearWorkspaceInbox);
   const setWorkspaceRandomBox = useMutation(api.workspace.setWorkspaceRandomBox);
   const setSidebarFavoriteRaw = useMutation(api.workspace.setSidebarFavorite);
   const mergePinnedPagesInAllSidebar = useMutation(api.workspace.mergePinnedPagesInAllSidebar);
@@ -3393,19 +3382,7 @@ function ConfiguredWorkspace({
     setPaletteMode("pages");
     setTextSearchResults([]);
     setNodeSearchResults([]);
-    setIsSimpleViewOpen(false);
     setIsWorkspaceChatOpen((current) => !current);
-  }, []);
-
-  const toggleSimpleView = useCallback(() => {
-    setPaletteOpen(false);
-    setPaletteQuery("");
-    setPaletteMode("pages");
-    setTextSearchResults([]);
-    setNodeSearchResults([]);
-    setWorkspaceChatError("");
-    setIsWorkspaceChatOpen(false);
-    setIsSimpleViewOpen((current) => !current);
   }, []);
 
   const isSidebarQueryLoading =
@@ -3614,23 +3591,13 @@ function ConfiguredWorkspace({
     (node): node is TreeNode => Boolean(node),
   );
   const scratchpadSelectionRoots = scratchpadVisibleRoots.flatMap((node) => node.children);
-  const simpleTaskPageGroups = useMemo(
-    () =>
-      (simpleTaskView ?? []).map((entry) => ({
-        ...entry,
-        tree: toTreeNodes(entry.nodes),
-        nodeMap: new Map(entry.nodes.map((node) => [node._id as string, node])),
-      })),
-    [simpleTaskView],
-  );
   const preHydrationCollapsedNodeIds = useMemo(
     () =>
       new Set([
         ...collectExpandableNodeIds(sidebarNodes),
         ...collectExpandableNodeIds(tree),
-        ...simpleTaskPageGroups.flatMap((group) => collectExpandableNodeIds(group.tree)),
       ]),
-    [sidebarNodes, simpleTaskPageGroups, tree],
+    [sidebarNodes, tree],
   );
   const effectiveCollapsedNodeIds = hasHydratedSessionUiState
     ? collapsedNodeIds
@@ -3654,32 +3621,10 @@ function ConfiguredWorkspace({
             )
         : flattenTreeNodes(genericRoots, effectiveCollapsedNodeIds);
   const sidebarVisibleRows = flattenTreeNodes(sidebarNodes, effectiveCollapsedNodeIds);
-  const simpleOpenTaskCount = useMemo(
-    () =>
-      simpleTaskPageGroups.reduce(
-        (count, group) =>
-          count +
-          group.nodes.filter((node) => node.kind === "task" && node.taskStatus !== "done").length,
-        0,
-      ),
-    [simpleTaskPageGroups],
-  );
-  const emptyNodeBacklinkCounts = useMemo(() => new Map<string, number>(), []);
-  const simpleVisibleRows = useMemo(
-    () =>
-      isSimpleViewOpen
-        ? simpleTaskPageGroups.flatMap((group) =>
-            flattenTreeNodes(group.tree, effectiveCollapsedNodeIds),
-          )
-        : [],
-    [effectiveCollapsedNodeIds, isSimpleViewOpen, simpleTaskPageGroups],
-  );
-  const visibleNodeOrder = (
-    isSimpleViewOpen ? simpleVisibleRows : [...sidebarVisibleRows, ...pageVisibleRows]
-  ).map((node) => node._id);
+  const visibleNodeOrder = [...sidebarVisibleRows, ...pageVisibleRows].map((node) => node._id);
   const selectionTrees = useMemo(
-    () => (isSimpleViewOpen ? simpleTaskPageGroups.flatMap((group) => group.tree) : [...sidebarNodes, ...tree]),
-    [isSimpleViewOpen, sidebarNodes, simpleTaskPageGroups, tree],
+    () => [...sidebarNodes, ...tree],
+    [sidebarNodes, tree],
   );
   const revealNodes = useMemo(() => {
     if (!pendingRevealNodeId) {
@@ -3821,13 +3766,8 @@ function ConfiguredWorkspace({
     for (const node of activePageTree?.nodes ?? []) {
       next.set(node._id as string, node);
     }
-    for (const group of simpleTaskPageGroups) {
-      for (const node of group.nodes) {
-        next.set(node._id as string, node);
-      }
-    }
     return next;
-  }, [activePageTree?.nodes, sidebarTree?.nodes, simpleTaskPageGroups]);
+  }, [activePageTree?.nodes, sidebarTree?.nodes]);
   const paletteContextNodeId =
     selectedNodeIds.size === 1 ? ([...selectedNodeIds][0] ?? null) : actionContextNodeId;
   const taskScheduleTargetNode = useMemo(() => {
@@ -5298,7 +5238,6 @@ function ConfiguredWorkspace({
     window.sessionStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
     window.sessionStorage.removeItem(WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY);
-    window.sessionStorage.removeItem(SIMPLE_VIEW_OPEN_STORAGE_KEY);
     window.localStorage.removeItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(FAVORITES_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(SIDEBAR_TEXT_SECTION_COLLAPSE_STORAGE_KEY);
@@ -5848,11 +5787,48 @@ function ConfiguredWorkspace({
   }, [workspaceInbox?.text]);
 
   const closeInbox = useCallback(() => {
+    if (isInboxClearing) {
+      return;
+    }
     if (isInboxDirty) {
       void saveInboxDraft(inboxDraftRef.current);
     }
     setIsInboxOpen(false);
-  }, [isInboxDirty, saveInboxDraft]);
+  }, [isInboxClearing, isInboxDirty, saveInboxDraft]);
+  const clearInboxToHistory = useCallback(async () => {
+    if (!ownerKey || !isOwnerKeyValid || isInboxClearing) {
+      return;
+    }
+
+    setIsInboxClearing(true);
+    setInboxSaveError("");
+    try {
+      const result = await clearWorkspaceInbox({
+        ownerKey,
+        text: inboxDraftRef.current,
+      });
+      setInboxDraft("");
+      inboxDraftRef.current = "";
+      setIsInboxDirty(false);
+      setCopySnackbarMessage(
+        result.archived
+          ? 'Moved inbox text to "Inbox History"'
+          : "Inbox cleared",
+      );
+    } catch (error) {
+      setInboxSaveError(
+        error instanceof Error ? error.message : "Could not clear inbox.",
+      );
+    } finally {
+      setIsInboxClearing(false);
+    }
+  }, [
+    clearWorkspaceInbox,
+    isInboxClearing,
+    isOwnerKeyValid,
+    ownerKey,
+    setCopySnackbarMessage,
+  ]);
 
   useEffect(() => {
     if (typeof workspaceRandomBox?.text !== "string") {
@@ -5922,7 +5898,7 @@ function ConfiguredWorkspace({
   }, []);
 
   useEffect(() => {
-    if (!isInboxOpen || !isInboxDirty) {
+    if (!isInboxOpen || !isInboxDirty || isInboxClearing) {
       return;
     }
 
@@ -5931,7 +5907,7 @@ function ConfiguredWorkspace({
     }, 450);
 
     return () => window.clearTimeout(timeoutId);
-  }, [isInboxDirty, isInboxOpen, saveInboxDraft]);
+  }, [isInboxClearing, isInboxDirty, isInboxOpen, saveInboxDraft]);
 
   useEffect(() => {
     if (!isRandomBoxOpen || !isRandomBoxDirty) {
@@ -7184,17 +7160,6 @@ function ConfiguredWorkspace({
       isWorkspaceChatOpen ? "true" : "false",
     );
   }, [isWorkspaceChatOpen]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    window.sessionStorage.setItem(
-      SIMPLE_VIEW_OPEN_STORAGE_KEY,
-      isSimpleViewOpen ? "true" : "false",
-    );
-  }, [isSimpleViewOpen]);
 
   useEffect(() => {
     if (
@@ -8530,21 +8495,6 @@ function ConfiguredWorkspace({
           <button
             type="button"
             onMouseDown={(event) => event.preventDefault()}
-            onClick={toggleSimpleView}
-            title="Simple view"
-            aria-label="Simple view"
-            className={clsx(
-              "flex h-10 w-10 items-center justify-center border text-lg transition",
-              isSimpleViewOpen
-                ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
-                : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
-            )}
-          >
-            ☰
-          </button>
-          <button
-            type="button"
-            onMouseDown={(event) => event.preventDefault()}
             onClick={toggleWorkspaceChat}
             title="AI chat"
             aria-label="AI chat"
@@ -8767,125 +8717,10 @@ function ConfiguredWorkspace({
           </div>
         </div>
       ) : null}
-      {isSimpleViewOpen ? (
-        <div className="mx-auto flex h-screen w-full max-w-7xl flex-col px-4 pb-[calc(env(safe-area-inset-bottom,0px)+7rem)] pt-24 sm:px-8 sm:pb-8 sm:pt-28">
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]">
-            <div className="border-b border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-5 py-4">
-              <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
-                Simple
-              </p>
-              <p className="mt-1 text-sm text-[var(--workspace-text-faint)]">
-                {simpleTaskPageGroups.length} page{simpleTaskPageGroups.length === 1 ? "" : "s"} · {simpleOpenTaskCount} open task{simpleOpenTaskCount === 1 ? "" : "s"}
-              </p>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
-              {typeof simpleTaskView === "undefined" ? (
-                <p className="text-sm text-[var(--workspace-text-faint)]">
-                  Loading planner and task pages…
-                </p>
-              ) : simpleTaskPageGroups.length === 0 ? (
-                <p className="text-sm text-[var(--workspace-text-faint)]">
-                  No active planner or included task pages are available right now.
-                </p>
-              ) : (
-                <div className="space-y-8">
-                  {simpleTaskPageGroups.map((group) => (
-                    <section
-                      key={group.page._id}
-                      className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)]"
-                    >
-                      <div className="flex items-center justify-between gap-4 border-b border-[var(--workspace-border-subtle)] px-4 py-3">
-                        <div className="min-w-0">
-                          <p className="truncate text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-accent)]">
-                            {group.page.title}
-                          </p>
-                          <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]">
-                            {group.nodes.filter((node) => node.parentNodeId === null).length} root item{group.nodes.filter((node) => node.parentNodeId === null).length === 1 ? "" : "s"}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setIsSimpleViewOpen(false);
-                            handleSelectPage(group.page._id);
-                          }}
-                          className="shrink-0 border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                        >
-                          Open Page
-                        </button>
-                      </div>
-                      {group.loadWarning ? (
-                        <div className="border-b border-[var(--workspace-border-subtle)] px-4 py-3 text-sm text-[var(--workspace-text-faint)]">
-                          {group.loadWarning}
-                        </div>
-                      ) : null}
-                      <div className="px-4 py-4">
-                        <OutlineNodeList
-                          nodes={group.tree}
-                          ownerKey={ownerKey}
-                          pageId={group.page._id as Id<"pages">}
-                          nodeBacklinkCounts={emptyNodeBacklinkCounts}
-                          nodeMap={group.nodeMap}
-                          createNodesBatch={createNodesBatch}
-                          insertOutlineClipboardNodes={insertOutlineClipboardNodes}
-                          updateNode={updateNode}
-                          moveNode={moveNode}
-                          insertNodeAbove={insertNodeAbove}
-                          splitNode={splitNode}
-                          replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
-                          setNodeTreeArchived={setNodeTreeArchived}
-                          isPageReadOnly={false}
-                          collapsedNodeIds={effectiveCollapsedNodeIds}
-                          pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
-                          selectedNodeIds={selectedNodeIds}
-                          selectionAnchorNodeId={selectionAnchorNodeId}
-                          onToggleNodeCollapsed={toggleNodeCollapsed}
-                          onSelectSingleNode={selectSingleNode}
-                          onSelectNodeRange={selectNodeRange}
-                          onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
-                          pendingInsertedComposer={pendingInsertedComposer}
-                          onOpenInsertedComposer={openInsertedComposer}
-                          onClearInsertedComposer={clearInsertedComposer}
-                          onBeginTextEditing={clearNodeSelection}
-                          activeDraggedNodeId={null}
-                          activeDraggedNodePayload={null}
-                          onSetActiveDraggedNodeId={() => {}}
-                          onSetActiveDraggedNodePayload={() => {}}
-                          onSetSelectedNodeIds={setExplicitSelectedNodeIds}
-                          buildDraggedNodePayload={buildDraggedNodePayload}
-                          onDropDraggedNodes={dropDraggedNodes}
-                          onSelectionStart={beginNodeSelection}
-                          onSelectionExtend={extendNodeSelection}
-                          availableTags={sortedTags}
-                          pagesByTitle={pagesByTitle}
-                          pagesById={pagesById}
-                          favoritedNodeIds={favoritedNodeIds}
-                          onOpenPage={(pageId) => {
-                            setIsSimpleViewOpen(false);
-                            handleSelectPage(pageId);
-                          }}
-                          onOpenNode={(pageId, nodeId) => {
-                            setIsSimpleViewOpen(false);
-                            handleOpenLinkedNode(pageId, nodeId);
-                          }}
-                          onOpenTag={openFindPaletteForQuery}
-                          onOpenFindQuery={openFindPaletteForQuery}
-                          onToggleNodeFavorite={toggleNodeFavorite}
-                          recurringCompletionMode={recurringCompletionMode}
-                        />
-                      </div>
-                    </section>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : null}
         <div
           className={clsx(
             "mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 pb-36 md:pb-44",
-            isWorkspaceChatOpen || isSimpleViewOpen ? "hidden" : "",
+            isWorkspaceChatOpen ? "hidden" : "",
           )}
         style={
           isMobileLayout
@@ -10940,11 +10775,21 @@ function ConfiguredWorkspace({
               </div>
               <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
                 {isInboxSaving ? <span>Saving…</span> : null}
+                {isInboxClearing ? <span>Clearing…</span> : null}
                 {isInboxDirty && !isInboxSaving ? <span>Unsaved</span> : null}
                 <button
                   type="button"
+                  onClick={() => void clearInboxToHistory()}
+                  disabled={isInboxClearing || isInboxSaving || inboxDraft.trim().length === 0}
+                  className="border border-[var(--workspace-border)] px-3 py-2 text-[10px] font-semibold tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
                   onClick={closeInbox}
-                  className="border border-[var(--workspace-border)] px-3 py-2 text-[10px] font-semibold tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                  disabled={isInboxClearing}
+                  className="border border-[var(--workspace-border)] px-3 py-2 text-[10px] font-semibold tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Dismiss
                 </button>
@@ -14341,7 +14186,6 @@ function OutlineNodeEditor({
       const normalizedTail = parseSplitSegmentDraft(tailDraft, segmentFallback);
       let updateEntry: HistoryEntry | null = null;
       let createEntry: HistoryEntry | null = null;
-      let shouldRestoreFocusToCreatedNode = true;
 
       if (isStartOfLineSplit) {
         const optimisticCreatedNodeClientId = `split-above:${node._id}:${Date.now()}`;
@@ -14386,7 +14230,7 @@ function OutlineNodeEditor({
                 .historyEditorId ??
               null
             : null;
-        shouldRestoreFocusToCreatedNode =
+        const shouldRestoreFocusToCreatedNode =
           activeTrackedEditorId === null || activeTrackedEditorId === optimisticEditorId;
 
         if (createdNode && createdNodeEditorId) {
@@ -14394,7 +14238,7 @@ function OutlineNodeEditor({
             kind: "node",
             pageId,
             nodeId: createdNode._id,
-          });
+          }, shouldRestoreFocusToCreatedNode);
         }
 
         const beforeValue = history.commitTrackedValue(
@@ -14483,24 +14327,6 @@ function OutlineNodeEditor({
         history.pushUndoEntry(createEntry);
       }
 
-      if (isStartOfLineSplit) {
-        window.requestAnimationFrame(() => {
-          const focusEditorId = createEntry?.focusAfterRedoId ?? null;
-          if (!focusEditorId || !shouldRestoreFocusToCreatedNode) {
-            return;
-          }
-
-          const target = document.querySelector<HTMLElement>(
-            `[data-history-editor-id="${focusEditorId}"]`,
-          );
-          if (!(target instanceof HTMLTextAreaElement) && !(target instanceof HTMLInputElement)) {
-            return;
-          }
-
-          target.focus();
-          target.setSelectionRange(0, 0);
-        });
-      }
       return;
     }
 

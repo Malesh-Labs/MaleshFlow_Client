@@ -389,6 +389,48 @@ async function ensureDoneArchivePage(ctx: MutationCtx) {
   return page;
 }
 
+async function ensureInboxHistoryPage(ctx: MutationCtx) {
+  const archivedPages = await ctx.db
+    .query("pages")
+    .withIndex("by_archived_position", (query) => query.eq("archived", true))
+    .take(200);
+  const existing = [...archivedPages]
+    .filter((page) => page.title === "Inbox History")
+    .sort((left, right) => {
+      if (left.updatedAt !== right.updatedAt) {
+        return right.updatedAt - left.updatedAt;
+      }
+
+      return right.createdAt - left.createdAt;
+    })[0] ?? null;
+  if (existing) {
+    return existing;
+  }
+
+  const now = Date.now();
+  const slug = await buildUniquePageSlug(ctx.db, "Inbox History");
+  const pageId = await ctx.db.insert("pages", {
+    title: "Inbox History",
+    slug,
+    icon: null,
+    archived: true,
+    position: now,
+    sourceMeta: {
+      sourceType: "system",
+      pageType: "note",
+      archivedPurpose: "inboxHistory",
+    },
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const page = await ctx.db.get(pageId);
+  if (!page) {
+    throw new Error("Could not create Inbox History.");
+  }
+  return page;
+}
+
 async function archiveTaskPageSubtreeToDone(
   ctx: MutationCtx,
   taskRootNode: Doc<"nodes">,
@@ -1289,76 +1331,6 @@ export const listSidebarFavorites = query({
   },
 });
 
-export const getSimpleTaskView = query({
-  args: {
-    ownerKey: v.string(),
-  },
-  handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
-
-    const activePages = await ctx.db
-      .query("pages")
-      .withIndex("by_archived_position", (query) => query.eq("archived", false))
-      .collect();
-    const eligiblePages = activePages
-      .filter(
-        (page) =>
-          !isSidebarSpecialPage(page) &&
-          !isPagePendingDeletion(page) &&
-          (isPlannerPage(page) ||
-            (isTaskSourcePage(page) && !isPlannerScanExcludedPage(page))),
-      )
-      .sort((left, right) => {
-        const leftPlannerRank = isPlannerPage(left) ? 0 : 1;
-        const rightPlannerRank = isPlannerPage(right) ? 0 : 1;
-        if (leftPlannerRank !== rightPlannerRank) {
-          return leftPlannerRank - rightPlannerRank;
-        }
-        return left.position - right.position;
-      });
-
-    const pageGroups: Array<{
-      page: Doc<"pages">;
-      nodes: Doc<"nodes">[];
-      loadWarning: string | null;
-    }> = [];
-
-    for (const page of eligiblePages) {
-      const warnings: string[] = [];
-      let nodes: Doc<"nodes">[] = [];
-
-      try {
-        const result = await listPageNodesForTree(ctx, page._id);
-        nodes = filterNodesForKnowledgeContext(
-          page,
-          result.nodes.filter((node) => !node.archived),
-        );
-        if (result.truncated) {
-          warnings.push(
-            "This page is too large to load fully right now, so only the first portion is shown.",
-          );
-        }
-      } catch (error) {
-        console.error("Failed to load simple task view page", {
-          pageId: page._id,
-          error,
-        });
-        warnings.push(
-          "Some outline items could not be loaded right now, so this page may be partially empty.",
-        );
-      }
-
-      pageGroups.push({
-        page,
-        nodes,
-        loadWarning: warnings.length > 0 ? warnings.join(" ") : null,
-      });
-    }
-
-    return pageGroups;
-  },
-});
-
 export const getSidebarTree = query({
   args: {
     ownerKey: v.string(),
@@ -1552,6 +1524,125 @@ export const setWorkspaceInbox = mutation({
     return {
       pageId: sidebarPage._id,
       text: args.text,
+    };
+  },
+});
+
+export const clearWorkspaceInbox = mutation({
+  args: {
+    ownerKey: v.string(),
+    text: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const pages = await ctx.db.query("pages").collect();
+    const sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
+    const now = getTimestamp();
+    let historyPageId: Id<"pages"> | null = null;
+    const hasArchivedText = args.text.trim().length > 0;
+
+    if (hasArchivedText) {
+      const inboxHistoryPage = await ensureInboxHistoryPage(ctx);
+      historyPageId = inboxHistoryPage._id;
+      const existingRootNodes = (await listPageNodes(ctx.db, inboxHistoryPage._id)).filter(
+        (node) => node.parentNodeId === null,
+      );
+      const afterRootNodeId =
+        existingRootNodes.sort((left, right) => left.position - right.position)[
+          existingRootNodes.length - 1
+        ]?._id ?? null;
+      const rootPosition = await computeNodePosition(
+        ctx.db,
+        inboxHistoryPage._id,
+        null,
+        afterRootNodeId,
+      );
+      const rootNodeId = await ctx.db.insert("nodes", {
+        pageId: inboxHistoryPage._id,
+        parentNodeId: null,
+        position: rootPosition,
+        text: `Inbox capture ${new Date(now).toLocaleString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        })}`,
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
+        dueEndAt: null,
+        archived: false,
+        sourceMeta: {
+          sourceType: "system",
+          noteCompleted: false,
+          taskKindLocked: false,
+          recurrenceFrequency: null,
+          inboxCapturedAt: now,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+      const childPosition = await computeNodePosition(
+        ctx.db,
+        inboxHistoryPage._id,
+        rootNodeId,
+        null,
+      );
+      const childNodeId = await ctx.db.insert("nodes", {
+        pageId: inboxHistoryPage._id,
+        parentNodeId: rootNodeId,
+        position: childPosition,
+        text: args.text,
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
+        dueEndAt: null,
+        archived: false,
+        sourceMeta: {
+          sourceType: "system",
+          noteCompleted: false,
+          taskKindLocked: false,
+          recurrenceFrequency: null,
+          inboxCapturedAt: now,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      const rootNode = await ctx.db.get(rootNodeId);
+      if (rootNode) {
+        await syncLinksForNode(ctx.db, rootNode);
+        await enqueueNodeAiWork(ctx, rootNodeId);
+      }
+      const childNode = await ctx.db.get(childNodeId);
+      if (childNode) {
+        await syncLinksForNode(ctx.db, childNode);
+        await enqueueNodeAiWork(ctx, childNodeId);
+      }
+      await enqueuePageRootEmbeddingRefresh(ctx, inboxHistoryPage._id);
+    }
+
+    if (sidebarPage) {
+      await ctx.db.patch(sidebarPage._id, {
+        sourceMeta: {
+          ...getPageSourceMeta(sidebarPage),
+          workspaceInboxText: "",
+          pageType: "note",
+          sidebarSection: "Notes",
+        },
+        updatedAt: now,
+      });
+    }
+
+    return {
+      archived: hasArchivedText,
+      historyPageId,
+      pageId: sidebarPage?._id ?? null,
+      text: "",
     };
   },
 });
