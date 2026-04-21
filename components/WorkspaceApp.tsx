@@ -76,7 +76,6 @@ import {
   applyOptimisticNodeSplit,
   applyOptimisticNodeTreeArchive,
   applyOptimisticNodeUpdate,
-  applyOptimisticPagePinnedInAllSidebar,
   applyOptimisticPageRename,
   applyOptimisticPlannerScanExcluded,
 } from "@/lib/domain/optimisticWorkspace";
@@ -439,9 +438,6 @@ type SetPlannerScanExcludedArgs = Parameters<
 >[0];
 type SetTaskPageDoneArchiveEnabledArgs = Parameters<
   ReturnType<typeof useMutation<typeof api.workspace.setTaskPageDoneArchiveEnabled>>
->[0];
-type SetPagePinnedInAllSidebarArgs = Parameters<
-  ReturnType<typeof useMutation<typeof api.workspace.setPagePinnedInAllSidebar>>
 >[0];
 type SetSidebarFavoriteArgs = Parameters<
   ReturnType<typeof useMutation<typeof api.workspace.setSidebarFavorite>>
@@ -825,15 +821,6 @@ function isSidebarSpecialPage(page: Doc<"pages"> | null | undefined) {
       : {};
 
   return sourceMeta.specialPage === "sidebar";
-}
-
-function isPagePinnedInAllSidebar(page: Doc<"pages"> | null | undefined) {
-  const sourceMeta =
-    page && typeof page.sourceMeta === "object" && page.sourceMeta
-      ? (page.sourceMeta as Record<string, unknown>)
-      : {};
-
-  return sourceMeta.pinnedInAllSidebar === true;
 }
 
 function getModelPageCustomPrompt(page: Doc<"pages"> | null | undefined) {
@@ -2974,7 +2961,6 @@ function ConfiguredWorkspace({
   const setModelPageCustomPrompt = useMutation(api.workspace.setModelPageCustomPrompt);
   const setWorkspaceInbox = useMutation(api.workspace.setWorkspaceInbox);
   const setWorkspaceRandomBox = useMutation(api.workspace.setWorkspaceRandomBox);
-  const setPagePinnedInAllSidebarRaw = useMutation(api.workspace.setPagePinnedInAllSidebar);
   const setSidebarFavoriteRaw = useMutation(api.workspace.setSidebarFavorite);
   const mergePinnedPagesInAllSidebar = useMutation(api.workspace.mergePinnedPagesInAllSidebar);
   const deletePageForever = useMutation(api.workspace.deletePageForever);
@@ -3006,11 +2992,6 @@ function ConfiguredWorkspace({
   const completeTaskPageTaskMutation = completeTaskPageTaskRaw.withOptimisticUpdate(
     (localStore, args) => {
       applyOptimisticTaskPageTaskCompletion(localStore, args);
-    },
-  );
-  const setPagePinnedInAllSidebarMutation = setPagePinnedInAllSidebarRaw.withOptimisticUpdate(
-    (localStore, args) => {
-      applyOptimisticPagePinnedInAllSidebar(localStore, args);
     },
   );
   const updateNodeMutation = updateNodeRaw.withOptimisticUpdate((localStore, args) => {
@@ -3093,15 +3074,6 @@ function ConfiguredWorkspace({
         "Could not update Done archiving settings.",
       ),
     [runTrackedMutation, setTaskPageDoneArchiveEnabledRaw],
-  );
-  const setPagePinnedInAllSidebar = useCallback(
-    (args: SetPagePinnedInAllSidebarArgs) =>
-      runTrackedMutation(
-        () => setPagePinnedInAllSidebarMutation(args),
-        { pageIds: [args.pageId] },
-        "Could not update sidebar pins.",
-      ),
-    [runTrackedMutation, setPagePinnedInAllSidebarMutation],
   );
   const setSidebarFavorite = useCallback(
     (args: SetSidebarFavoriteArgs) =>
@@ -3738,18 +3710,9 @@ function ConfiguredWorkspace({
     [pages, sidebarLinkedPageIds],
   );
   const allActivePagesByType = useMemo(() => {
-    const pinnedPageIds = new Set(
-      (pages ?? [])
-        .filter((page) => isPagePinnedInAllSidebar(page))
-        .map((page) => page._id as string),
-    );
     const grouped = new Map<string, PageDoc[]>();
     for (const page of pages ?? []) {
-      if (
-        page.archived ||
-        isSidebarSpecialPage(page) ||
-        pinnedPageIds.has(page._id as string)
-      ) {
+      if (page.archived || isSidebarSpecialPage(page)) {
         continue;
       }
 
@@ -3821,39 +3784,6 @@ function ConfiguredWorkspace({
       });
     });
   }, [sidebarFavorites]);
-  const pinnedAllPageIds = useMemo(
-    () =>
-      new Set(
-        (pages ?? [])
-          .filter((page) => isPagePinnedInAllSidebar(page))
-          .map((page) => page._id as string),
-      ),
-    [pages],
-  );
-  const pinnedAllPages = useMemo(() => {
-    const pinnedPages = (pages ?? []).filter(
-      (page) =>
-        !page.archived &&
-        !isSidebarSpecialPage(page) &&
-        pinnedAllPageIds.has(page._id as string),
-    );
-
-    const getPageTypeRank = (page: PageDoc) => {
-      const label = getPageTypeLabel(page);
-      const index = ALL_PAGE_TYPE_GROUP_ORDER.indexOf(
-        label as (typeof ALL_PAGE_TYPE_GROUP_ORDER)[number],
-      );
-      return index === -1 ? ALL_PAGE_TYPE_GROUP_ORDER.length : index;
-    };
-
-    return pinnedPages.sort((left, right) => {
-      const rankDifference = getPageTypeRank(left) - getPageTypeRank(right);
-      if (rankDifference !== 0) {
-        return rankDifference;
-      }
-      return left.title.localeCompare(right.title, undefined, { sensitivity: "base" });
-    });
-  }, [pages, pinnedAllPageIds]);
   const archivedPages = (pages ?? []).filter((page) => page.archived);
   const showSidebarTextSectionContent = sidebarTree !== null && !isSidebarTextSectionCollapsed;
   const showFavoritesSectionContent = !isFavoritesSectionCollapsed;
@@ -8560,20 +8490,6 @@ function ConfiguredWorkspace({
     );
   };
 
-  const togglePinnedAllPage = (pageId: Id<"pages">) => {
-    if (!ownerKey) {
-      return;
-    }
-
-    void setPagePinnedInAllSidebar({
-      ownerKey,
-      pageId,
-      pinned: !pinnedAllPageIds.has(pageId as string),
-    }).catch((error) => {
-      console.error("Failed to toggle All sidebar pin", error);
-    });
-  };
-
   return (
     <WorkspaceHistoryProvider value={history}>
       <main
@@ -9274,55 +9190,12 @@ function ConfiguredWorkspace({
                       aria-hidden={!showAllSectionContent}
                       className="min-h-0 overflow-hidden"
                     >
-                      {pinnedAllPages.length === 0 && allActivePagesByType.length === 0 ? (
+                      {allActivePagesByType.length === 0 ? (
                         <p className="text-sm text-[var(--workspace-text-faint)]">
                           No active pages.
                         </p>
                       ) : (
                         <div className="space-y-3">
-                          {pinnedAllPages.length > 0 ? (
-                            <div>
-                              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
-                                Pinned
-                              </p>
-                              <div className="mt-2 space-y-1">
-                                {pinnedAllPages.map((page) => (
-                                  <div
-                                    key={page._id}
-                                    className={clsx(
-                                      "flex items-center gap-2 px-2 py-1.5 transition",
-                                      selectedPageId === page._id
-                                        ? "bg-[var(--workspace-surface-accent)]"
-                                        : "hover:bg-[var(--workspace-surface-accent)]",
-                                    )}
-                                  >
-                                    <button
-                                      type="button"
-                                      onClick={() => handleSelectPage(page._id)}
-                                      className={clsx(
-                                        "min-w-0 flex-1 text-left text-sm",
-                                        selectedPageId === page._id
-                                          ? "text-[var(--workspace-brand)]"
-                                          : "text-[var(--workspace-text-strong)]",
-                                      )}
-                                    >
-                                      <span className="truncate">{page.title}</span>
-                                      <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none text-[var(--workspace-text-faint)]">
-                                        {getPageTypeEmoji(page)}
-                                      </span>
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => togglePinnedAllPage(page._id)}
-                                      className="shrink-0 border border-[var(--workspace-brand)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
-                                    >
-                                      Unpin
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          ) : null}
                           {allActivePagesByType.map((group) => {
                             const isGroupCollapsed = collapsedAllPageTypeSections.has(group.label);
                             const showGroupContent = !isGroupCollapsed;
@@ -9365,38 +9238,22 @@ function ConfiguredWorkspace({
                                   >
                                     <div className="space-y-1">
                                       {group.pages.map((page) => (
-                                        <div
+                                        <button
                                           key={page._id}
+                                          type="button"
+                                          onClick={() => handleSelectPage(page._id)}
                                           className={clsx(
-                                            "flex items-center gap-2 px-2 py-1.5 transition",
+                                            "block w-full px-2 py-1.5 text-left text-sm transition",
                                             selectedPageId === page._id
-                                              ? "bg-[var(--workspace-surface-accent)]"
-                                              : "hover:bg-[var(--workspace-surface-accent)]",
+                                              ? "bg-[var(--workspace-surface-accent)] text-[var(--workspace-brand)]"
+                                              : "text-[var(--workspace-text-strong)] hover:bg-[var(--workspace-surface-accent)]",
                                           )}
                                         >
-                                          <button
-                                            type="button"
-                                            onClick={() => handleSelectPage(page._id)}
-                                            className={clsx(
-                                              "min-w-0 flex-1 text-left text-sm",
-                                              selectedPageId === page._id
-                                                ? "text-[var(--workspace-brand)]"
-                                                : "text-[var(--workspace-text-strong)]",
-                                            )}
-                                          >
-                                            <span className="truncate">{page.title}</span>
-                                            <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none text-[var(--workspace-text-faint)]">
-                                              {getPageTypeEmoji(page)}
-                                            </span>
-                                          </button>
-                                          <button
-                                            type="button"
-                                            onClick={() => togglePinnedAllPage(page._id)}
-                                            className="shrink-0 border border-[var(--workspace-border)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                                          >
-                                            Pin
-                                          </button>
-                                        </div>
+                                          <span className="truncate">{page.title}</span>
+                                          <span className="ml-2 inline-flex h-4 min-w-4 items-center justify-center rounded-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-1 text-[10px] leading-none text-[var(--workspace-text-faint)]">
+                                            {getPageTypeEmoji(page)}
+                                          </span>
+                                        </button>
                                       ))}
                                     </div>
                                   </div>
