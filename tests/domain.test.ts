@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   applySelectedLinkShortcut,
+  convertHtmlClipboardToMarkdownText,
   extractLinkMatches,
   extractLinks,
   rewriteMatchingPageWikiLinks,
@@ -145,6 +146,18 @@ test("sanitizeGeneratedWikiLinkLabel flattens nested wiki links", () => {
   assert.equal(
     sanitizeGeneratedWikiLinkLabel("here is a [[nested|node:123]] example"),
     "here is a nested example",
+  );
+});
+
+test("convertHtmlClipboardToMarkdownText preserves anchor links from rich clipboard html", () => {
+  const html = [
+    "<div>Read <a href=\"https://apple.com\"><b>Apple</b> site</a></div>",
+    "<div>Then visit <a href=\"https://openai.com\">https://openai.com</a><br>tomorrow</div>",
+  ].join("");
+
+  assert.equal(
+    convertHtmlClipboardToMarkdownText(html),
+    "Read [Apple site](https://apple.com)\nThen visit https://openai.com\ntomorrow\n",
   );
 });
 

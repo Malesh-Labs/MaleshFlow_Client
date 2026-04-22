@@ -51,6 +51,7 @@ import {
 } from "@/lib/domain/recurrence";
 import {
   applySelectedLinkShortcut,
+  convertHtmlClipboardToMarkdownText,
   extractLinkMatches,
   getExplicitWikiLinkPreviewText,
   replaceLinkMarkupWithLabels,
@@ -2443,6 +2444,35 @@ function splitPastedLines(text: string) {
     .split("\n")
     .map((line) => line.trimEnd())
     .filter((line) => line.trim().length > 0);
+}
+
+function getPreferredClipboardText(clipboardData: DataTransfer) {
+  const html = clipboardData.getData("text/html");
+  if (html.trim().length > 0 && /<a[\s>]/i.test(html)) {
+    const convertedText = convertHtmlClipboardToMarkdownText(html);
+    if (convertedText.trim().length > 0) {
+      return convertedText;
+    }
+  }
+
+  return clipboardData.getData("text");
+}
+
+function insertTextIntoDraft(
+  text: string,
+  insertedText: string,
+  selectionStart: number,
+  selectionEnd: number,
+) {
+  const start = Math.max(0, Math.min(selectionStart, selectionEnd));
+  const end = Math.max(start, Math.max(selectionStart, selectionEnd));
+  const nextValue = `${text.slice(0, start)}${insertedText}${text.slice(end)}`;
+  const nextSelectionStart = start + insertedText.length;
+  return {
+    value: nextValue,
+    selectionStart: nextSelectionStart,
+    selectionEnd: nextSelectionStart,
+  };
 }
 
 function toNodeValueSnapshot(
@@ -13772,9 +13802,36 @@ function OutlineNodeEditor({
   };
 
   const handlePaste = async (event: TextareaClipboardEvent<HTMLTextAreaElement>) => {
-    const pastedText = event.clipboardData.getData("text");
+    const plainPastedText = event.clipboardData.getData("text");
+    const pastedText = getPreferredClipboardText(event.clipboardData);
+    const isRichLinkPaste = pastedText !== plainPastedText;
     const lines = splitPastedLines(pastedText);
-    if (lines.length <= 1 || isDisabled) {
+    if (isDisabled) {
+      return;
+    }
+
+    if (lines.length <= 1) {
+      if (!isRichLinkPaste) {
+        return;
+      }
+
+      event.preventDefault();
+      const replacement = insertTextIntoDraft(
+        draftRef.current,
+        pastedText,
+        event.currentTarget.selectionStart ?? 0,
+        event.currentTarget.selectionEnd ?? 0,
+      );
+      setDraft(replacement.value);
+      history.updateDraftValue(editorId, editorTarget, replacement.value);
+      setCaretPosition(replacement.selectionEnd);
+      window.requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+        textareaRef.current?.setSelectionRange(
+          replacement.selectionStart,
+          replacement.selectionEnd,
+        );
+      });
       return;
     }
 
@@ -15663,9 +15720,32 @@ function InlineComposer({
       return;
     }
 
-    const pastedText = event.clipboardData.getData("text");
+    const plainPastedText = event.clipboardData.getData("text");
+    const pastedText = getPreferredClipboardText(event.clipboardData);
+    const isRichLinkPaste = pastedText !== plainPastedText;
     const lines = splitPastedLines(pastedText);
     if (lines.length <= 1) {
+      if (!isRichLinkPaste) {
+        return;
+      }
+
+      event.preventDefault();
+      const replacement = insertTextIntoDraft(
+        draftRef.current,
+        pastedText,
+        event.currentTarget.selectionStart ?? 0,
+        event.currentTarget.selectionEnd ?? 0,
+      );
+      setDraft(replacement.value);
+      history.updateDraftValue(editorId, editorTarget, replacement.value);
+      setCaretPosition(replacement.selectionEnd);
+      window.requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+        textareaRef.current?.setSelectionRange(
+          replacement.selectionStart,
+          replacement.selectionEnd,
+        );
+      });
       return;
     }
 

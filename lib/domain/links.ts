@@ -34,6 +34,80 @@ const PAGE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?page:([a-zA-Z0-9_-]+)$/;
 const NODE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?node:([a-zA-Z0-9_-]+)$/;
 const COMPLETE_MARKDOWN_LINK_PATTERN = /^\[([^\]]+)\]\(([^)]*)\)$/;
 const COMPLETE_WIKI_LINK_PATTERN = /^\[\[([^[\]]+)\]\]$/;
+const HTML_ANCHOR_PATTERN = /<a\b[^>]*href=(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi;
+const HTML_BLOCK_BREAK_PATTERN =
+  /<(?:br\s*\/?|\/(?:div|p|li|ul|ol|h[1-6]|blockquote|pre|tr|table))>/gi;
+const HTML_LIST_ITEM_OPEN_PATTERN = /<li\b[^>]*>/gi;
+const HTML_TAG_PATTERN = /<[^>]+>/g;
+const HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+const HTML_SCRIPT_STYLE_PATTERN = /<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi;
+
+function decodeHtmlEntities(value: string) {
+  return value.replace(
+    /&(?:nbsp|amp|lt|gt|quot|apos|#39|#x27|#(\d+)|#x([0-9a-fA-F]+));/g,
+    (match, decimalCode, hexCode) => {
+      switch (match) {
+        case "&nbsp;":
+          return " ";
+        case "&amp;":
+          return "&";
+        case "&lt;":
+          return "<";
+        case "&gt;":
+          return ">";
+        case "&quot;":
+          return '"';
+        case "&apos;":
+        case "&#39;":
+        case "&#x27;":
+          return "'";
+        default:
+          if (decimalCode) {
+            return String.fromCodePoint(Number.parseInt(decimalCode, 10));
+          }
+          if (hexCode) {
+            return String.fromCodePoint(Number.parseInt(hexCode, 16));
+          }
+          return match;
+      }
+    },
+  );
+}
+
+function htmlFragmentToText(html: string) {
+  return decodeHtmlEntities(
+    html
+      .replace(HTML_COMMENT_PATTERN, "")
+      .replace(HTML_SCRIPT_STYLE_PATTERN, "")
+      .replace(HTML_BLOCK_BREAK_PATTERN, "\n")
+      .replace(HTML_LIST_ITEM_OPEN_PATTERN, "- ")
+      .replace(HTML_TAG_PATTERN, ""),
+  )
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u00A0/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n");
+}
+
+export function convertHtmlClipboardToMarkdownText(html: string) {
+  const replacedAnchors = html
+    .replace(HTML_COMMENT_PATTERN, "")
+    .replace(HTML_SCRIPT_STYLE_PATTERN, "")
+    .replace(HTML_ANCHOR_PATTERN, (_match, _quote, rawHref, innerHtml) => {
+      const href = decodeHtmlEntities(String(rawHref)).trim();
+      const label = htmlFragmentToText(String(innerHtml)).replace(/\s+/g, " ").trim();
+      if (!href) {
+        return label;
+      }
+      if (label.length === 0 || label === href) {
+        return href;
+      }
+      return `[${label.replace(/\]/g, "\\]")}](${href})`;
+    });
+
+  return htmlFragmentToText(replacedAnchors);
+}
 
 function rangesOverlap(
   left: Pick<ExtractedLinkMatch, "start" | "end">,
