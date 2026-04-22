@@ -2447,6 +2447,78 @@ function splitPastedLines(text: string) {
     .filter((line) => line.trim().length > 0);
 }
 
+function normalizePlainTextBlockEditorValue(text: string) {
+  return text.replace(/\r\n?/g, "\n").replace(/\u00a0/g, " ");
+}
+
+function readPlainTextBlockEditorValue(element: HTMLElement) {
+  return normalizePlainTextBlockEditorValue(element.innerText);
+}
+
+function writePlainTextBlockEditorValue(element: HTMLElement, value: string) {
+  const normalizedValue = normalizePlainTextBlockEditorValue(value);
+  if (normalizedValue.length === 0) {
+    element.replaceChildren();
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (const line of normalizedValue.split("\n")) {
+    const lineElement = document.createElement("div");
+    if (line.length === 0) {
+      lineElement.appendChild(document.createElement("br"));
+    } else {
+      lineElement.textContent = line;
+    }
+    fragment.appendChild(lineElement);
+  }
+  element.replaceChildren(fragment);
+}
+
+function insertPlainTextIntoContentEditable(text: string) {
+  if (typeof document === "undefined") {
+    return false;
+  }
+
+  if (document.queryCommandSupported?.("insertText")) {
+    try {
+      if (document.execCommand("insertText", false, text)) {
+        return true;
+      }
+    } catch {
+      // Fall back to manual range insertion below.
+    }
+  }
+
+  const selection = window.getSelection();
+  if (!selection || selection.rangeCount === 0) {
+    return false;
+  }
+
+  const range = selection.getRangeAt(0);
+  range.deleteContents();
+  const fragment = document.createDocumentFragment();
+  const normalizedText = normalizePlainTextBlockEditorValue(text);
+  const parts = normalizedText.split("\n");
+  parts.forEach((part, index) => {
+    if (index > 0) {
+      fragment.appendChild(document.createElement("br"));
+    }
+    if (part.length > 0) {
+      fragment.appendChild(document.createTextNode(part));
+    }
+  });
+  const lastNode = fragment.lastChild;
+  range.insertNode(fragment);
+  if (lastNode) {
+    range.setStartAfter(lastNode);
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+  return true;
+}
+
 function getPreferredClipboardText(clipboardData: DataTransfer) {
   const html = clipboardData.getData("text/html");
   if (html.trim().length > 0 && /<a[\s>]/i.test(html)) {
@@ -11040,17 +11112,17 @@ function ConfiguredWorkspace({
               </button>
             </div>
             <div className="flex-1 p-4">
-              <textarea
+              <PlainTextBlockEditor
                 id={WORKSPACE_INBOX_TEXTAREA_ID}
                 value={activeInboxDraft}
-                onChange={(event) => {
+                onChange={(value) => {
                   updateInboxDraftAtIndex(
                     safeActiveInboxBoxIndex,
-                    event.target.value,
+                    value,
                   );
                 }}
                 placeholder="Drop notes, thoughts, and loose tasks here…"
-                className="h-full w-full resize-none border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-4 py-3 text-sm leading-7 text-[var(--workspace-text)] outline-none transition focus:border-[var(--workspace-accent)]"
+                className="border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-4 py-3 text-sm leading-7 text-[var(--workspace-text)] transition focus:border-[var(--workspace-accent)]"
               />
             </div>
             {inboxSaveError ? (
@@ -11151,17 +11223,17 @@ function ConfiguredWorkspace({
                 </button>
                 {!isRandomBoxListCollapsed ? (
                   <div className="h-[calc(100%-2.75rem)] min-h-[10rem] p-3">
-                    <textarea
+                    <PlainTextBlockEditor
                       id={WORKSPACE_RANDOM_BOX_TEXTAREA_ID}
                       value={activeRandomBoxDraft}
-                      onChange={(event) => {
+                      onChange={(value) => {
                         updateRandomBoxDraftAtIndex(
                           safeActiveRandomBoxIndex,
-                          event.target.value,
+                          value,
                         );
                       }}
                       placeholder={"Write one item per line…\nExample one\nExample two"}
-                      className="h-full w-full resize-none border border-[var(--workspace-border)] bg-[var(--workspace-surface)] px-4 py-3 text-sm leading-7 text-[var(--workspace-text)] outline-none transition focus:border-[var(--workspace-accent)]"
+                      className="border border-[var(--workspace-border)] bg-[var(--workspace-surface)] px-4 py-3 text-sm leading-7 text-[var(--workspace-text)] transition focus:border-[var(--workspace-accent)]"
                     />
                   </div>
                 ) : null}
@@ -11252,6 +11324,66 @@ function AiPromptEditorPanel({
       </div>
       <p className="mt-3 text-xs leading-5 text-[var(--workspace-text-faint)]">{helperText}</p>
     </div>
+  );
+}
+
+function PlainTextBlockEditor({
+  id,
+  value,
+  onChange,
+  placeholder,
+  className,
+}: {
+  id?: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  className?: string;
+}) {
+  const editorRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) {
+      return;
+    }
+
+    const currentValue = readPlainTextBlockEditorValue(editor);
+    const normalizedValue = normalizePlainTextBlockEditorValue(value);
+    if (currentValue === normalizedValue) {
+      return;
+    }
+
+    writePlainTextBlockEditorValue(editor, normalizedValue);
+  }, [value]);
+
+  return (
+    <div
+      id={id}
+      ref={editorRef}
+      contentEditable
+      suppressContentEditableWarning
+      data-placeholder={placeholder}
+      spellCheck
+      onInput={(event) => {
+        onChange(readPlainTextBlockEditorValue(event.currentTarget));
+      }}
+      onPaste={(event) => {
+        const pastedText = getPreferredClipboardText(event.clipboardData);
+        if (pastedText.length === 0) {
+          return;
+        }
+        event.preventDefault();
+        if (!insertPlainTextIntoContentEditable(pastedText)) {
+          return;
+        }
+        onChange(readPlainTextBlockEditorValue(event.currentTarget));
+      }}
+      className={clsx(
+        "plain-text-block-editor h-full w-full overflow-y-auto outline-none",
+        className,
+      )}
+    />
   );
 }
 

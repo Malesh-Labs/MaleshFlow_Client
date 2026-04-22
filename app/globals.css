@@ -125,3 +125,23 @@ div::-webkit-scrollbar-thumb {
   border-radius: 999px;
   background: color-mix(in srgb, var(--workspace-brand) 35%, transparent);
 }
+
+.plain-text-block-editor {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.plain-text-block-editor:empty::before {
+  content: attr(data-placeholder);
+  color: var(--workspace-text-faint);
+  pointer-events: none;
+}
+
+.plain-text-block-editor > div {
+  min-height: 1.75rem;
+  padding-bottom: 0.35rem;
+}
+
+.plain-text-block-editor > div:last-child {
+  padding-bottom: 0;
+}
