@@ -260,6 +260,24 @@ function getNodeSourceMeta(node: Pick<Doc<"nodes">, "sourceMeta"> | null | undef
     : {};
 }
 
+const MIN_WORKSPACE_TEXT_BOX_COUNT = 2;
+
+function normalizeWorkspaceTextBoxes(
+  sourceMeta: Record<string, unknown>,
+  textsKey: "workspaceInboxTexts" | "workspaceRandomBoxTexts",
+  legacyTextKey: "workspaceInboxText" | "workspaceRandomBoxText",
+) {
+  const storedTexts = Array.isArray(sourceMeta[textsKey])
+    ? sourceMeta[textsKey].filter((value): value is string => typeof value === "string")
+    : [];
+  const legacyText = typeof sourceMeta[legacyTextKey] === "string" ? sourceMeta[legacyTextKey] : "";
+  const nextTexts = storedTexts.length > 0 ? [...storedTexts] : [legacyText];
+  while (nextTexts.length < MIN_WORKSPACE_TEXT_BOX_COUNT) {
+    nextTexts.push("");
+  }
+  return nextTexts;
+}
+
 function isTaskPageDoneArchiveEnabled(
   page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined,
 ) {
@@ -1395,12 +1413,15 @@ export const getWorkspaceInbox = query({
     const pages = await ctx.db.query("pages").collect();
     const sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
     const sourceMeta = getPageSourceMeta(sidebarPage);
+    const texts = normalizeWorkspaceTextBoxes(
+      sourceMeta,
+      "workspaceInboxTexts",
+      "workspaceInboxText",
+    );
 
     return {
-      text:
-        typeof sourceMeta.workspaceInboxText === "string"
-          ? sourceMeta.workspaceInboxText
-          : "",
+      text: texts[0] ?? "",
+      texts,
       updatedAt: sidebarPage?.updatedAt ?? null,
     };
   },
@@ -1416,12 +1437,15 @@ export const getWorkspaceRandomBox = query({
     const pages = await ctx.db.query("pages").collect();
     const sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
     const sourceMeta = getPageSourceMeta(sidebarPage);
+    const texts = normalizeWorkspaceTextBoxes(
+      sourceMeta,
+      "workspaceRandomBoxTexts",
+      "workspaceRandomBoxText",
+    );
 
     return {
-      text:
-        typeof sourceMeta.workspaceRandomBoxText === "string"
-          ? sourceMeta.workspaceRandomBoxText
-          : "",
+      text: texts[0] ?? "",
+      texts,
       updatedAt: sidebarPage?.updatedAt ?? null,
     };
   },
@@ -1475,10 +1499,15 @@ export const ensureSidebarPage = mutation({
 export const setWorkspaceInbox = mutation({
   args: {
     ownerKey: v.string(),
-    text: v.string(),
+    texts: v.array(v.string()),
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
+
+    const texts = [...args.texts];
+    while (texts.length < MIN_WORKSPACE_TEXT_BOX_COUNT) {
+      texts.push("");
+    }
 
     const pages = await ctx.db.query("pages").collect();
     let sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
@@ -1498,20 +1527,23 @@ export const setWorkspaceInbox = mutation({
           hidden: true,
           pageType: "note",
           sidebarSection: "Notes",
-          workspaceInboxText: args.text,
+          workspaceInboxText: texts[0] ?? "",
+          workspaceInboxTexts: texts,
         },
         createdAt: now,
         updatedAt: now,
       });
       return {
         pageId: sidebarPageId,
-        text: args.text,
+        text: texts[0] ?? "",
+        texts,
       };
     }
 
     const nextSourceMeta = {
       ...getPageSourceMeta(sidebarPage),
-      workspaceInboxText: args.text,
+      workspaceInboxText: texts[0] ?? "",
+      workspaceInboxTexts: texts,
       pageType: "note",
       sidebarSection: "Notes",
     };
@@ -1523,7 +1555,8 @@ export const setWorkspaceInbox = mutation({
 
     return {
       pageId: sidebarPage._id,
-      text: args.text,
+      text: texts[0] ?? "",
+      texts,
     };
   },
 });
@@ -1531,6 +1564,7 @@ export const setWorkspaceInbox = mutation({
 export const clearWorkspaceInbox = mutation({
   args: {
     ownerKey: v.string(),
+    index: v.number(),
     text: v.string(),
   },
   handler: async (ctx, args) => {
@@ -1541,6 +1575,14 @@ export const clearWorkspaceInbox = mutation({
     const now = getTimestamp();
     let historyPageId: Id<"pages"> | null = null;
     const hasArchivedText = args.text.trim().length > 0;
+    const currentSourceMeta = getPageSourceMeta(sidebarPage);
+    const nextTexts = normalizeWorkspaceTextBoxes(
+      currentSourceMeta,
+      "workspaceInboxTexts",
+      "workspaceInboxText",
+    );
+    const safeIndex = Math.max(0, Math.min(Math.floor(args.index), nextTexts.length - 1));
+    nextTexts[safeIndex] = "";
 
     if (hasArchivedText) {
       const inboxHistoryPage = await ensureInboxHistoryPage(ctx);
@@ -1640,8 +1682,9 @@ export const clearWorkspaceInbox = mutation({
     if (sidebarPage) {
       await ctx.db.patch(sidebarPage._id, {
         sourceMeta: {
-          ...getPageSourceMeta(sidebarPage),
-          workspaceInboxText: "",
+          ...currentSourceMeta,
+          workspaceInboxText: nextTexts[0] ?? "",
+          workspaceInboxTexts: nextTexts,
           pageType: "note",
           sidebarSection: "Notes",
         },
@@ -1653,7 +1696,8 @@ export const clearWorkspaceInbox = mutation({
       archived: hasArchivedText,
       historyPageId,
       pageId: sidebarPage?._id ?? null,
-      text: "",
+      text: nextTexts[0] ?? "",
+      texts: nextTexts,
     };
   },
 });
@@ -1661,10 +1705,15 @@ export const clearWorkspaceInbox = mutation({
 export const setWorkspaceRandomBox = mutation({
   args: {
     ownerKey: v.string(),
-    text: v.string(),
+    texts: v.array(v.string()),
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
+
+    const texts = [...args.texts];
+    while (texts.length < MIN_WORKSPACE_TEXT_BOX_COUNT) {
+      texts.push("");
+    }
 
     const pages = await ctx.db.query("pages").collect();
     let sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
@@ -1684,20 +1733,23 @@ export const setWorkspaceRandomBox = mutation({
           hidden: true,
           pageType: "note",
           sidebarSection: "Notes",
-          workspaceRandomBoxText: args.text,
+          workspaceRandomBoxText: texts[0] ?? "",
+          workspaceRandomBoxTexts: texts,
         },
         createdAt: now,
         updatedAt: now,
       });
       return {
         pageId: sidebarPageId,
-        text: args.text,
+        text: texts[0] ?? "",
+        texts,
       };
     }
 
     const nextSourceMeta = {
       ...getPageSourceMeta(sidebarPage),
-      workspaceRandomBoxText: args.text,
+      workspaceRandomBoxText: texts[0] ?? "",
+      workspaceRandomBoxTexts: texts,
       pageType: "note",
       sidebarSection: "Notes",
     };
@@ -1709,7 +1761,8 @@ export const setWorkspaceRandomBox = mutation({
 
     return {
       pageId: sidebarPage._id,
-      text: args.text,
+      text: texts[0] ?? "",
+      texts,
     };
   },
 });

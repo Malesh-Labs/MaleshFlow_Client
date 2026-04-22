@@ -134,6 +134,7 @@ const WORKSPACE_AI_CHAT_TEXTAREA_ID = "workspace-ai-chat-textarea";
 const WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY = "maleshflow-workspace-ai-chat-open";
 const WORKSPACE_INBOX_TEXTAREA_ID = "workspace-inbox-textarea";
 const WORKSPACE_RANDOM_BOX_TEXTAREA_ID = "workspace-random-box-textarea";
+const MIN_WORKSPACE_TEXT_BOX_COUNT = 2;
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
 const ALL_PAGE_TYPE_GROUP_ORDER = [
   "Planner",
@@ -197,6 +198,45 @@ const SHORTCUT_SECTIONS = [
     ],
   },
 ] as const;
+
+function normalizeWorkspaceTextBoxes(
+  texts: string[] | null | undefined,
+  legacyText?: string | null,
+) {
+  const nextTexts = Array.isArray(texts)
+    ? texts.filter((value): value is string => typeof value === "string")
+    : [];
+  if (nextTexts.length === 0 && typeof legacyText === "string") {
+    nextTexts.push(legacyText);
+  }
+  while (nextTexts.length < MIN_WORKSPACE_TEXT_BOX_COUNT) {
+    nextTexts.push("");
+  }
+  return nextTexts;
+}
+
+function updateWorkspaceTextBoxValue(texts: string[], index: number, value: string) {
+  const nextTexts = [...texts];
+  while (nextTexts.length <= index) {
+    nextTexts.push("");
+  }
+  nextTexts[index] = value;
+  while (nextTexts.length < MIN_WORKSPACE_TEXT_BOX_COUNT) {
+    nextTexts.push("");
+  }
+  return nextTexts;
+}
+
+function clampWorkspaceTextBoxIndex(index: number, texts: string[]) {
+  return Math.max(0, Math.min(index, Math.max(0, texts.length - 1)));
+}
+
+function areWorkspaceTextBoxesEqual(left: string[], right: string[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((value, index) => value === right[index]);
+}
 
 type SidebarSection = (typeof SIDEBAR_SECTIONS)[number];
 type PageType =
@@ -2717,13 +2757,15 @@ function ConfiguredWorkspace({
     readStoredBoolean(WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY, false),
   );
   const [isInboxOpen, setIsInboxOpen] = useState(false);
-  const [inboxDraft, setInboxDraft] = useState("");
+  const [inboxDrafts, setInboxDrafts] = useState<string[]>(["", ""]);
+  const [activeInboxBoxIndex, setActiveInboxBoxIndex] = useState(0);
   const [isInboxDirty, setIsInboxDirty] = useState(false);
   const [isInboxSaving, setIsInboxSaving] = useState(false);
   const [isInboxClearing, setIsInboxClearing] = useState(false);
   const [inboxSaveError, setInboxSaveError] = useState("");
   const [isRandomBoxOpen, setIsRandomBoxOpen] = useState(false);
-  const [randomBoxDraft, setRandomBoxDraft] = useState("");
+  const [randomBoxDrafts, setRandomBoxDrafts] = useState<string[]>(["", ""]);
+  const [activeRandomBoxIndex, setActiveRandomBoxIndex] = useState(0);
   const [randomBoxSelectedItem, setRandomBoxSelectedItem] = useState("");
   const [isRandomBoxListCollapsed, setIsRandomBoxListCollapsed] = useState(false);
   const [isRandomBoxDirty, setIsRandomBoxDirty] = useState(false);
@@ -2795,8 +2837,10 @@ function ConfiguredWorkspace({
   const hasStoredCollapsedNodeIdsRef = useRef(false);
   const hasMigratedPinnedAllPagesRef = useRef(false);
   const lastLoadedModelPromptPageIdRef = useRef<string | null>(null);
-  const inboxDraftRef = useRef("");
-  const randomBoxDraftRef = useRef("");
+  const inboxDraftsRef = useRef<string[]>(["", ""]);
+  const activeInboxBoxIndexRef = useRef(0);
+  const randomBoxDraftsRef = useRef<string[]>(["", ""]);
+  const activeRandomBoxIndexRef = useRef(0);
   const pendingCutClipboardRef = useRef<{
     nodeIds: Id<"nodes">[];
     payloadNodeIds: string[];
@@ -5735,37 +5779,58 @@ function ConfiguredWorkspace({
   }, [syncErrorMessage]);
 
   useEffect(() => {
-    inboxDraftRef.current = inboxDraft;
-  }, [inboxDraft]);
+    inboxDraftsRef.current = inboxDrafts;
+  }, [inboxDrafts]);
 
   useEffect(() => {
-    randomBoxDraftRef.current = randomBoxDraft;
-  }, [randomBoxDraft]);
+    activeInboxBoxIndexRef.current = activeInboxBoxIndex;
+  }, [activeInboxBoxIndex]);
 
   useEffect(() => {
-    if (typeof workspaceInbox?.text !== "string") {
-      return;
-    }
+    randomBoxDraftsRef.current = randomBoxDrafts;
+  }, [randomBoxDrafts]);
 
+  useEffect(() => {
+    activeRandomBoxIndexRef.current = activeRandomBoxIndex;
+  }, [activeRandomBoxIndex]);
+
+  const normalizedWorkspaceInboxTexts = useMemo(
+    () => normalizeWorkspaceTextBoxes(workspaceInbox?.texts, workspaceInbox?.text),
+    [workspaceInbox],
+  );
+  const normalizedWorkspaceRandomBoxTexts = useMemo(
+    () => normalizeWorkspaceTextBoxes(workspaceRandomBox?.texts, workspaceRandomBox?.text),
+    [workspaceRandomBox],
+  );
+
+  useEffect(() => {
     if (!isInboxOpen || !isInboxDirty) {
-      setInboxDraft(workspaceInbox.text);
+      setInboxDrafts((current) =>
+        areWorkspaceTextBoxesEqual(current, normalizedWorkspaceInboxTexts)
+          ? current
+          : normalizedWorkspaceInboxTexts,
+      );
+      setActiveInboxBoxIndex((current) =>
+        clampWorkspaceTextBoxIndex(current, normalizedWorkspaceInboxTexts),
+      );
     }
-  }, [isInboxDirty, isInboxOpen, workspaceInbox?.text]);
+  }, [isInboxDirty, isInboxOpen, normalizedWorkspaceInboxTexts]);
 
   const saveInboxDraft = useCallback(
-    async (text: string) => {
+    async (texts: string[]) => {
       if (!ownerKey || !isOwnerKeyValid) {
         return;
       }
 
+      const normalizedTexts = normalizeWorkspaceTextBoxes(texts);
       setIsInboxSaving(true);
       setInboxSaveError("");
       try {
         await setWorkspaceInbox({
           ownerKey,
-          text,
+          texts: normalizedTexts,
         });
-        if (inboxDraftRef.current === text) {
+        if (areWorkspaceTextBoxesEqual(inboxDraftsRef.current, normalizedTexts)) {
           setIsInboxDirty(false);
         }
       } catch (error) {
@@ -5781,34 +5846,69 @@ function ConfiguredWorkspace({
 
   const openInbox = useCallback(() => {
     setInboxSaveError("");
-    setInboxDraft(typeof workspaceInbox?.text === "string" ? workspaceInbox.text : "");
+    setInboxDrafts(normalizedWorkspaceInboxTexts);
+    setActiveInboxBoxIndex((current) =>
+      clampWorkspaceTextBoxIndex(current, normalizedWorkspaceInboxTexts),
+    );
     setIsInboxDirty(false);
     setIsInboxOpen(true);
-  }, [workspaceInbox?.text]);
+  }, [normalizedWorkspaceInboxTexts]);
 
   const closeInbox = useCallback(() => {
     if (isInboxClearing) {
       return;
     }
     if (isInboxDirty) {
-      void saveInboxDraft(inboxDraftRef.current);
+      void saveInboxDraft(inboxDraftsRef.current);
     }
     setIsInboxOpen(false);
   }, [isInboxClearing, isInboxDirty, saveInboxDraft]);
+
+  const updateInboxDraftAtIndex = useCallback((index: number, value: string) => {
+    setInboxDrafts((current) => {
+      const nextTexts = updateWorkspaceTextBoxValue(current, index, value);
+      inboxDraftsRef.current = nextTexts;
+      return nextTexts;
+    });
+    setIsInboxDirty(true);
+    setInboxSaveError("");
+  }, []);
+
+  const addInboxTextBox = useCallback(() => {
+    const nextIndex = inboxDraftsRef.current.length;
+    setInboxDrafts((current) => {
+      const nextTexts = [...current, ""];
+      inboxDraftsRef.current = nextTexts;
+      return nextTexts;
+    });
+    setActiveInboxBoxIndex(nextIndex);
+    setIsInboxDirty(true);
+    setInboxSaveError("");
+  }, []);
+
   const clearInboxToHistory = useCallback(async () => {
     if (!ownerKey || !isOwnerKeyValid || isInboxClearing) {
       return;
     }
 
+    const currentTexts = normalizeWorkspaceTextBoxes(inboxDraftsRef.current);
+    const activeIndex = clampWorkspaceTextBoxIndex(
+      activeInboxBoxIndexRef.current,
+      currentTexts,
+    );
+    const activeText = currentTexts[activeIndex] ?? "";
     setIsInboxClearing(true);
     setInboxSaveError("");
     try {
       const result = await clearWorkspaceInbox({
         ownerKey,
-        text: inboxDraftRef.current,
+        index: activeIndex,
+        text: activeText,
       });
-      setInboxDraft("");
-      inboxDraftRef.current = "";
+      const nextTexts = normalizeWorkspaceTextBoxes(result.texts, result.text);
+      setInboxDrafts(nextTexts);
+      inboxDraftsRef.current = nextTexts;
+      setActiveInboxBoxIndex((current) => clampWorkspaceTextBoxIndex(current, nextTexts));
       setIsInboxDirty(false);
       setCopySnackbarMessage(
         result.archived
@@ -5831,29 +5931,33 @@ function ConfiguredWorkspace({
   ]);
 
   useEffect(() => {
-    if (typeof workspaceRandomBox?.text !== "string") {
-      return;
-    }
-
     if (!isRandomBoxOpen || !isRandomBoxDirty) {
-      setRandomBoxDraft(workspaceRandomBox.text);
+      setRandomBoxDrafts((current) =>
+        areWorkspaceTextBoxesEqual(current, normalizedWorkspaceRandomBoxTexts)
+          ? current
+          : normalizedWorkspaceRandomBoxTexts,
+      );
+      setActiveRandomBoxIndex((current) =>
+        clampWorkspaceTextBoxIndex(current, normalizedWorkspaceRandomBoxTexts),
+      );
     }
-  }, [isRandomBoxDirty, isRandomBoxOpen, workspaceRandomBox?.text]);
+  }, [isRandomBoxDirty, isRandomBoxOpen, normalizedWorkspaceRandomBoxTexts]);
 
   const saveRandomBoxDraft = useCallback(
-    async (text: string) => {
+    async (texts: string[]) => {
       if (!ownerKey || !isOwnerKeyValid) {
         return;
       }
 
+      const normalizedTexts = normalizeWorkspaceTextBoxes(texts);
       setIsRandomBoxSaving(true);
       setRandomBoxSaveError("");
       try {
         await setWorkspaceRandomBox({
           ownerKey,
-          text,
+          texts: normalizedTexts,
         });
-        if (randomBoxDraftRef.current === text) {
+        if (areWorkspaceTextBoxesEqual(randomBoxDraftsRef.current, normalizedTexts)) {
           setIsRandomBoxDirty(false);
         }
       } catch (error) {
@@ -5869,22 +5973,52 @@ function ConfiguredWorkspace({
 
   const openRandomBox = useCallback(() => {
     setRandomBoxSaveError("");
-    setRandomBoxDraft(
-      typeof workspaceRandomBox?.text === "string" ? workspaceRandomBox.text : "",
+    setRandomBoxDrafts(
+      normalizedWorkspaceRandomBoxTexts,
+    );
+    setActiveRandomBoxIndex((current) =>
+      clampWorkspaceTextBoxIndex(current, normalizedWorkspaceRandomBoxTexts),
     );
     setIsRandomBoxDirty(false);
     setIsRandomBoxOpen(true);
-  }, [workspaceRandomBox?.text]);
+  }, [normalizedWorkspaceRandomBoxTexts]);
 
   const closeRandomBox = useCallback(() => {
     if (isRandomBoxDirty) {
-      void saveRandomBoxDraft(randomBoxDraftRef.current);
+      void saveRandomBoxDraft(randomBoxDraftsRef.current);
     }
     setIsRandomBoxOpen(false);
   }, [isRandomBoxDirty, saveRandomBoxDraft]);
 
+  const updateRandomBoxDraftAtIndex = useCallback((index: number, value: string) => {
+    setRandomBoxDrafts((current) => {
+      const nextTexts = updateWorkspaceTextBoxValue(current, index, value);
+      randomBoxDraftsRef.current = nextTexts;
+      return nextTexts;
+    });
+    setIsRandomBoxDirty(true);
+    setRandomBoxSaveError("");
+  }, []);
+
+  const addRandomBoxTextBox = useCallback(() => {
+    const nextIndex = randomBoxDraftsRef.current.length;
+    setRandomBoxDrafts((current) => {
+      const nextTexts = [...current, ""];
+      randomBoxDraftsRef.current = nextTexts;
+      return nextTexts;
+    });
+    setActiveRandomBoxIndex(nextIndex);
+    setIsRandomBoxDirty(true);
+    setRandomBoxSaveError("");
+  }, []);
+
   const chooseRandomBoxItem = useCallback(() => {
-    const items = randomBoxDraftRef.current
+    const currentTexts = normalizeWorkspaceTextBoxes(randomBoxDraftsRef.current);
+    const activeIndex = clampWorkspaceTextBoxIndex(
+      activeRandomBoxIndexRef.current,
+      currentTexts,
+    );
+    const items = (currentTexts[activeIndex] ?? "")
       .split(/\r?\n/)
       .map((item) => item.trim())
       .filter((item) => item.length > 0);
@@ -5903,7 +6037,7 @@ function ConfiguredWorkspace({
     }
 
     const timeoutId = window.setTimeout(() => {
-      void saveInboxDraft(inboxDraftRef.current);
+      void saveInboxDraft(inboxDraftsRef.current);
     }, 450);
 
     return () => window.clearTimeout(timeoutId);
@@ -5915,11 +6049,23 @@ function ConfiguredWorkspace({
     }
 
     const timeoutId = window.setTimeout(() => {
-      void saveRandomBoxDraft(randomBoxDraftRef.current);
+      void saveRandomBoxDraft(randomBoxDraftsRef.current);
     }, 450);
 
     return () => window.clearTimeout(timeoutId);
   }, [isRandomBoxDirty, isRandomBoxOpen, saveRandomBoxDraft]);
+
+  useEffect(() => {
+    setRandomBoxSelectedItem("");
+  }, [activeRandomBoxIndex]);
+
+  const safeActiveInboxBoxIndex = clampWorkspaceTextBoxIndex(activeInboxBoxIndex, inboxDrafts);
+  const activeInboxDraft = inboxDrafts[safeActiveInboxBoxIndex] ?? "";
+  const safeActiveRandomBoxIndex = clampWorkspaceTextBoxIndex(
+    activeRandomBoxIndex,
+    randomBoxDrafts,
+  );
+  const activeRandomBoxDraft = randomBoxDrafts[safeActiveRandomBoxIndex] ?? "";
 
   useEffect(() => {
     if (!dragSelection) {
@@ -10770,7 +10916,7 @@ function ConfiguredWorkspace({
                   Inbox
                 </p>
                 <p className="mt-1 text-xs text-[var(--workspace-text-faint)]">
-                  Plain text. Auto-saved to the workspace.
+                  Plain text. Each box auto-saves to the workspace.
                 </p>
               </div>
               <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
@@ -10780,7 +10926,9 @@ function ConfiguredWorkspace({
                 <button
                   type="button"
                   onClick={() => void clearInboxToHistory()}
-                  disabled={isInboxClearing || isInboxSaving || inboxDraft.trim().length === 0}
+                  disabled={
+                    isInboxClearing || isInboxSaving || activeInboxDraft.trim().length === 0
+                  }
                   className="border border-[var(--workspace-border)] px-3 py-2 text-[10px] font-semibold tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   Clear
@@ -10795,14 +10943,39 @@ function ConfiguredWorkspace({
                 </button>
               </div>
             </div>
+            <div className="flex items-center gap-2 border-b border-[var(--workspace-border)] px-4 py-3">
+              {inboxDrafts.map((_, index) => (
+                <button
+                  key={`inbox-box-${index}`}
+                  type="button"
+                  onClick={() => setActiveInboxBoxIndex(index)}
+                  className={clsx(
+                    "min-w-[2.5rem] border px-3 py-2 text-xs font-semibold tracking-[0.18em] transition",
+                    safeActiveInboxBoxIndex === index
+                      ? "border-[var(--workspace-brand)] bg-[color-mix(in_srgb,var(--workspace-brand)_14%,var(--workspace-surface))] text-[var(--workspace-text)]"
+                      : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                  )}
+                >
+                  {index + 1}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={addInboxTextBox}
+                className="min-w-[2.5rem] border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+              >
+                +
+              </button>
+            </div>
             <div className="flex-1 p-4">
               <textarea
                 id={WORKSPACE_INBOX_TEXTAREA_ID}
-                value={inboxDraft}
+                value={activeInboxDraft}
                 onChange={(event) => {
-                  setInboxDraft(event.target.value);
-                  setIsInboxDirty(true);
-                  setInboxSaveError("");
+                  updateInboxDraftAtIndex(
+                    safeActiveInboxBoxIndex,
+                    event.target.value,
+                  );
                 }}
                 placeholder="Drop notes, thoughts, and loose tasks here…"
                 className="h-full w-full resize-none border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-4 py-3 text-sm leading-7 text-[var(--workspace-text)] outline-none transition focus:border-[var(--workspace-accent)]"
@@ -10831,7 +11004,7 @@ function ConfiguredWorkspace({
                   Random Box
                 </p>
                 <p className="mt-1 text-xs text-[var(--workspace-text-faint)]">
-                  One item per line. Auto-saved to the workspace.
+                  One item per line. Each box auto-saves to the workspace.
                 </p>
               </div>
               <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
@@ -10845,6 +11018,30 @@ function ConfiguredWorkspace({
                   Dismiss
                 </button>
               </div>
+            </div>
+            <div className="flex items-center gap-2 border-b border-[var(--workspace-border)] px-4 py-3">
+              {randomBoxDrafts.map((_, index) => (
+                <button
+                  key={`random-box-${index}`}
+                  type="button"
+                  onClick={() => setActiveRandomBoxIndex(index)}
+                  className={clsx(
+                    "min-w-[2.5rem] border px-3 py-2 text-xs font-semibold tracking-[0.18em] transition",
+                    safeActiveRandomBoxIndex === index
+                      ? "border-[var(--workspace-brand)] bg-[color-mix(in_srgb,var(--workspace-brand)_14%,var(--workspace-surface))] text-[var(--workspace-text)]"
+                      : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                  )}
+                >
+                  {index + 1}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={addRandomBoxTextBox}
+                className="min-w-[2.5rem] border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+              >
+                +
+              </button>
             </div>
             <div className="flex min-h-0 flex-1 flex-col gap-4 p-4">
               <div className="flex items-center justify-between gap-3 border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-3 py-2">
@@ -10884,11 +11081,12 @@ function ConfiguredWorkspace({
                   <div className="h-[calc(100%-2.75rem)] min-h-[10rem] p-3">
                     <textarea
                       id={WORKSPACE_RANDOM_BOX_TEXTAREA_ID}
-                      value={randomBoxDraft}
+                      value={activeRandomBoxDraft}
                       onChange={(event) => {
-                        setRandomBoxDraft(event.target.value);
-                        setIsRandomBoxDirty(true);
-                        setRandomBoxSaveError("");
+                        updateRandomBoxDraftAtIndex(
+                          safeActiveRandomBoxIndex,
+                          event.target.value,
+                        );
                       }}
                       placeholder={"Write one item per line…\nExample one\nExample two"}
                       className="h-full w-full resize-none border border-[var(--workspace-border)] bg-[var(--workspace-surface)] px-4 py-3 text-sm leading-7 text-[var(--workspace-text)] outline-none transition focus:border-[var(--workspace-accent)]"
