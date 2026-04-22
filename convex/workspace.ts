@@ -1545,8 +1545,19 @@ export const clearWorkspaceInbox = mutation({
     if (hasArchivedText) {
       const inboxHistoryPage = await ensureInboxHistoryPage(ctx);
       historyPageId = inboxHistoryPage._id;
-      const existingRootNodes = (await listPageNodes(ctx.db, inboxHistoryPage._id)).filter(
-        (node) => node.parentNodeId === null,
+      const historyPageNodes = await listPageNodes(ctx.db, inboxHistoryPage._id);
+      const rootNodes = historyPageNodes
+        .filter((node) => node.parentNodeId === null)
+        .sort((left, right) => left.position - right.position);
+      const historyPageSourceMeta = getPageSourceMeta(inboxHistoryPage);
+      const targetParentNodeId =
+        historyPageSourceMeta.pageType === "scratchpad"
+          ? rootNodes.find(
+              (node) => getNodeSourceMeta(node).sectionSlot === "scratchpadPrevious",
+            )?._id ?? null
+          : null;
+      const existingRootNodes = historyPageNodes.filter(
+        (node) => node.parentNodeId === targetParentNodeId,
       );
       const afterRootNodeId =
         existingRootNodes.sort((left, right) => left.position - right.position)[
@@ -1555,12 +1566,12 @@ export const clearWorkspaceInbox = mutation({
       const rootPosition = await computeNodePosition(
         ctx.db,
         inboxHistoryPage._id,
-        null,
+        targetParentNodeId,
         afterRootNodeId,
       );
       const rootNodeId = await ctx.db.insert("nodes", {
         pageId: inboxHistoryPage._id,
-        parentNodeId: null,
+        parentNodeId: targetParentNodeId,
         position: rootPosition,
         text: `Inbox capture ${new Date(now).toLocaleString("en-US", {
           month: "short",
