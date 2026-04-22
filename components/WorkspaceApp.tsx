@@ -2757,6 +2757,7 @@ function ConfiguredWorkspace({
     readStoredBoolean(WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY, false),
   );
   const [isInboxOpen, setIsInboxOpen] = useState(false);
+  const [savedInboxDrafts, setSavedInboxDrafts] = useState<string[]>(["", ""]);
   const [inboxDrafts, setInboxDrafts] = useState<string[]>(["", ""]);
   const [activeInboxBoxIndex, setActiveInboxBoxIndex] = useState(0);
   const [isInboxDirty, setIsInboxDirty] = useState(false);
@@ -2764,6 +2765,7 @@ function ConfiguredWorkspace({
   const [isInboxClearing, setIsInboxClearing] = useState(false);
   const [inboxSaveError, setInboxSaveError] = useState("");
   const [isRandomBoxOpen, setIsRandomBoxOpen] = useState(false);
+  const [savedRandomBoxDrafts, setSavedRandomBoxDrafts] = useState<string[]>(["", ""]);
   const [randomBoxDrafts, setRandomBoxDrafts] = useState<string[]>(["", ""]);
   const [activeRandomBoxIndex, setActiveRandomBoxIndex] = useState(0);
   const [randomBoxSelectedItem, setRandomBoxSelectedItem] = useState("");
@@ -5804,33 +5806,49 @@ function ConfiguredWorkspace({
   );
 
   useEffect(() => {
+    setSavedInboxDrafts((current) =>
+      areWorkspaceTextBoxesEqual(current, normalizedWorkspaceInboxTexts)
+        ? current
+        : normalizedWorkspaceInboxTexts,
+    );
+  }, [workspaceInbox?.updatedAt, normalizedWorkspaceInboxTexts]);
+
+  useEffect(() => {
+    setSavedRandomBoxDrafts((current) =>
+      areWorkspaceTextBoxesEqual(current, normalizedWorkspaceRandomBoxTexts)
+        ? current
+        : normalizedWorkspaceRandomBoxTexts,
+    );
+  }, [workspaceRandomBox?.updatedAt, normalizedWorkspaceRandomBoxTexts]);
+
+  useEffect(() => {
     const nextDirty = !areWorkspaceTextBoxesEqual(
       inboxDrafts,
-      normalizedWorkspaceInboxTexts,
+      savedInboxDrafts,
     );
     setIsInboxDirty((current) => (current === nextDirty ? current : nextDirty));
-  }, [inboxDrafts, normalizedWorkspaceInboxTexts]);
+  }, [inboxDrafts, savedInboxDrafts]);
 
   useEffect(() => {
     const nextDirty = !areWorkspaceTextBoxesEqual(
       randomBoxDrafts,
-      normalizedWorkspaceRandomBoxTexts,
+      savedRandomBoxDrafts,
     );
     setIsRandomBoxDirty((current) => (current === nextDirty ? current : nextDirty));
-  }, [randomBoxDrafts, normalizedWorkspaceRandomBoxTexts]);
+  }, [randomBoxDrafts, savedRandomBoxDrafts]);
 
   useEffect(() => {
     if (!isInboxOpen || !isInboxDirty) {
       setInboxDrafts((current) =>
-        areWorkspaceTextBoxesEqual(current, normalizedWorkspaceInboxTexts)
+        areWorkspaceTextBoxesEqual(current, savedInboxDrafts)
           ? current
-          : normalizedWorkspaceInboxTexts,
+          : savedInboxDrafts,
       );
       setActiveInboxBoxIndex((current) =>
-        clampWorkspaceTextBoxIndex(current, normalizedWorkspaceInboxTexts),
+        clampWorkspaceTextBoxIndex(current, savedInboxDrafts),
       );
     }
-  }, [isInboxDirty, isInboxOpen, normalizedWorkspaceInboxTexts]);
+  }, [isInboxDirty, isInboxOpen, savedInboxDrafts]);
 
   const saveInboxDraft = useCallback(
     async (texts: string[]) => {
@@ -5846,6 +5864,7 @@ function ConfiguredWorkspace({
           ownerKey,
           texts: normalizedTexts,
         });
+        setSavedInboxDrafts(normalizedTexts);
         if (areWorkspaceTextBoxesEqual(inboxDraftsRef.current, normalizedTexts)) {
           setIsInboxDirty(false);
         }
@@ -5862,13 +5881,13 @@ function ConfiguredWorkspace({
 
   const openInbox = useCallback(() => {
     setInboxSaveError("");
-    setInboxDrafts(normalizedWorkspaceInboxTexts);
+    setInboxDrafts(savedInboxDrafts);
     setActiveInboxBoxIndex((current) =>
-      clampWorkspaceTextBoxIndex(current, normalizedWorkspaceInboxTexts),
+      clampWorkspaceTextBoxIndex(current, savedInboxDrafts),
     );
     setIsInboxDirty(false);
     setIsInboxOpen(true);
-  }, [normalizedWorkspaceInboxTexts]);
+  }, [savedInboxDrafts]);
 
   const closeInbox = useCallback(() => {
     if (isInboxClearing) {
@@ -5922,6 +5941,7 @@ function ConfiguredWorkspace({
         text: activeText,
       });
       const nextTexts = normalizeWorkspaceTextBoxes(result.texts, result.text);
+      setSavedInboxDrafts(nextTexts);
       setInboxDrafts(nextTexts);
       inboxDraftsRef.current = nextTexts;
       setActiveInboxBoxIndex((current) => clampWorkspaceTextBoxIndex(current, nextTexts));
@@ -5949,15 +5969,15 @@ function ConfiguredWorkspace({
   useEffect(() => {
     if (!isRandomBoxOpen || !isRandomBoxDirty) {
       setRandomBoxDrafts((current) =>
-        areWorkspaceTextBoxesEqual(current, normalizedWorkspaceRandomBoxTexts)
+        areWorkspaceTextBoxesEqual(current, savedRandomBoxDrafts)
           ? current
-          : normalizedWorkspaceRandomBoxTexts,
+          : savedRandomBoxDrafts,
       );
       setActiveRandomBoxIndex((current) =>
-        clampWorkspaceTextBoxIndex(current, normalizedWorkspaceRandomBoxTexts),
+        clampWorkspaceTextBoxIndex(current, savedRandomBoxDrafts),
       );
     }
-  }, [isRandomBoxDirty, isRandomBoxOpen, normalizedWorkspaceRandomBoxTexts]);
+  }, [isRandomBoxDirty, isRandomBoxOpen, savedRandomBoxDrafts]);
 
   const saveRandomBoxDraft = useCallback(
     async (texts: string[]) => {
@@ -5973,6 +5993,7 @@ function ConfiguredWorkspace({
           ownerKey,
           texts: normalizedTexts,
         });
+        setSavedRandomBoxDrafts(normalizedTexts);
         if (areWorkspaceTextBoxesEqual(randomBoxDraftsRef.current, normalizedTexts)) {
           setIsRandomBoxDirty(false);
         }
@@ -5990,14 +6011,14 @@ function ConfiguredWorkspace({
   const openRandomBox = useCallback(() => {
     setRandomBoxSaveError("");
     setRandomBoxDrafts(
-      normalizedWorkspaceRandomBoxTexts,
+      savedRandomBoxDrafts,
     );
     setActiveRandomBoxIndex((current) =>
-      clampWorkspaceTextBoxIndex(current, normalizedWorkspaceRandomBoxTexts),
+      clampWorkspaceTextBoxIndex(current, savedRandomBoxDrafts),
     );
     setIsRandomBoxDirty(false);
     setIsRandomBoxOpen(true);
-  }, [normalizedWorkspaceRandomBoxTexts]);
+  }, [savedRandomBoxDrafts]);
 
   const closeRandomBox = useCallback(() => {
     if (isRandomBoxDirty) {
@@ -6053,11 +6074,13 @@ function ConfiguredWorkspace({
     }
 
     const timeoutId = window.setTimeout(() => {
-      void saveInboxDraft(inboxDraftsRef.current);
-    }, 450);
+      if (!isInboxSaving) {
+        void saveInboxDraft(inboxDraftsRef.current);
+      }
+    }, 900);
 
     return () => window.clearTimeout(timeoutId);
-  }, [isInboxClearing, isInboxDirty, isInboxOpen, saveInboxDraft]);
+  }, [isInboxClearing, isInboxDirty, isInboxOpen, isInboxSaving, saveInboxDraft]);
 
   useEffect(() => {
     if (!isRandomBoxOpen || !isRandomBoxDirty) {
@@ -6065,11 +6088,13 @@ function ConfiguredWorkspace({
     }
 
     const timeoutId = window.setTimeout(() => {
-      void saveRandomBoxDraft(randomBoxDraftsRef.current);
-    }, 450);
+      if (!isRandomBoxSaving) {
+        void saveRandomBoxDraft(randomBoxDraftsRef.current);
+      }
+    }, 900);
 
     return () => window.clearTimeout(timeoutId);
-  }, [isRandomBoxDirty, isRandomBoxOpen, saveRandomBoxDraft]);
+  }, [isRandomBoxDirty, isRandomBoxOpen, isRandomBoxSaving, saveRandomBoxDraft]);
 
   useEffect(() => {
     setRandomBoxSelectedItem("");
