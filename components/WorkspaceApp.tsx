@@ -1,7 +1,13 @@
 "use client";
 
 import clsx from "clsx";
-import { useAction, useConvexConnectionState, useMutation, useQuery } from "convex/react";
+import {
+  useAction,
+  useConvex,
+  useConvexConnectionState,
+  useMutation,
+  useQuery,
+} from "convex/react";
 import {
   Component,
   useCallback,
@@ -2936,6 +2942,9 @@ function ConfiguredWorkspace({
   const [pendingInsertedComposer, setPendingInsertedComposer] =
     useState<PendingInsertedComposer | null>(null);
   const [locationPageId, setLocationPageId] = useState<string | null>(null);
+  const [cachedTags, setCachedTags] = useState<SidebarTagResult[] | null>(null);
+  const [isRefreshingTags, setIsRefreshingTags] = useState(false);
+  const convex = useConvex();
   const connectionState = useConvexConnectionState();
   const [hasHydratedSessionUiState, setHasHydratedSessionUiState] = useState(false);
   const hasHydratedSessionUiStateRef = useRef(false);
@@ -2979,10 +2988,6 @@ function ConfiguredWorkspace({
       (embeddingRebuildProgress?.error ?? 0) > 0
       ? { ownerKey, limit: 6 }
       : SKIP,
-  );
-  const tags = useQuery(
-    api.workspace.listTags,
-    ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
   );
   const workspaceKnowledgeThread = useQuery(
     api.chatData.getWorkspaceKnowledgeThread,
@@ -3081,6 +3086,25 @@ function ConfiguredWorkspace({
     },
     [beginPendingSync, finishPendingSync],
   );
+
+  const handleRefreshTags = useCallback(async () => {
+    if (!ownerKey || !isOwnerKeyValid) {
+      return;
+    }
+
+    setIsRefreshingTags(true);
+    try {
+      const nextTags = (await convex.query(api.workspace.listTags, {
+        ownerKey,
+      })) as SidebarTagResult[];
+      setCachedTags(nextTags);
+    } catch (error) {
+      console.error("Failed to refresh tags", error);
+      setSyncErrorMessage("Couldn’t refresh tags right now.");
+    } finally {
+      setIsRefreshingTags(false);
+    }
+  }, [convex, isOwnerKeyValid, ownerKey]);
 
   const createPage = useMutation(api.workspace.createPage);
   const ensureSidebarPage = useMutation(api.workspace.ensureSidebarPage);
@@ -3887,7 +3911,7 @@ function ConfiguredWorkspace({
   const showAllSectionContent = !isAllSectionCollapsed;
   const showTagsSectionContent = !isTagsSectionCollapsed;
   const showArchiveSectionContent = !isArchiveSectionCollapsed;
-  const sortedTags: SidebarTagResult[] = tags ?? [];
+  const sortedTags: SidebarTagResult[] = cachedTags ?? [];
   const pagesByTitle = useMemo(() => {
     const next = new Map<string, PageDoc>();
     for (const page of pages ?? []) {
@@ -4949,6 +4973,32 @@ function ConfiguredWorkspace({
       isTagsSectionCollapsed ? "true" : "false",
     );
   }, [isTagsSectionCollapsed]);
+
+  useEffect(() => {
+    setCachedTags(null);
+    setIsRefreshingTags(false);
+  }, [ownerKey]);
+
+  useEffect(() => {
+    if (
+      !showTagsSectionContent ||
+      cachedTags !== null ||
+      isRefreshingTags ||
+      !ownerKey ||
+      !isOwnerKeyValid
+    ) {
+      return;
+    }
+
+    void handleRefreshTags();
+  }, [
+    cachedTags,
+    handleRefreshTags,
+    isOwnerKeyValid,
+    isRefreshingTags,
+    ownerKey,
+    showTagsSectionContent,
+  ]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -9507,14 +9557,24 @@ function ConfiguredWorkspace({
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                       Tags
                     </p>
-                    <button
-                      type="button"
-                      onClick={() => setIsTagsSectionCollapsed((current) => !current)}
-                      className="flex h-8 w-8 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold leading-none text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                      aria-label={isTagsSectionCollapsed ? "Expand tags" : "Collapse tags"}
-                    >
-                      {isTagsSectionCollapsed ? "+" : "−"}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleRefreshTags()}
+                        disabled={!ownerKey || !isOwnerKeyValid || isRefreshingTags}
+                        className="border border-[var(--workspace-border-control)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-wait disabled:opacity-60"
+                      >
+                        {isRefreshingTags ? "Refreshing…" : "Refresh"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsTagsSectionCollapsed((current) => !current)}
+                        className="flex h-8 w-8 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold leading-none text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                        aria-label={isTagsSectionCollapsed ? "Expand tags" : "Collapse tags"}
+                      >
+                        {isTagsSectionCollapsed ? "+" : "−"}
+                      </button>
+                    </div>
                   </div>
                   <div
                     className={clsx(
@@ -9528,9 +9588,13 @@ function ConfiguredWorkspace({
                       aria-hidden={!showTagsSectionContent}
                       className="min-h-0 overflow-hidden"
                     >
-                      {typeof tags === "undefined" ? (
+                      {isRefreshingTags && cachedTags === null ? (
                         <p className="text-sm text-[var(--workspace-text-faint)]">
                           Loading tags…
+                        </p>
+                      ) : cachedTags === null ? (
+                        <p className="text-sm text-[var(--workspace-text-faint)]">
+                          Tags load on demand. Click refresh to scan them.
                         </p>
                       ) : sortedTags.length === 0 ? (
                         <p className="text-sm text-[var(--workspace-text-faint)]">
