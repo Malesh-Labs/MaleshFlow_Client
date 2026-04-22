@@ -136,6 +136,7 @@ const WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY = "maleshflow-workspace-ai-chat-open";
 const WORKSPACE_INBOX_TEXTAREA_ID = "workspace-inbox-textarea";
 const WORKSPACE_RANDOM_BOX_TEXTAREA_ID = "workspace-random-box-textarea";
 const MIN_WORKSPACE_TEXT_BOX_COUNT = 2;
+const OUTLINE_MOBILE_INDENT_STEP = 6;
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
 const ALL_PAGE_TYPE_GROUP_ORDER = [
   "Planner",
@@ -11373,7 +11374,7 @@ function PageSection({
   recurringCompletionMode,
   completeTaskPageTask = async () => undefined,
   depthOffset = 0,
-  mobileIndentStep = 0,
+  mobileIndentStep = OUTLINE_MOBILE_INDENT_STEP,
   action = null,
   headerDetail = null,
   statusMessage = "",
@@ -11579,7 +11580,7 @@ function OutlineNodeList({
   onToggleNodeFavorite = () => {},
   recurringCompletionMode,
   completeTaskPageTask = async () => undefined,
-  mobileIndentStep = 0,
+  mobileIndentStep = OUTLINE_MOBILE_INDENT_STEP,
 }: {
   nodes: TreeNode[];
   ownerKey: string;
@@ -12707,7 +12708,7 @@ function OutlineNodeEditor({
   onToggleNodeFavorite = () => {},
   recurringCompletionMode,
   completeTaskPageTask = async () => undefined,
-  mobileIndentStep = 0,
+  mobileIndentStep = OUTLINE_MOBILE_INDENT_STEP,
 }: {
   node: TreeNode;
   siblings: TreeNode[];
@@ -15204,7 +15205,7 @@ function InlineComposer({
   historyInstanceKey,
   readOnly = false,
   depth = 0,
-  mobileIndentStep = 0,
+  mobileIndentStep = OUTLINE_MOBILE_INDENT_STEP,
   autoFocusToken = 0,
   defaultKind = "note",
   persistWhenEmpty = false,
