@@ -5804,6 +5804,22 @@ function ConfiguredWorkspace({
   );
 
   useEffect(() => {
+    const nextDirty = !areWorkspaceTextBoxesEqual(
+      inboxDrafts,
+      normalizedWorkspaceInboxTexts,
+    );
+    setIsInboxDirty((current) => (current === nextDirty ? current : nextDirty));
+  }, [inboxDrafts, normalizedWorkspaceInboxTexts]);
+
+  useEffect(() => {
+    const nextDirty = !areWorkspaceTextBoxesEqual(
+      randomBoxDrafts,
+      normalizedWorkspaceRandomBoxTexts,
+    );
+    setIsRandomBoxDirty((current) => (current === nextDirty ? current : nextDirty));
+  }, [randomBoxDrafts, normalizedWorkspaceRandomBoxTexts]);
+
+  useEffect(() => {
     if (!isInboxOpen || !isInboxDirty) {
       setInboxDrafts((current) =>
         areWorkspaceTextBoxesEqual(current, normalizedWorkspaceInboxTexts)
