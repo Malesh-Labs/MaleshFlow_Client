@@ -4981,7 +4981,6 @@ function ConfiguredWorkspace({
 
   useEffect(() => {
     if (
-      !showTagsSectionContent ||
       cachedTags !== null ||
       isRefreshingTags ||
       !ownerKey ||
@@ -4997,7 +4996,6 @@ function ConfiguredWorkspace({
     isOwnerKeyValid,
     isRefreshingTags,
     ownerKey,
-    showTagsSectionContent,
   ]);
 
   useEffect(() => {
