@@ -9814,32 +9814,19 @@ function ConfiguredWorkspace({
                   </div>
                 </div>
 
-                <div className="order-6 mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
+                <div className="order-7 mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                       Legacy
                     </p>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setLegacyPanelFileId(null);
-                          setPaletteMode("legacyUpload");
-                          setPaletteOpen(true);
-                        }}
-                        className="border border-[var(--workspace-border-control)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                      >
-                        Upload
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setIsLegacySectionCollapsed((current) => !current)}
-                        className="flex h-8 w-8 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold leading-none text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
-                        aria-label={showLegacySectionContent ? "Collapse legacy files" : "Expand legacy files"}
-                      >
-                        {showLegacySectionContent ? "−" : "+"}
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setIsLegacySectionCollapsed((current) => !current)}
+                      className="flex h-8 w-8 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold leading-none text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                      aria-label={showLegacySectionContent ? "Collapse legacy files" : "Expand legacy files"}
+                    >
+                      {showLegacySectionContent ? "−" : "+"}
+                    </button>
                   </div>
                   <div
                     className={clsx(
@@ -9889,7 +9876,7 @@ function ConfiguredWorkspace({
                   </div>
                 </div>
 
-                <div className="order-7 mt-8 border-t border-[var(--workspace-border-soft)] pt-5 opacity-75">
+                <div className="order-6 mt-8 border-t border-[var(--workspace-border-soft)] pt-5 opacity-75">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                       Archive
