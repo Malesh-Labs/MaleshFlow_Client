@@ -77,6 +77,14 @@ function buildCalendarTaskDescription(args: {
   return lines.join("\n");
 }
 
+function isCalendarNoteCompleted(node: Pick<Doc<"nodes">, "sourceMeta">) {
+  return (
+    node.sourceMeta &&
+    typeof node.sourceMeta === "object" &&
+    (node.sourceMeta as Record<string, unknown>).noteCompleted === true
+  );
+}
+
 export const ensureTaskCalendarFeed = mutation({
   args: {
     ownerKey: v.string(),
@@ -120,7 +128,7 @@ export const getTaskCalendarFeedByToken = internalQuery({
       return null;
     }
 
-    const tasksByPageId = new Map<string, Doc<"nodes">[]>();
+    const datedNodesByPageId = new Map<string, Doc<"nodes">[]>();
     for await (const task of ctx.db
       .query("nodes")
       .withIndex("by_kind_status", (query) => query.eq("kind", "task"))) {
@@ -134,15 +142,35 @@ export const getTaskCalendarFeedByToken = internalQuery({
         continue;
       }
 
-      const pageTasks = tasksByPageId.get(task.pageId as string);
-      if (pageTasks) {
-        pageTasks.push(task);
+      const pageNodes = datedNodesByPageId.get(task.pageId as string);
+      if (pageNodes) {
+        pageNodes.push(task);
       } else {
-        tasksByPageId.set(task.pageId as string, [task]);
+        datedNodesByPageId.set(task.pageId as string, [task]);
       }
     }
 
-    const pageIds = [...tasksByPageId.keys()] as Id<"pages">[];
+    for await (const note of ctx.db
+      .query("nodes")
+      .withIndex("by_kind_status", (query) =>
+        query.eq("kind", "note").eq("taskStatus", null).eq("archived", false),
+      )) {
+      if (
+        !note.dueAt ||
+        isCalendarNoteCompleted(note)
+      ) {
+        continue;
+      }
+
+      const pageNodes = datedNodesByPageId.get(note.pageId as string);
+      if (pageNodes) {
+        pageNodes.push(note);
+      } else {
+        datedNodesByPageId.set(note.pageId as string, [note]);
+      }
+    }
+
+    const pageIds = [...datedNodesByPageId.keys()] as Id<"pages">[];
     const pages = await Promise.all(pageIds.map((pageId) => ctx.db.get(pageId)));
     const pageMap = new Map(
       pages
@@ -157,24 +185,24 @@ export const getTaskCalendarFeedByToken = internalQuery({
         continue;
       }
 
-      const pageTasks = tasksByPageId.get(pageId as string) ?? [];
-      for (const task of pageTasks) {
-        if (!task.dueAt) {
+      const pageNodes = datedNodesByPageId.get(pageId as string) ?? [];
+      for (const node of pageNodes) {
+        if (!node.dueAt) {
           continue;
         }
 
-        const summary = await resolveCalendarTaskSummary(ctx.db, task.text);
-        const tags = extractCalendarTaskCategories(task.text);
+        const summary = await resolveCalendarTaskSummary(ctx.db, node.text);
+        const tags = extractCalendarTaskCategories(node.text);
         events.push({
-          uid: `${task._id}@maleshflow.tasks`,
+          uid: `${node._id}@maleshflow.tasks`,
           summary,
           description: buildCalendarTaskDescription({
             pageTitle: page.title,
             tags,
           }),
-          dueAt: task.dueAt,
-          dueEndAt: task.dueEndAt ?? null,
-          updatedAt: task.updatedAt,
+          dueAt: node.dueAt,
+          dueEndAt: node.dueEndAt ?? null,
+          updatedAt: node.updatedAt,
           categories: tags,
         });
       }
@@ -183,7 +211,7 @@ export const getTaskCalendarFeedByToken = internalQuery({
     return {
       calendarName: "MaleshFlow Tasks",
       calendarDescription:
-        "Incomplete MaleshFlow tasks with due dates. Subscribe in Google Calendar using this URL.",
+        "Incomplete MaleshFlow tasks and dated notes. Subscribe in Google Calendar using this URL.",
       events,
     };
   },

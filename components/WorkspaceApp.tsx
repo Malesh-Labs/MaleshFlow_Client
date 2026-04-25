@@ -103,6 +103,7 @@ import {
 import { ArchiveSearchPanel } from "@/components/ArchiveSearchPanel";
 import { FindReplacePanel } from "@/components/FindReplacePanel";
 import { ImporterPanel } from "@/components/ImporterPanel";
+import { NoteDatePanel } from "@/components/NoteDatePanel";
 import { TaskSchedulePanel } from "@/components/TaskSchedulePanel";
 import type { ImportedOutlineNode } from "@/lib/domain/importer";
 
@@ -279,7 +280,8 @@ type PaletteMode =
   | "replace"
   | "archive"
   | "importer"
-  | "taskSchedule";
+  | "taskSchedule"
+  | "noteDate";
 const PALETTE_MODE_ORDER: PaletteMode[] = [
   "actions",
   "pages",
@@ -1207,8 +1209,8 @@ function withNodeScheduleSnapshot(
     return {
       ...snapshot,
       taskStatus: null,
-      dueAt: null,
-      dueEndAt: null,
+      dueAt: ("dueAt" in source ? (source.dueAt ?? null) : null),
+      dueEndAt: ("dueEndAt" in source ? (source.dueEndAt ?? null) : null),
       recurrenceFrequency: null,
     };
   }
@@ -1247,6 +1249,18 @@ function getTaskScheduleSummary(task: {
   }
 
   return parts.join(" • ");
+}
+
+function getNoteDateSummary(note: {
+  kind: string;
+  dueAt: number | null;
+  dueEndAt?: number | null;
+}) {
+  if (note.kind !== "note" || !note.dueAt) {
+    return "";
+  }
+
+  return formatDueDateRange(note.dueAt, note.dueEndAt ?? null);
 }
 
 function findSectionNode(nodes: TreeNode[], slot: SectionSlot) {
@@ -3521,6 +3535,20 @@ function ConfiguredWorkspace({
     setPaletteOpen(true);
   }, [clearNodeSelection, selectedNodeIds]);
 
+  const openNoteDatePalette = useCallback((nodeId: string | null) => {
+    if (selectedNodeIds.size > 1) {
+      clearNodeSelection();
+    }
+    setActionContextSelectedNodeIds([]);
+    setActionContextNodeId(nodeId);
+    setPaletteMode("noteDate");
+    setPaletteQuery("");
+    setPaletteHighlightIndex(0);
+    setTextSearchResults([]);
+    setNodeSearchResults([]);
+    setPaletteOpen(true);
+  }, [clearNodeSelection, selectedNodeIds]);
+
   const cyclePaletteMode = useCallback((direction: -1 | 1) => {
     const currentIndex = PALETTE_MODE_ORDER.indexOf(paletteMode);
     const safeCurrentIndex =
@@ -3960,6 +3988,23 @@ function ConfiguredWorkspace({
 
     return node;
   }, [paletteContextNodeId, pagesById, workspaceNodeMap]);
+  const noteDateTargetNode = useMemo(() => {
+    if (!paletteContextNodeId) {
+      return null;
+    }
+
+    const node = workspaceNodeMap.get(paletteContextNodeId) ?? null;
+    if (!node || node.kind !== "note" || getNodeMeta(node).locked === true) {
+      return null;
+    }
+
+    const page = pagesById.get(node.pageId as string);
+    if (page?.archived) {
+      return null;
+    }
+
+    return node;
+  }, [paletteContextNodeId, pagesById, workspaceNodeMap]);
   const favoriteTargetNode = useMemo(() => {
     if (!paletteContextNodeId) {
       return null;
@@ -3998,6 +4043,7 @@ function ConfiguredWorkspace({
   const taskScheduleSummary = taskScheduleTargetNode
     ? getTaskScheduleSummary(taskScheduleTargetNode, taskScheduleEffectiveDueRange)
     : "";
+  const noteDateSummary = noteDateTargetNode ? getNoteDateSummary(noteDateTargetNode) : "";
   const insertOutlineClipboardNodes = useCallback(
     async ({
       nodes,
@@ -5586,6 +5632,60 @@ function ConfiguredWorkspace({
     });
   }, [history, ownerKey, taskScheduleTargetNode, updateNode]);
 
+  const handleSaveNoteDate = useCallback(async ({
+    dueAt,
+  }: {
+    dueAt: number | null;
+  }) => {
+    const node = noteDateTargetNode;
+    if (!node) {
+      throw new Error("Pick a note first.");
+    }
+
+    const beforeSnapshot = toNodeValueSnapshot(node);
+    const afterSnapshot: NodeValueSnapshot = {
+      text: node.text,
+      kind: "note",
+      taskStatus: null,
+      noteCompleted: isNodeNoteCompleted(node),
+      dueAt,
+      dueEndAt: null,
+      recurrenceFrequency: null,
+    };
+
+    if (
+      beforeSnapshot.text === afterSnapshot.text &&
+      beforeSnapshot.kind === afterSnapshot.kind &&
+      beforeSnapshot.taskStatus === afterSnapshot.taskStatus &&
+      beforeSnapshot.noteCompleted === afterSnapshot.noteCompleted &&
+      beforeSnapshot.dueAt === afterSnapshot.dueAt &&
+      beforeSnapshot.dueEndAt === afterSnapshot.dueEndAt
+    ) {
+      return;
+    }
+
+    await updateNode({
+      ownerKey,
+      nodeId: node._id,
+      text: afterSnapshot.text,
+      kind: "note",
+      taskStatus: null,
+      noteCompleted: afterSnapshot.noteCompleted,
+      dueAt: afterSnapshot.dueAt,
+      dueEndAt: null,
+      recurrenceFrequency: null,
+    });
+
+    history.pushUndoEntry({
+      type: "update_node",
+      pageId: node.pageId as Id<"pages">,
+      nodeId: node._id as Id<"nodes">,
+      before: beforeSnapshot,
+      after: afterSnapshot,
+      focusEditorId: getNodeEditorId(node._id as Id<"nodes">),
+    });
+  }, [history, noteDateTargetNode, ownerKey, updateNode]);
+
   const actionResults = useMemo(() => {
     const favoriteContextPage = favoriteTargetPage;
     const favoriteContextNode = favoriteTargetNode;
@@ -5761,6 +5861,21 @@ function ConfiguredWorkspace({
         },
       },
       {
+        key: "note-date",
+        title: "Set Note Date",
+        subtitle: noteDateTargetNode
+          ? noteDateSummary
+            ? `${noteDateTargetNode.text || "(empty note)"} • ${noteDateSummary}`
+            : `Add a calendar date to ${noteDateTargetNode.text || "this note"}.`
+          : "Highlight a note, or open Actions while your caret is inside a note.",
+        keywords: ["note", "date", "calendar", "dated note", "day"],
+        actionLabel: "Open",
+        disabled: noteDateTargetNode === null,
+        onSelect: () => {
+          openNoteDatePalette(noteDateTargetNode?._id as string | null);
+        },
+      },
+      {
         key: "import-text",
         title: "Import From Text",
         subtitle: "Paste text, normalize Dynalist-style content, preview the parsed nodes, and import them into a chosen page.",
@@ -5787,7 +5902,7 @@ function ConfiguredWorkspace({
           ? "Preparing Google Calendar Feed…"
           : "Copy Google Calendar Feed",
         subtitle:
-          "Copy a private ICS URL for all incomplete tasks with due dates so you can subscribe from Google Calendar.",
+          "Copy a private ICS URL for incomplete tasks and dated notes so you can subscribe from Google Calendar.",
         keywords: [
           "google",
           "calendar",
@@ -5797,6 +5912,7 @@ function ConfiguredWorkspace({
           "export",
           "due dates",
           "tasks",
+          "notes",
           "sync",
         ],
         actionLabel: isPreparingTaskCalendarFeed ? "Preparing…" : "Copy",
@@ -5876,7 +5992,10 @@ function ConfiguredWorkspace({
     isCreatingPlannerPage,
     isPreparingTaskCalendarFeed,
     isRebuildingEmbeddings,
+    noteDateSummary,
+    noteDateTargetNode,
     ownerKey,
+    openNoteDatePalette,
     openTaskSchedulePalette,
     paletteQuery,
     setOwnerKey,
@@ -10721,7 +10840,8 @@ function ConfiguredWorkspace({
               paletteMode === "replace" ||
                 paletteMode === "archive" ||
                 paletteMode === "importer" ||
-                paletteMode === "taskSchedule"
+                paletteMode === "taskSchedule" ||
+                paletteMode === "noteDate"
                   ? "max-w-4xl"
                   : "max-w-2xl",
             )}
@@ -10829,11 +10949,23 @@ function ConfiguredWorkspace({
                     Task Schedule
                   </button>
                 ) : null}
+                {paletteMode === "noteDate" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaletteMode("noteDate");
+                    }}
+                    className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition"
+                  >
+                    Note Date
+                  </button>
+                ) : null}
               </div>
               {paletteMode === "replace" ||
               paletteMode === "archive" ||
               paletteMode === "importer" ||
-              paletteMode === "taskSchedule" ? (
+              paletteMode === "taskSchedule" ||
+              paletteMode === "noteDate" ? (
                 <p className="text-sm text-[var(--workspace-text-subtle)]">
                   {paletteMode === "replace"
                     ? "Preview and replace exact text in the current page or across the active workspace."
@@ -10841,7 +10973,9 @@ function ConfiguredWorkspace({
                       ? "Search archived pages and nodes without mixing them into active workspace results."
                       : paletteMode === "importer"
                           ? "Paste text, preview exactly what will be added, and import it into the page you choose."
-                          : "Set a due date, recurrence, and recurring completion rule for the current task."}
+                          : paletteMode === "taskSchedule"
+                            ? "Set a due date, recurrence, and recurring completion rule for the current task."
+                            : "Set a calendar date for the current note without turning it into a task."}
                 </p>
               ) : (
                 <div className="flex items-center gap-3">
@@ -10881,7 +11015,8 @@ function ConfiguredWorkspace({
               paletteMode === "replace" ||
               paletteMode === "archive" ||
               paletteMode === "importer" ||
-                  paletteMode === "taskSchedule"
+                  paletteMode === "taskSchedule" ||
+                  paletteMode === "noteDate"
                   ? "overflow-hidden"
                   : "overflow-y-auto py-2",
               )}
@@ -11100,6 +11235,26 @@ function ConfiguredWorkspace({
                 ) : (
                   <div className="px-5 py-8 text-sm text-[var(--workspace-text-subtle)]">
                     Highlight a task, or open the command palette while your caret is inside a task, then choose <span className="text-[var(--workspace-text)]">Set Task Schedule</span>.
+                  </div>
+                )
+              ) : paletteMode === "noteDate" ? (
+                noteDateTargetNode ? (
+                  <NoteDatePanel
+                    noteTitle={noteDateTargetNode.text}
+                    dueAt={noteDateTargetNode.dueAt ?? null}
+                    onSave={(args) => handleSaveNoteDate(args)}
+                    onSaved={() => {
+                      setCopySnackbarMessage("Note date saved");
+                      setPaletteOpen(false);
+                      setPaletteQuery("");
+                      setPaletteMode("pages");
+                      setTextSearchResults([]);
+                      setNodeSearchResults([]);
+                    }}
+                  />
+                ) : (
+                  <div className="px-5 py-8 text-sm text-[var(--workspace-text-subtle)]">
+                    Highlight a note, or open the command palette while your caret is inside a note, then choose <span className="text-[var(--workspace-text)]">Set Note Date</span>.
                   </div>
                 )
               ) : null}
@@ -13133,6 +13288,10 @@ function OutlineNodeEditor({
     node.kind === "task"
       ? formatDueDateRange(effectiveDueRange.dueAt, effectiveDueRange.dueEndAt ?? null)
       : "";
+  const noteDateLabel =
+    node.kind === "note" && node.dueAt
+      ? formatDueDateRange(node.dueAt, node.dueEndAt ?? null)
+      : "";
   const isOverdueTask =
     node.kind === "task" &&
     !isCompleted &&
@@ -13867,8 +14026,6 @@ function OutlineNodeEditor({
       kind: "note",
       taskStatus: null,
       noteCompleted: isNoteCompleted,
-      dueAt: null,
-      dueEndAt: null,
       recurrenceFrequency: null,
     }, node);
     const afterSnapshot = withNodeScheduleSnapshot({
@@ -13876,8 +14033,6 @@ function OutlineNodeEditor({
       kind: "note",
       taskStatus: null,
       noteCompleted: !isNoteCompleted,
-      dueAt: null,
-      dueEndAt: null,
       recurrenceFrequency: null,
     }, node);
 
@@ -13941,8 +14096,6 @@ function OutlineNodeEditor({
             kind: "note",
             taskStatus: null,
             noteCompleted: false,
-            dueAt: null,
-            dueEndAt: null,
             recurrenceFrequency: null,
           }, beforeSnapshot)
         : withNodeScheduleSnapshot({
@@ -13950,8 +14103,6 @@ function OutlineNodeEditor({
             kind: "task",
             taskStatus: "todo",
             noteCompleted: false,
-            dueAt: null,
-            dueEndAt: null,
             recurrenceFrequency: null,
           }, beforeSnapshot);
 
@@ -15149,9 +15300,10 @@ function OutlineNodeEditor({
                 />
               ) : null}
             </div>
-            {node.kind === "task" && (effectiveDueRange.dueAt || recurrenceFrequency) ? (
+            {(node.kind === "task" && (effectiveDueRange.dueAt || recurrenceFrequency)) ||
+            (node.kind === "note" && node.dueAt) ? (
               <div className="mt-2 flex flex-wrap items-center gap-1 text-[10px] leading-none">
-                {effectiveDueRange.dueAt ? (
+                {node.kind === "task" && effectiveDueRange.dueAt ? (
                   <span
                     className={clsx(
                       "rounded-full border px-1.5 py-1 text-[var(--workspace-text-faint)] break-words",
@@ -15165,7 +15317,18 @@ function OutlineNodeEditor({
                     {isOverdueTask ? `${dueDateLabel} overdue` : dueDateLabel}
                   </span>
                 ) : null}
-                {recurrenceFrequency ? (
+                {node.kind === "note" && node.dueAt ? (
+                  <span
+                    className={clsx(
+                      "rounded-full border border-[var(--workspace-border)] px-1.5 py-1 text-[var(--workspace-text-faint)] break-words",
+                      isCompleted ? "opacity-70" : "",
+                    )}
+                    title={`Dated ${noteDateLabel}`}
+                  >
+                    {noteDateLabel}
+                  </span>
+                ) : null}
+                {node.kind === "task" && recurrenceFrequency ? (
                   <span
                     className={clsx(
                       "rounded-full border border-[var(--workspace-border)] px-1.5 py-1 text-[var(--workspace-text-faint)] break-words",
