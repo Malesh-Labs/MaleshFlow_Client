@@ -9252,7 +9252,7 @@ function ConfiguredWorkspace({
       ) : null}
         <div
           className={clsx(
-            "mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 pb-36 md:pb-44",
+            "mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 pb-36 transition-[grid-template-columns] duration-300 ease-out motion-reduce:transition-none md:pb-44",
             isWorkspaceChatOpen ? "hidden" : "",
           )}
         style={
@@ -9267,12 +9267,12 @@ function ConfiguredWorkspace({
       >
         <aside
           className={clsx(
-            "border-b border-[var(--workspace-border)] bg-[var(--workspace-sidebar-bg)] lg:border-b-0 lg:border-r",
+            "overflow-hidden border-b border-[var(--workspace-border)] bg-[var(--workspace-sidebar-bg)] lg:border-b-0 lg:border-r",
           )}
         >
           <div
             className={clsx(
-              "flex min-h-full flex-col",
+              "flex min-h-full flex-col transition-[padding] duration-300 ease-out motion-reduce:transition-none",
               isSidebarCollapsed ? "px-3 py-4 md:px-4 md:py-5" : "p-6",
             )}
           >
