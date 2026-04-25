@@ -103,6 +103,7 @@ import {
 import { ArchiveSearchPanel } from "@/components/ArchiveSearchPanel";
 import { FindReplacePanel } from "@/components/FindReplacePanel";
 import { ImporterPanel } from "@/components/ImporterPanel";
+import { LegacyPanel } from "@/components/LegacyPanel";
 import { NoteDatePanel } from "@/components/NoteDatePanel";
 import { TaskSchedulePanel } from "@/components/TaskSchedulePanel";
 import type { ImportedOutlineNode } from "@/lib/domain/importer";
@@ -133,6 +134,7 @@ const ALL_PAGE_TYPE_SECTIONS_COLLAPSE_STORAGE_KEY =
 const PINNED_ALL_PAGES_STORAGE_KEY = "maleshflow-pinned-all-pages";
 const TAGS_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-tags-section-collapsed";
 const ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-archive-section-collapsed";
+const LEGACY_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-legacy-section-collapsed";
 const RECURRING_TASK_COMPLETION_MODE_STORAGE_KEY =
   "maleshflow-recurring-task-completion-mode";
 const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
@@ -280,6 +282,8 @@ type PaletteMode =
   | "replace"
   | "archive"
   | "importer"
+  | "legacyUpload"
+  | "legacySearch"
   | "taskSchedule"
   | "noteDate";
 const PALETTE_MODE_ORDER: PaletteMode[] = [
@@ -940,6 +944,29 @@ function getPageTypeEmoji(page: Doc<"pages"> | null | undefined) {
       return "📄";
     }
   }
+}
+
+function formatLegacyFileSize(size: number) {
+  if (size < 1024) {
+    return `${size} B`;
+  }
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getLegacyFileSidebarStatus(file: Doc<"legacyFiles">) {
+  if (file.status === "processing") {
+    return `Indexing ${file.chunkCount}`;
+  }
+  if (file.status === "ready") {
+    return `${file.chunkCount} chunks`;
+  }
+  if (file.status === "error") {
+    return "Error";
+  }
+  return "Uploaded";
 }
 
 function isTextEntryElement(target: EventTarget | null) {
@@ -2939,6 +2966,8 @@ function ConfiguredWorkspace({
   );
   const [isTagsSectionCollapsed, setIsTagsSectionCollapsed] = useState(true);
   const [isArchiveSectionCollapsed, setIsArchiveSectionCollapsed] = useState(true);
+  const [isLegacySectionCollapsed, setIsLegacySectionCollapsed] = useState(false);
+  const [legacyPanelFileId, setLegacyPanelFileId] = useState<Id<"legacyFiles"> | null>(null);
   const [showSidebarDiagnostics, setShowSidebarDiagnostics] = useState(false);
   const [sidebarBootstrapError, setSidebarBootstrapError] = useState<string>("");
   const [isShortcutsOpen, setIsShortcutsOpen] = useState(false);
@@ -2990,6 +3019,10 @@ function ConfiguredWorkspace({
     api.workspace.listSidebarFavorites,
     ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
   ) as SidebarFavoriteResult[] | undefined;
+  const legacyFiles = useQuery(
+    api.legacy.listLegacyFiles,
+    ownerKey && isOwnerKeyValid ? { ownerKey, limit: 100 } : SKIP,
+  ) as Doc<"legacyFiles">[] | undefined;
   const embeddingRebuildProgress = useQuery(
     api.workspace.getEmbeddingRebuildStatus,
     ownerKey && isOwnerKeyValid && shouldTrackEmbeddingRebuild ? { ownerKey } : SKIP,
@@ -3932,6 +3965,13 @@ function ConfiguredWorkspace({
     });
   }, [sidebarFavorites]);
   const archivedPages = (pages ?? []).filter((page) => page.archived);
+  const sortedLegacyFiles = useMemo(
+    () =>
+      [...(legacyFiles ?? [])].sort((left, right) =>
+        left.fileName.localeCompare(right.fileName, undefined, { sensitivity: "base" }),
+      ),
+    [legacyFiles],
+  );
   const showSidebarTextSectionContent = sidebarTree !== null && !isSidebarTextSectionCollapsed;
   const showFavoritesSectionContent = !isFavoritesSectionCollapsed;
   const showUncategorizedSectionContent =
@@ -3939,6 +3979,7 @@ function ConfiguredWorkspace({
   const showAllSectionContent = !isAllSectionCollapsed;
   const showTagsSectionContent = !isTagsSectionCollapsed;
   const showArchiveSectionContent = !isArchiveSectionCollapsed;
+  const showLegacySectionContent = !isLegacySectionCollapsed;
   const sortedTags: SidebarTagResult[] = cachedTags ?? [];
   const pagesByTitle = useMemo(() => {
     const next = new Map<string, PageDoc>();
@@ -4804,6 +4845,9 @@ function ConfiguredWorkspace({
     setIsArchiveSectionCollapsed(
       readStoredBoolean(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY, true),
     );
+    setIsLegacySectionCollapsed(
+      readStoredBoolean(LEGACY_SECTION_COLLAPSE_STORAGE_KEY, false),
+    );
     try {
       const storedCollapsedAllPageTypeSections = JSON.parse(
         window.sessionStorage.getItem(ALL_PAGE_TYPE_SECTIONS_COLLAPSE_STORAGE_KEY) ?? "[]",
@@ -5058,6 +5102,21 @@ function ConfiguredWorkspace({
       isArchiveSectionCollapsed ? "true" : "false",
     );
   }, [isArchiveSectionCollapsed]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!hasHydratedSessionUiStateRef.current) {
+      return;
+    }
+
+    window.sessionStorage.setItem(
+      LEGACY_SECTION_COLLAPSE_STORAGE_KEY,
+      isLegacySectionCollapsed ? "true" : "false",
+    );
+  }, [isLegacySectionCollapsed]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -5479,6 +5538,7 @@ function ConfiguredWorkspace({
     window.sessionStorage.removeItem(PINNED_ALL_PAGES_STORAGE_KEY);
     window.sessionStorage.removeItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
+    window.sessionStorage.removeItem(LEGACY_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
     window.sessionStorage.removeItem(WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY);
     window.localStorage.removeItem(SIDEBAR_COLLAPSE_STORAGE_KEY);
@@ -5490,6 +5550,7 @@ function ConfiguredWorkspace({
     window.localStorage.removeItem(PINNED_ALL_PAGES_STORAGE_KEY);
     window.localStorage.removeItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
+    window.localStorage.removeItem(LEGACY_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
     window.localStorage.removeItem(RECURRING_TASK_COMPLETION_MODE_STORAGE_KEY);
     setSelectedPageId(null);
@@ -5894,6 +5955,28 @@ function ConfiguredWorkspace({
         actionLabel: "Open",
         onSelect: () => {
           switchPaletteMode("importer");
+        },
+      },
+      {
+        key: "upload-legacy-files",
+        title: "Upload Legacy Files",
+        subtitle: "Upload old Markdown and text files into searchable legacy storage without creating pages or items.",
+        keywords: ["legacy", "upload", "files", "markdown", "txt", "old notes", "journal"],
+        actionLabel: "Open",
+        onSelect: () => {
+          setLegacyPanelFileId(null);
+          switchPaletteMode("legacyUpload");
+        },
+      },
+      {
+        key: "search-legacy",
+        title: "Search Legacy",
+        subtitle: "Search imported legacy file chunks by exact text or optional semantic index.",
+        keywords: ["legacy", "search", "find", "semantic", "files", "old notes", "journal"],
+        actionLabel: "Open",
+        onSelect: () => {
+          setLegacyPanelFileId(null);
+          switchPaletteMode("legacySearch");
         },
       },
       {
@@ -6965,7 +7048,6 @@ function ConfiguredWorkspace({
     }
 
     const historyEntries: Array<Extract<HistoryEntry, { type: "update_node" }>> = [];
-    let completedPlannerLinkedTask = false;
     const updates: Array<{
       nodeId: Id<"nodes">;
       text: string;
@@ -6986,16 +7068,6 @@ function ConfiguredWorkspace({
 
       const page = pagesById.get(node.pageId as string);
       if (page?.archived) {
-        continue;
-      }
-
-      if (isPlannerCompletionTask(node, workspaceNodeMap)) {
-        await completePlannerTask({
-          ownerKey,
-          plannerNodeId: node._id as Id<"nodes">,
-          completionMode: recurringCompletionMode,
-        });
-        completedPlannerLinkedTask = true;
         continue;
       }
 
@@ -7046,9 +7118,6 @@ function ConfiguredWorkspace({
     await executeNodeUpdateBatch(updates);
 
     if (historyEntries.length === 0) {
-      if (completedPlannerLinkedTask) {
-        clearNodeSelection();
-      }
       return;
     }
 
@@ -7064,7 +7133,7 @@ function ConfiguredWorkspace({
       focusAfterUndoId: historyEntries[0]!.focusEditorId,
       focusAfterRedoId: historyEntries[historyEntries.length - 1]!.focusEditorId,
     });
-  }, [clearNodeSelection, completePlannerTask, executeNodeUpdateBatch, history, ownerKey, pagesById, recurringCompletionMode, selectedNodeIds, visibleNodeOrder, workspaceNodeMap]);
+  }, [executeNodeUpdateBatch, history, pagesById, selectedNodeIds, visibleNodeOrder, workspaceNodeMap]);
 
   const applyInlineFormattingToHighlightedNodes = useCallback(async (marker: "**" | "__" | "~~") => {
     if (selectedNodeIds.size === 0) {
@@ -7623,6 +7692,8 @@ function ConfiguredWorkspace({
       !paletteOpen ||
       paletteMode === "archive" ||
       paletteMode === "importer" ||
+      paletteMode === "legacyUpload" ||
+      paletteMode === "legacySearch" ||
       activePaletteResultsCount === 0
     ) {
       return;
@@ -9738,7 +9809,82 @@ function ConfiguredWorkspace({
                   </div>
                 </div>
 
-                <div className="order-6 mt-8 border-t border-[var(--workspace-border-soft)] pt-5 opacity-75">
+                <div className="order-6 mt-8 border-t border-[var(--workspace-border-soft)] pt-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
+                      Legacy
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setLegacyPanelFileId(null);
+                          setPaletteMode("legacyUpload");
+                          setPaletteOpen(true);
+                        }}
+                        className="border border-[var(--workspace-border-control)] px-2 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                      >
+                        Upload
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setIsLegacySectionCollapsed((current) => !current)}
+                        className="flex h-8 w-8 items-center justify-center border border-[var(--workspace-border-control)] text-sm font-semibold leading-none text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                        aria-label={showLegacySectionContent ? "Collapse legacy files" : "Expand legacy files"}
+                      >
+                        {showLegacySectionContent ? "−" : "+"}
+                      </button>
+                    </div>
+                  </div>
+                  <div
+                    className={clsx(
+                      "grid transition-[grid-template-rows,opacity,margin-top] duration-200 ease-out motion-reduce:transition-none",
+                      showLegacySectionContent
+                        ? "mt-3 grid-rows-[1fr] opacity-100"
+                        : "pointer-events-none mt-0 grid-rows-[0fr] opacity-0",
+                    )}
+                  >
+                    <div
+                      aria-hidden={!showLegacySectionContent}
+                      className="min-h-0 overflow-hidden"
+                    >
+                      {typeof legacyFiles === "undefined" ? (
+                        <p className="text-sm text-[var(--workspace-text-faint)]">
+                          Loading legacy files…
+                        </p>
+                      ) : sortedLegacyFiles.length === 0 ? (
+                        <p className="text-sm text-[var(--workspace-text-faint)]">
+                          No legacy files yet.
+                        </p>
+                      ) : (
+                        <div className="space-y-1">
+                          {sortedLegacyFiles.map((file) => (
+                            <button
+                              key={file._id}
+                              type="button"
+                              onClick={() => {
+                                setLegacyPanelFileId(file._id);
+                                setPaletteMode("legacySearch");
+                                setPaletteOpen(true);
+                              }}
+                              className="block w-full px-2 py-1.5 text-left transition hover:bg-[var(--workspace-surface-accent)]"
+                            >
+                              <span className="block truncate text-sm text-[var(--workspace-text-strong)]">
+                                {file.fileName}
+                              </span>
+                              <span className="mt-0.5 block truncate text-[10px] uppercase tracking-[0.14em] text-[var(--workspace-text-faint)]">
+                                {formatLegacyFileSize(file.size)} • {getLegacyFileSidebarStatus(file)}
+                                {file.semanticStatus === "ready" ? " • Semantic" : ""}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="order-7 mt-8 border-t border-[var(--workspace-border-soft)] pt-5 opacity-75">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
                       Archive
@@ -10840,6 +10986,8 @@ function ConfiguredWorkspace({
               paletteMode === "replace" ||
                 paletteMode === "archive" ||
                 paletteMode === "importer" ||
+                paletteMode === "legacyUpload" ||
+                paletteMode === "legacySearch" ||
                 paletteMode === "taskSchedule" ||
                 paletteMode === "noteDate"
                   ? "max-w-4xl"
@@ -10938,6 +11086,28 @@ function ConfiguredWorkspace({
                     Import From Text
                   </button>
                 ) : null}
+                {paletteMode === "legacyUpload" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaletteMode("legacyUpload");
+                    }}
+                    className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition"
+                  >
+                    Upload Legacy
+                  </button>
+                ) : null}
+                {paletteMode === "legacySearch" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaletteMode("legacySearch");
+                    }}
+                    className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition"
+                  >
+                    Search Legacy
+                  </button>
+                ) : null}
                 {paletteMode === "taskSchedule" ? (
                   <button
                     type="button"
@@ -10964,6 +11134,8 @@ function ConfiguredWorkspace({
               {paletteMode === "replace" ||
               paletteMode === "archive" ||
               paletteMode === "importer" ||
+              paletteMode === "legacyUpload" ||
+              paletteMode === "legacySearch" ||
               paletteMode === "taskSchedule" ||
               paletteMode === "noteDate" ? (
                 <p className="text-sm text-[var(--workspace-text-subtle)]">
@@ -10973,6 +11145,10 @@ function ConfiguredWorkspace({
                       ? "Search archived pages and nodes without mixing them into active workspace results."
                       : paletteMode === "importer"
                           ? "Paste text, preview exactly what will be added, and import it into the page you choose."
+                          : paletteMode === "legacyUpload"
+                            ? "Upload Markdown and text files into Legacy without creating pages or outline items."
+                            : paletteMode === "legacySearch"
+                              ? "Search imported legacy files by exact text or optional semantic indexes."
                           : paletteMode === "taskSchedule"
                             ? "Set a due date, recurrence, and recurring completion rule for the current task."
                             : "Set a calendar date for the current note without turning it into a task."}
@@ -11015,6 +11191,8 @@ function ConfiguredWorkspace({
               paletteMode === "replace" ||
               paletteMode === "archive" ||
               paletteMode === "importer" ||
+              paletteMode === "legacyUpload" ||
+              paletteMode === "legacySearch" ||
                   paletteMode === "taskSchedule" ||
                   paletteMode === "noteDate"
                   ? "overflow-hidden"
@@ -11211,6 +11389,15 @@ function ConfiguredWorkspace({
                     setPaletteMode("pages");
                     setTextSearchResults([]);
                     setNodeSearchResults([]);
+                  }}
+                />
+              ) : paletteMode === "legacyUpload" || paletteMode === "legacySearch" ? (
+                <LegacyPanel
+                  ownerKey={ownerKey}
+                  initialView={paletteMode === "legacyUpload" ? "upload" : "search"}
+                  initialFileId={legacyPanelFileId}
+                  onUploaded={(message) => {
+                    setCopySnackbarMessage(message);
                   }}
                 />
               ) : paletteMode === "taskSchedule" ? (

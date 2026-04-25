@@ -139,6 +139,69 @@ export default defineSchema({
     completedAt: v.optional(v.number()),
   }).index("by_createdAt", ["createdAt"]),
 
+  legacyFiles: defineTable({
+    storageId: v.id("_storage"),
+    fileName: v.string(),
+    filePath: v.string(),
+    extension: v.string(),
+    mimeType: v.union(v.string(), v.null()),
+    size: v.number(),
+    status: v.union(
+      v.literal("uploaded"),
+      v.literal("processing"),
+      v.literal("ready"),
+      v.literal("error"),
+    ),
+    error: v.union(v.string(), v.null()),
+    chunkCount: v.number(),
+    semanticStatus: v.union(
+      v.literal("none"),
+      v.literal("queued"),
+      v.literal("processing"),
+      v.literal("ready"),
+      v.literal("error"),
+    ),
+    semanticError: v.union(v.string(), v.null()),
+    semanticChunkCount: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_updated_at", ["updatedAt"])
+    .index("by_status_and_updated_at", ["status", "updatedAt"]),
+
+  legacyChunks: defineTable({
+    fileId: v.id("legacyFiles"),
+    chunkIndex: v.number(),
+    text: v.string(),
+    lineStart: v.number(),
+    lineEnd: v.number(),
+    charStart: v.number(),
+    charEnd: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_file_and_chunk_index", ["fileId", "chunkIndex"])
+    .searchIndex("search_text", {
+      searchField: "text",
+      filterFields: ["fileId"],
+    }),
+
+  legacyChunkEmbeddings: defineTable({
+    chunkId: v.id("legacyChunks"),
+    fileId: v.id("legacyFiles"),
+    chunkIndex: v.number(),
+    model: v.string(),
+    vector: v.array(v.float64()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_chunk", ["chunkId"])
+    .index("by_file_and_chunk_index", ["fileId", "chunkIndex"])
+    .vectorIndex("by_embedding", {
+      vectorField: "vector",
+      dimensions: 1536,
+      filterFields: ["fileId"],
+    }),
+
   migrationRuns: defineTable({
     sourceType: v.union(
       v.literal("dynalist"),

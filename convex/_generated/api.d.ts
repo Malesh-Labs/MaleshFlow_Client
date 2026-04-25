@@ -16,6 +16,8 @@ import type * as chatData from "../chatData.js";
 import type * as http from "../http.js";
 import type * as importExport from "../importExport.js";
 import type * as importExportData from "../importExportData.js";
+import type * as legacy from "../legacy.js";
+import type * as legacyActions from "../legacyActions.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_embeddingRebuild from "../lib/embeddingRebuild.js";
 import type * as lib_planner from "../lib/planner.js";
@@ -42,6 +44,8 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   importExport: typeof importExport;
   importExportData: typeof importExportData;
+  legacy: typeof legacy;
+  legacyActions: typeof legacyActions;
   "lib/auth": typeof lib_auth;
   "lib/embeddingRebuild": typeof lib_embeddingRebuild;
   "lib/planner": typeof lib_planner;
