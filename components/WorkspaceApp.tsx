@@ -284,6 +284,7 @@ type PaletteMode =
   | "importer"
   | "legacyUpload"
   | "legacySearch"
+  | "legacyViewer"
   | "taskSchedule"
   | "noteDate";
 const PALETTE_MODE_ORDER: PaletteMode[] = [
@@ -7609,7 +7610,10 @@ function ConfiguredWorkspace({
     window.setTimeout(() => {
       if (
         paletteMode === "archive" ||
-        paletteMode === "importer"
+        paletteMode === "importer" ||
+        paletteMode === "legacyUpload" ||
+        paletteMode === "legacySearch" ||
+        paletteMode === "legacyViewer"
       ) {
         return;
       }
@@ -7694,6 +7698,7 @@ function ConfiguredWorkspace({
       paletteMode === "importer" ||
       paletteMode === "legacyUpload" ||
       paletteMode === "legacySearch" ||
+      paletteMode === "legacyViewer" ||
       activePaletteResultsCount === 0
     ) {
       return;
@@ -9864,7 +9869,7 @@ function ConfiguredWorkspace({
                               type="button"
                               onClick={() => {
                                 setLegacyPanelFileId(file._id);
-                                setPaletteMode("legacySearch");
+                                setPaletteMode("legacyViewer");
                                 setPaletteOpen(true);
                               }}
                               className="block w-full px-2 py-1.5 text-left transition hover:bg-[var(--workspace-surface-accent)]"
@@ -10988,6 +10993,7 @@ function ConfiguredWorkspace({
                 paletteMode === "importer" ||
                 paletteMode === "legacyUpload" ||
                 paletteMode === "legacySearch" ||
+                paletteMode === "legacyViewer" ||
                 paletteMode === "taskSchedule" ||
                 paletteMode === "noteDate"
                   ? "max-w-4xl"
@@ -11108,6 +11114,17 @@ function ConfiguredWorkspace({
                     Search Legacy
                   </button>
                 ) : null}
+                {paletteMode === "legacyViewer" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPaletteMode("legacyViewer");
+                    }}
+                    className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition"
+                  >
+                    View Legacy
+                  </button>
+                ) : null}
                 {paletteMode === "taskSchedule" ? (
                   <button
                     type="button"
@@ -11136,6 +11153,7 @@ function ConfiguredWorkspace({
               paletteMode === "importer" ||
               paletteMode === "legacyUpload" ||
               paletteMode === "legacySearch" ||
+              paletteMode === "legacyViewer" ||
               paletteMode === "taskSchedule" ||
               paletteMode === "noteDate" ? (
                 <p className="text-sm text-[var(--workspace-text-subtle)]">
@@ -11149,6 +11167,8 @@ function ConfiguredWorkspace({
                             ? "Upload Markdown and text files into Legacy without creating pages or outline items."
                             : paletteMode === "legacySearch"
                               ? "Search imported legacy files by exact text or optional semantic indexes."
+                              : paletteMode === "legacyViewer"
+                                ? "Read imported legacy files from bounded chunks and download the original file."
                           : paletteMode === "taskSchedule"
                             ? "Set a due date, recurrence, and recurring completion rule for the current task."
                             : "Set a calendar date for the current note without turning it into a task."}
@@ -11193,6 +11213,7 @@ function ConfiguredWorkspace({
               paletteMode === "importer" ||
               paletteMode === "legacyUpload" ||
               paletteMode === "legacySearch" ||
+              paletteMode === "legacyViewer" ||
                   paletteMode === "taskSchedule" ||
                   paletteMode === "noteDate"
                   ? "overflow-hidden"
@@ -11391,10 +11412,18 @@ function ConfiguredWorkspace({
                     setNodeSearchResults([]);
                   }}
                 />
-              ) : paletteMode === "legacyUpload" || paletteMode === "legacySearch" ? (
+              ) : paletteMode === "legacyUpload" ||
+                paletteMode === "legacySearch" ||
+                paletteMode === "legacyViewer" ? (
                 <LegacyPanel
                   ownerKey={ownerKey}
-                  initialView={paletteMode === "legacyUpload" ? "upload" : "search"}
+                  initialView={
+                    paletteMode === "legacyUpload"
+                      ? "upload"
+                      : paletteMode === "legacySearch"
+                        ? "search"
+                        : "viewer"
+                  }
                   initialFileId={legacyPanelFileId}
                   onUploaded={(message) => {
                     setCopySnackbarMessage(message);

@@ -131,6 +131,64 @@ export const listLegacyFiles = query({
   },
 });
 
+export const getLegacyFileViewer = query({
+  args: {
+    ownerKey: v.string(),
+    fileId: v.id("legacyFiles"),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const file = await ctx.db.get(args.fileId);
+    if (!file) {
+      return null;
+    }
+
+    return {
+      file,
+      downloadUrl: await ctx.storage.getUrl(file.storageId),
+    };
+  },
+});
+
+export const listLegacyFileChunksPage = query({
+  args: {
+    ownerKey: v.string(),
+    fileId: v.id("legacyFiles"),
+    startChunkIndex: v.optional(v.number()),
+    numChunks: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const file = await ctx.db.get(args.fileId);
+    if (!file) {
+      return null;
+    }
+
+    const startChunkIndex = Math.max(0, Math.floor(args.startChunkIndex ?? 0));
+    const numChunks = Math.max(1, Math.min(args.numChunks ?? 3, 12));
+    const chunks = await ctx.db
+      .query("legacyChunks")
+      .withIndex("by_file_and_chunk_index", (query) =>
+        query.eq("fileId", args.fileId).gte("chunkIndex", startChunkIndex),
+      )
+      .take(numChunks + 1);
+    const page = chunks.slice(0, numChunks);
+    const lastChunk = page.length > 0 ? page[page.length - 1]! : null;
+
+    return {
+      page,
+      startChunkIndex,
+      hasPrevious: startChunkIndex > 0,
+      hasNext:
+        chunks.length > numChunks ||
+        (lastChunk !== null && lastChunk.chunkIndex < Math.max(0, file.chunkCount - 1)),
+      nextStartChunkIndex: lastChunk ? lastChunk.chunkIndex + 1 : null,
+      previousStartChunkIndex: Math.max(0, startChunkIndex - numChunks),
+      totalChunks: file.chunkCount,
+    };
+  },
+});
+
 export const searchLegacyText = query({
   args: {
     ownerKey: v.string(),
@@ -178,6 +236,7 @@ export const searchLegacyText = query({
         return {
           chunkId: chunk._id,
           fileId: file._id,
+          chunkIndex: chunk.chunkIndex,
           fileName: file.fileName,
           filePath: file.filePath,
           lineStart: chunk.lineStart,
@@ -260,6 +319,7 @@ export const hydrateLegacyEmbeddingMatches = internalQuery({
         return {
           chunkId: chunk._id,
           fileId: file._id,
+          chunkIndex: chunk.chunkIndex,
           fileName: file.fileName,
           filePath: file.filePath,
           lineStart: chunk.lineStart,

@@ -40,6 +40,7 @@ type CleanupResult = {
 type LegacySearchResult = {
   chunkId: Id<"legacyChunks">;
   fileId: Id<"legacyFiles">;
+  chunkIndex: number;
   fileName: string;
   filePath: string;
   lineStart: number;
