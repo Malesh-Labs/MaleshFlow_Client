@@ -48,11 +48,6 @@ function getRecordMeta(value: unknown) {
     : {};
 }
 
-function sanitizePlannerLinkLabel(value: string, fallback = "Untitled") {
-  const trimmed = value.replace(/\|/g, "/").replace(/\]\]/g, "] ]").trim();
-  return trimmed.length > 0 ? trimmed : fallback;
-}
-
 export function isPlannerPlaceholderTaskText(text: string) {
   return text.trim() === "__small__";
 }
@@ -246,6 +241,41 @@ function findArchivablePlannerSubtreeRoot(
     }
 
     currentNode = parentNode;
+  }
+
+  return null;
+}
+
+function hasPlannerArchiveBoundaryAncestor(
+  startNode: Doc<"nodes">,
+  nodeMap: Map<string, Doc<"nodes">>,
+) {
+  let currentNode: Doc<"nodes"> | null = startNode;
+  while (currentNode) {
+    const parentNode: Doc<"nodes"> | null = currentNode.parentNodeId
+      ? (nodeMap.get(currentNode.parentNodeId as string) ?? null)
+      : null;
+    if (isPlannerArchiveBoundaryNode(parentNode)) {
+      return true;
+    }
+    currentNode = parentNode;
+  }
+
+  return false;
+}
+
+function findPlannerLinkedCompletionRoot(
+  startNode: Doc<"nodes">,
+  nodeMap: Map<string, Doc<"nodes">>,
+) {
+  let currentNode: Doc<"nodes"> | null = startNode;
+  while (currentNode) {
+    if (getPlannerLinkedSourceTaskId(currentNode)) {
+      return currentNode;
+    }
+    currentNode = currentNode.parentNodeId
+      ? (nodeMap.get(currentNode.parentNodeId as string) ?? null)
+      : null;
   }
 
   return null;
@@ -672,12 +702,6 @@ export async function appendPlannerLinkedTaskCopy(
     afterNodeId: Id<"nodes"> | null;
   },
 ) {
-  const sourceMeta = getNodeSourceMeta(args.sourceTask);
-  const sourcePage = await ctx.db.get(args.sourceTask.pageId);
-  const pageLinkText =
-    sourcePage && !sourcePage.archived
-      ? ` [[${sanitizePlannerLinkLabel(sourcePage.title, "Source page")}|page:${sourcePage._id}]]`
-      : "";
   const position = await computeNodePosition(
     ctx.db,
     args.plannerPageId,
@@ -688,7 +712,7 @@ export async function appendPlannerLinkedTaskCopy(
     pageId: args.plannerPageId,
     parentNodeId: args.parentNodeId,
     position,
-    text: `[[node:${args.sourceTask._id}]]${pageLinkText}`,
+    text: `[[node:${args.sourceTask._id}]]`,
     kind: "task",
     taskStatus: args.sourceTask.taskStatus ?? "todo",
     priority: args.sourceTask.priority,
@@ -702,7 +726,7 @@ export async function appendPlannerLinkedTaskCopy(
       sourceTaskNodeId: args.sourceTask._id,
       sourceTaskPageId: args.sourceTask.pageId,
       taskKindLocked: true,
-      recurrenceFrequency: sourceMeta.recurrenceFrequency ?? null,
+      recurrenceFrequency: null,
     },
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -827,8 +851,9 @@ export async function completePlannerLinkedTask(
   }
 
   const now = Date.now();
+  const completedThisCall = !isPlannerNodeCompleted(plannerNode);
 
-  if (!isPlannerNodeCompleted(plannerNode)) {
+  if (completedThisCall) {
     const sourceMeta = getNodeSourceMeta(plannerNode);
     if (plannerNode.kind === "task") {
       await ctx.db.patch(plannerNode._id, {
@@ -860,6 +885,23 @@ export async function completePlannerLinkedTask(
     childrenByParent,
   );
   if (!archivableRoot) {
+    const linkedCompletionRoot = findPlannerLinkedCompletionRoot(
+      refreshedPlannerNode,
+      nodeMap,
+    );
+    if (
+      completedThisCall &&
+      !hasPlannerArchiveBoundaryAncestor(refreshedPlannerNode, nodeMap) &&
+      linkedCompletionRoot &&
+      isPlannerSubtreeCompleted(linkedCompletionRoot._id, nodeMap, childrenByParent)
+    ) {
+      await syncPlannerLinkedSourceTaskCompletion(
+        ctx,
+        [linkedCompletionRoot],
+        args.completionMode,
+        now,
+      );
+    }
     await enqueuePageRootEmbeddingRefresh(ctx, refreshedPlannerNode.pageId);
     return;
   }

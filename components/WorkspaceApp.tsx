@@ -1027,6 +1027,15 @@ function getNodeMeta(node: { sourceMeta?: unknown } | null | undefined) {
   return node.sourceMeta as Record<string, unknown>;
 }
 
+function isPlannerLinkedTaskCopy(node: { sourceMeta?: unknown } | null | undefined) {
+  const sourceMeta = getNodeMeta(node);
+  return (
+    sourceMeta.plannerKind === "plannerLinkedTask" &&
+    typeof sourceMeta.sourceTaskNodeId === "string" &&
+    sourceMeta.sourceTaskNodeId.length > 0
+  );
+}
+
 function isPlannerCompletionTask(
   node:
     | Pick<Doc<"nodes">, "_id" | "parentNodeId" | "sourceMeta" | "kind">
@@ -1058,6 +1067,10 @@ function isPlannerCompletionItem(
     return false;
   }
 
+  if (isPlannerLinkedTaskCopy(node)) {
+    return true;
+  }
+
   let currentParentId = (node.parentNodeId as string | null) ?? null;
   while (currentParentId) {
     const parentNode = nodeMap.get(currentParentId) ?? null;
@@ -1068,7 +1081,8 @@ function isPlannerCompletionItem(
     const parentMeta = getNodeMeta(parentNode);
     if (
       parentMeta.plannerKind === "plannerDay" ||
-      parentMeta.sectionSlot === "plannerFocus"
+      parentMeta.sectionSlot === "plannerFocus" ||
+      isPlannerLinkedTaskCopy(parentNode)
     ) {
       return true;
     }
@@ -1168,6 +1182,9 @@ function getNodeRecurrenceFrequency(
     "sourceMeta" in node && node.sourceMeta && typeof node.sourceMeta === "object"
       ? (node.sourceMeta as Record<string, unknown>)
       : {};
+  if ("sourceMeta" in node && isPlannerLinkedTaskCopy(node)) {
+    return null;
+  }
   return parseRecurrenceFrequency(sourceMeta.recurrenceFrequency);
 }
 
