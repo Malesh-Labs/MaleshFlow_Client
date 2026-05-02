@@ -8,7 +8,11 @@ import {
   rewriteMatchingPageWikiLinks,
   sanitizeGeneratedWikiLinkLabel,
 } from "../lib/domain/links";
-import { cycleHeadingSyntax, parseHeadingSyntax } from "../lib/domain/displaySyntax";
+import {
+  cycleHeadingSyntax,
+  parseHeadingSyntax,
+  stripHeadingSyntaxMarkers,
+} from "../lib/domain/displaySyntax";
 import {
   buildJournalFeedbackUserPrompt,
   buildModelRewriteUserPrompt,
@@ -465,6 +469,11 @@ test("cycleHeadingSyntax preserves selection relative to visible heading text", 
     selectionStart: 7,
     selectionEnd: 14,
   });
+});
+
+test("stripHeadingSyntaxMarkers removes heading markers without changing plain text", () => {
+  assert.equal(stripHeadingSyntaxMarkers("### Big heading"), "Big heading");
+  assert.equal(stripHeadingSyntaxMarkers("Plain text"), "Plain text");
 });
 
 test("parseImportedTextToOutlineNodes normalizes Dynalist links and separators", () => {

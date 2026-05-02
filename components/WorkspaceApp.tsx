@@ -37,7 +37,11 @@ import {
   MODEL_REGENERATE_REQUEST,
   MODEL_REWRITE_SYSTEM_PROMPT,
 } from "@/lib/domain/aiPrompts";
-import { cycleHeadingSyntax, parseHeadingSyntax } from "@/lib/domain/displaySyntax";
+import {
+  cycleHeadingSyntax,
+  parseHeadingSyntax,
+  stripHeadingSyntaxMarkers,
+} from "@/lib/domain/displaySyntax";
 import {
   applySelectedInlineFormattingShortcut,
   hasRenderableInlineFormatting,
@@ -1849,9 +1853,13 @@ function buildLinkPreviewSegments(
       });
     } else {
       const targetNode = nodeTargetsById.get(match.link.targetNodeRef);
-      const nodeLabel = getExplicitWikiLinkPreviewText(match.link.label);
+      const nodeLabel = stripHeadingSyntaxMarkers(
+        getExplicitWikiLinkPreviewText(match.link.label),
+      ).trim();
       const renderedTargetNodeText = targetNode
-        ? stripInlineFormattingMarkers(replaceLinkMarkupWithLabels(targetNode.text)).trim()
+        ? stripHeadingSyntaxMarkers(
+            stripInlineFormattingMarkers(replaceLinkMarkupWithLabels(targetNode.text)),
+          ).trim()
         : "";
       segments.push({
         key: `node:${match.start}`,

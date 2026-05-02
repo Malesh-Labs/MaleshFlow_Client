@@ -34,6 +34,10 @@ export function parseHeadingSyntax(value: string): ParsedHeadingSyntax {
   };
 }
 
+export function stripHeadingSyntaxMarkers(value: string) {
+  return parseHeadingSyntax(value).text;
+}
+
 export function cycleHeadingSyntax(
   value: string,
   selectionStart: number,
