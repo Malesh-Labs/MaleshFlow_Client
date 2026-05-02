@@ -4631,31 +4631,39 @@ function ConfiguredWorkspace({
   );
   const paletteResults = useMemo(() => {
     const favoriteEntries: PalettePageFavoriteResult[] = (sidebarFavorites ?? []).map(
-      (favorite, index) => ({
-        _id: favorite.favoriteId as string,
-        kind: favorite.targetKind === "page" ? "favoritePage" : "favoriteNode",
-        pageId: favorite.pageId,
-        nodeId: favorite.nodeId,
-        title:
-          favorite.targetKind === "page"
-            ? favorite.pageTitle
-            : favorite.nodeText || "Untitled item",
-        subtitle:
-          favorite.targetKind === "page"
-            ? `Favorite page • ${getPageTypeDisplayLabel(pagesById.get(favorite.pageId as string) ?? null)}`
-            : `Favorite item • ${favorite.pageTitle}`,
-        archived: false,
-        position: index,
-        updatedAt: undefined,
-        createdAt: undefined,
-        isSidebarSpecialPage: favorite.isSidebarSpecialPage,
-        searchTerms: [
-          "favorite",
-          favorite.pageTitle,
-          favorite.targetKind === "page" ? "page" : "item",
-          favorite.nodeText ?? "",
-        ],
-      }),
+      (favorite, index) => {
+        const targetPage = pagesById.get(favorite.pageId as string) ?? null;
+        const targetPageSearchTerms = targetPage
+          ? [getPageTypeLabel(targetPage), getPageMeta(targetPage).sidebarSection]
+          : ["page"];
+
+        return {
+          _id: favorite.favoriteId as string,
+          kind: favorite.targetKind === "page" ? "favoritePage" : "favoriteNode",
+          pageId: favorite.pageId,
+          nodeId: favorite.nodeId,
+          title:
+            favorite.targetKind === "page"
+              ? favorite.pageTitle
+              : favorite.nodeText || "Untitled item",
+          subtitle:
+            favorite.targetKind === "page"
+              ? `Favorite page • ${getPageTypeDisplayLabel(targetPage)}`
+              : `Favorite item • ${favorite.pageTitle}`,
+          archived: false,
+          position: index,
+          updatedAt: undefined,
+          createdAt: undefined,
+          isSidebarSpecialPage: favorite.isSidebarSpecialPage,
+          searchTerms: [
+            "favorite",
+            favorite.pageTitle,
+            favorite.targetKind === "page" ? "page" : "item",
+            ...targetPageSearchTerms,
+            favorite.nodeText ?? "",
+          ],
+        };
+      },
     );
 
     const favoritePageIds = new Set(
