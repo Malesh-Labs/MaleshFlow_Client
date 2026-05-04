@@ -478,9 +478,38 @@ async function archiveTaskPageSubtreeToDone(
     }),
   });
 
+  await deleteSidebarFavoritesForNodes(ctx.db, taskSubtree);
   await setNodeTreeArchivedState(ctx.db, taskRootNode._id, true, now);
   await enqueuePageRootEmbeddingRefresh(ctx, taskRootNode.pageId);
   await enqueuePageRootEmbeddingRefresh(ctx, donePage._id);
+}
+
+async function deleteSidebarFavoritesForNodes(
+  db: DatabaseWriter,
+  nodes: Doc<"nodes">[],
+) {
+  const seenNodeIds = new Set<string>();
+
+  for (const node of nodes) {
+    if (seenNodeIds.has(node._id as string)) {
+      continue;
+    }
+    seenNodeIds.add(node._id as string);
+
+    const favorites = await db
+      .query("sidebarFavorites")
+      .withIndex("by_target", (query) =>
+        query
+          .eq("targetKind", "node")
+          .eq("targetPageId", node.pageId)
+          .eq("targetNodeId", node._id),
+      )
+      .take(20);
+
+    for (const favorite of favorites) {
+      await db.delete(favorite._id);
+    }
+  }
 }
 
 export const archiveCompletedTaskPageRootIfReady = internalMutation({
