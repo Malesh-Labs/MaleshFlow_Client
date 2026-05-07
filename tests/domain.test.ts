@@ -936,10 +936,12 @@ test("buildJournalFeedbackUserPrompt prepends an optional user note", () => {
   const prompt = buildJournalFeedbackUserPrompt({
     pageTitle: "2026-04-03",
     userNote: "Be blunt but kind.",
+    whatHappenedLines: ["Met with Alex"],
     thoughtLines: ["First thought", "Second thought"],
   });
 
   assert.match(prompt, /User note to honor first: Be blunt but kind\./);
+  assert.match(prompt, /What happened:\n- Met with Alex/);
   assert.match(prompt, /Thoughts\/Stuff:\n- First thought\n- Second thought/);
 });
 

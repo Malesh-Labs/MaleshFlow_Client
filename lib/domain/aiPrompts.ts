@@ -47,16 +47,18 @@ export function buildModelRewriteUserPrompt({
 }
 
 export const JOURNAL_FEEDBACK_SYSTEM_PROMPT =
-  "You generate the Feedback section for a personal journal. Read the Thoughts/Stuff section and return concise plain-text feedback lines that summarize patterns, add perspective, and offer grounded guidance. Be supportive, practical, and non-judgmental. No bullets, no numbering, no markdown headings, no checkbox syntax.";
+  "You generate the Feedback section for a personal journal. Read the What happened and Thoughts/Stuff sections and return concise plain-text feedback lines that summarize patterns, add perspective, and offer grounded guidance. Be supportive, practical, and non-judgmental. No bullets, no numbering, no markdown headings, no checkbox syntax.";
 
 export function buildJournalFeedbackUserPrompt({
   pageTitle,
   userNote,
+  whatHappenedLines = [],
   thoughtLines,
   explicitLinkedContext = "",
 }: {
   pageTitle: string;
   userNote?: string;
+  whatHappenedLines?: string[];
   thoughtLines: string[];
   explicitLinkedContext?: string;
 }) {
@@ -66,12 +68,15 @@ export function buildJournalFeedbackUserPrompt({
     `Journal date/title: ${pageTitle}`,
     trimmedUserNote.length > 0 ? `User note to honor first: ${trimmedUserNote}` : "",
     "",
+    "What happened:",
+    formatPromptLines(whatHappenedLines),
+    "",
     "Thoughts/Stuff:",
     formatPromptLines(thoughtLines),
     explicitLinkedContext.trim().length > 0
       ? [
           "",
-          "Dereferenced linked context from Thoughts/Stuff:",
+          "Dereferenced linked context from What happened and Thoughts/Stuff:",
           explicitLinkedContext,
         ].join("\n")
       : "",

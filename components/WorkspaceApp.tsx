@@ -607,6 +607,7 @@ type SectionSlot =
   | "model"
   | "recentExamples"
   | "journalThoughts"
+  | "journalWhatHappened"
   | "journalFeedback"
   | "scratchpadLive"
   | "scratchpadPrevious";
@@ -3201,6 +3202,7 @@ function ConfiguredWorkspace({
     api.workspace.ensureTaskPageSidebarSection,
   );
   const ensurePlannerPageSections = useMutation(api.planner.ensurePlannerPageSections);
+  const ensureJournalPageSections = useMutation(api.workspace.ensureJournalPageSections);
   const renamePageRaw = useMutation(api.workspace.renamePage);
   const archivePage = useMutation(api.workspace.archivePage);
   const setPlannerScanExcludedRaw = useMutation(api.workspace.setPlannerScanExcluded);
@@ -3518,6 +3520,7 @@ function ConfiguredWorkspace({
   const hasRequestedSidebarPage = useRef(false);
   const hasRequestedTaskSidebarSection = useRef(new Set<string>());
   const hasRequestedPlannerSections = useRef(new Set<string>());
+  const hasRequestedJournalSections = useRef(new Set<string>());
   const suppressNodeSelectionClearRef = useRef(0);
   const textSelectionGestureRef = useRef<{
     anchorNodeId: string;
@@ -3776,6 +3779,7 @@ function ConfiguredWorkspace({
   const plannerFocusSection = findSectionNode(tree, "plannerFocus");
   const plannerTemplateSection = findSectionNode(tree, "plannerTemplate");
   const journalThoughtsSection = findSectionNode(tree, "journalThoughts");
+  const journalWhatHappenedSection = findSectionNode(tree, "journalWhatHappened");
   const journalFeedbackSection = findSectionNode(tree, "journalFeedback");
   const scratchpadLiveSection = findSectionNode(tree, "scratchpadLive");
   const scratchpadPreviousSection = findSectionNode(tree, "scratchpadPrevious");
@@ -3800,6 +3804,13 @@ function ConfiguredWorkspace({
         .filter((line) => line.length > 0),
     [journalThoughtsSection],
   );
+  const journalWhatHappenedPromptLines = useMemo(
+    () =>
+      (journalWhatHappenedSection?.children ?? [])
+        .map((node) => node.text.trim())
+        .filter((line) => line.length > 0),
+    [journalWhatHappenedSection],
+  );
   const modelPromptPreview = useMemo(
     () =>
       buildModelRewriteUserPrompt({
@@ -3816,9 +3827,15 @@ function ConfiguredWorkspace({
       buildJournalFeedbackUserPrompt({
         pageTitle: selectedPage?.title ?? "(untitled)",
         userNote: journalFeedbackPromptNote,
+        whatHappenedLines: journalWhatHappenedPromptLines,
         thoughtLines: journalThoughtPromptLines,
       }),
-    [journalFeedbackPromptNote, journalThoughtPromptLines, selectedPage?.title],
+    [
+      journalFeedbackPromptNote,
+      journalThoughtPromptLines,
+      journalWhatHappenedPromptLines,
+      selectedPage?.title,
+    ],
   );
 
   useEffect(() => {
@@ -3855,7 +3872,11 @@ function ConfiguredWorkspace({
         ? collectChildren(
             tree,
             new Set(
-              [journalThoughtsSection?._id, journalFeedbackSection?._id].filter(Boolean) as string[],
+              [
+                journalThoughtsSection?._id,
+                journalWhatHappenedSection?._id,
+                journalFeedbackSection?._id,
+              ].filter(Boolean) as string[],
             ),
           )
         : pageMeta.pageType === "scratchpad"
@@ -3876,9 +3897,11 @@ function ConfiguredWorkspace({
   const modelVisibleRoots = [modelSection, recentExamplesSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
-  const journalVisibleRoots = [journalThoughtsSection, journalFeedbackSection].filter(
-    (node): node is TreeNode => Boolean(node),
-  );
+  const journalVisibleRoots = [
+    journalThoughtsSection,
+    journalWhatHappenedSection,
+    journalFeedbackSection,
+  ].filter((node): node is TreeNode => Boolean(node));
   const scratchpadVisibleRoots = [scratchpadLiveSection, scratchpadPreviousSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
@@ -5286,6 +5309,7 @@ function ConfiguredWorkspace({
     if (!ownerKey || !isOwnerKeyValid) {
       hasRequestedSidebarPage.current = false;
       hasRequestedTaskSidebarSection.current.clear();
+      hasRequestedJournalSections.current.clear();
       setSidebarBootstrapError("");
       setShowSidebarDiagnostics(false);
       return;
@@ -5366,6 +5390,43 @@ function ConfiguredWorkspace({
     pageMeta.pageType,
     plannerSidebarSection,
     plannerTemplateSection,
+    selectedPage,
+  ]);
+
+  useEffect(() => {
+    if (!ownerKey || !isOwnerKeyValid || !selectedPage || pageMeta.pageType !== "journal") {
+      return;
+    }
+
+    const pageId = selectedPage._id as string;
+    if (
+      journalThoughtsSection &&
+      journalWhatHappenedSection &&
+      journalFeedbackSection
+    ) {
+      hasRequestedJournalSections.current.delete(pageId);
+      return;
+    }
+
+    if (hasRequestedJournalSections.current.has(pageId)) {
+      return;
+    }
+
+    hasRequestedJournalSections.current.add(pageId);
+    void ensureJournalPageSections({
+      ownerKey,
+      pageId: selectedPage._id,
+    }).catch(() => {
+      hasRequestedJournalSections.current.delete(pageId);
+    });
+  }, [
+    ensureJournalPageSections,
+    isOwnerKeyValid,
+    journalFeedbackSection,
+    journalThoughtsSection,
+    journalWhatHappenedSection,
+    ownerKey,
+    pageMeta.pageType,
     selectedPage,
   ]);
 
@@ -10792,6 +10853,57 @@ function ConfiguredWorkspace({
                       depthOffset={sectionDepthOffset}
                     />
                   </div>
+                    <div className="py-8">
+                      <PageSection
+                        title="What happened"
+                        sectionNode={journalWhatHappenedSection}
+                        ownerKey={ownerKey}
+                        pageId={selectedPage._id}
+                        nodeBacklinkCounts={pageNodeBacklinkCounts}
+                        nodeMap={nodeMap}
+                        createNodesBatch={createNodesBatch}
+                        insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+                        updateNode={updateNode}
+                        moveNode={moveNode}
+                        insertNodeAbove={insertNodeAbove}
+                        splitNode={splitNode}
+                        replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                      setNodeTreeArchived={setNodeTreeArchived}
+                      isPageReadOnly={isPageArchived}
+                      collapsedNodeIds={effectiveCollapsedNodeIds}
+                      pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
+                      selectedNodeIds={selectedNodeIds}
+                      selectionAnchorNodeId={selectionAnchorNodeId}
+                      onToggleNodeCollapsed={toggleNodeCollapsed}
+                      onSelectSingleNode={selectSingleNode}
+                      onSelectNodeRange={selectNodeRange}
+                      onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
+                      pendingInsertedComposer={pendingInsertedComposer}
+                      onOpenInsertedComposer={openInsertedComposer}
+                      onClearInsertedComposer={clearInsertedComposer}
+                      onBeginTextEditing={clearNodeSelection}
+                      activeDraggedNodeId={activeDraggedNodeId}
+                      activeDraggedNodePayload={activeDraggedNodePayload}
+                      onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                      onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                      onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                      buildDraggedNodePayload={buildDraggedNodePayload}
+                      onDropDraggedNodes={dropDraggedNodes}
+                      onSelectionStart={beginNodeSelection}
+                      onSelectionExtend={extendNodeSelection}
+                      availableTags={sortedTags}
+                      pagesByTitle={pagesByTitle}
+                      pagesById={pagesById}
+                      favoritedNodeIds={favoritedNodeIds}
+                      onOpenPage={handleSelectPage}
+                      onOpenNode={handleOpenLinkedNode}
+                      onOpenTag={openFindPaletteForQuery}
+                      onOpenFindQuery={openFindPaletteForQuery}
+                      onToggleNodeFavorite={toggleNodeFavorite}
+                      recurringCompletionMode={recurringCompletionMode}
+                      depthOffset={sectionDepthOffset}
+                    />
+                  </div>
                     <div className="pt-8">
                       <PageSection
                         title="Feedback"
@@ -10849,7 +10961,7 @@ function ConfiguredWorkspace({
                             onUserNoteChange={setJournalFeedbackPromptNote}
                             systemPrompt={JOURNAL_FEEDBACK_SYSTEM_PROMPT}
                             userPromptPreview={journalFeedbackPromptPreview}
-                            helperText="Linked page/node context from Thoughts/Stuff is also dereferenced and included when present."
+                            helperText="Linked page/node context from What happened and Thoughts/Stuff is also dereferenced and included when present."
                           />
                         ) : null
                       }

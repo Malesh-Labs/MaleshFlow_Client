@@ -479,6 +479,94 @@ async function ensureInboxHistoryPage(ctx: MutationCtx) {
   return page;
 }
 
+const JOURNAL_SECTION_SPECS = [
+  {
+    slot: "journalThoughts",
+    title: "Thoughts/Stuff",
+  },
+  {
+    slot: "journalWhatHappened",
+    title: "What happened",
+  },
+  {
+    slot: "journalFeedback",
+    title: "Feedback",
+  },
+] as const;
+
+async function ensureJournalSections(ctx: MutationCtx, page: Doc<"pages">) {
+  const nodes = await listPageNodes(ctx.db, page._id);
+  const rootNodes = nodes
+    .filter((node) => node.parentNodeId === null)
+    .sort((left, right) => left.position - right.position);
+  const nodesBySlot = new Map<string, Doc<"nodes">>();
+  for (const node of rootNodes) {
+    const sectionSlot = getNodeSourceMeta(node).sectionSlot;
+    if (typeof sectionSlot === "string" && !nodesBySlot.has(sectionSlot)) {
+      nodesBySlot.set(sectionSlot, node);
+    }
+  }
+
+  const now = getTimestamp();
+  const sectionIds: {
+    thoughtsSectionId: Id<"nodes"> | null;
+    whatHappenedSectionId: Id<"nodes"> | null;
+    feedbackSectionId: Id<"nodes"> | null;
+  } = {
+    thoughtsSectionId: null,
+    whatHappenedSectionId: null,
+    feedbackSectionId: null,
+  };
+  let afterNodeId: Id<"nodes"> | null = null;
+
+  for (const spec of JOURNAL_SECTION_SPECS) {
+    const existingSection = nodesBySlot.get(spec.slot) ?? null;
+    if (existingSection) {
+      afterNodeId = existingSection._id;
+      if (spec.slot === "journalThoughts") {
+        sectionIds.thoughtsSectionId = existingSection._id;
+      } else if (spec.slot === "journalWhatHappened") {
+        sectionIds.whatHappenedSectionId = existingSection._id;
+      } else {
+        sectionIds.feedbackSectionId = existingSection._id;
+      }
+      continue;
+    }
+
+    const position = await computeNodePosition(ctx.db, page._id, null, afterNodeId);
+    const sectionId = await ctx.db.insert("nodes", {
+      pageId: page._id,
+      parentNodeId: null,
+      position,
+      text: spec.title,
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      dueEndAt: null,
+      archived: false,
+      sourceMeta: {
+        sourceType: "system",
+        sectionSlot: spec.slot,
+        locked: true,
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+    afterNodeId = sectionId;
+
+    if (spec.slot === "journalThoughts") {
+      sectionIds.thoughtsSectionId = sectionId;
+    } else if (spec.slot === "journalWhatHappened") {
+      sectionIds.whatHappenedSectionId = sectionId;
+    } else {
+      sectionIds.feedbackSectionId = sectionId;
+    }
+  }
+
+  return sectionIds;
+}
+
 async function archiveTaskPageSubtreeToDone(
   ctx: MutationCtx,
   taskRootNode: Doc<"nodes">,
@@ -2924,43 +3012,10 @@ export const createPage = mutation({
     }
 
     if (args.pageType === "journal") {
-      await ctx.db.insert("nodes", {
-        pageId,
-        parentNodeId: null,
-        position: 1024,
-        text: "Thoughts/Stuff",
-        kind: "note",
-        taskStatus: null,
-        priority: null,
-        dueAt: null,
-        archived: false,
-        sourceMeta: {
-          sourceType: "system",
-          sectionSlot: "journalThoughts",
-          locked: true,
-        },
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      await ctx.db.insert("nodes", {
-        pageId,
-        parentNodeId: null,
-        position: 2048,
-        text: "Feedback",
-        kind: "note",
-        taskStatus: null,
-        priority: null,
-        dueAt: null,
-        archived: false,
-        sourceMeta: {
-          sourceType: "system",
-          sectionSlot: "journalFeedback",
-          locked: true,
-        },
-        createdAt: now,
-        updatedAt: now,
-      });
+      const journalPage = await ctx.db.get(pageId);
+      if (journalPage) {
+        await ensureJournalSections(ctx, journalPage);
+      }
     }
 
     if (args.pageType === "scratchpad") {
@@ -3083,6 +3138,23 @@ export const ensurePlannerPageSections = mutation({
     }
 
     return await ensurePlannerSections(ctx, page);
+  },
+});
+
+export const ensureJournalPageSections = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived || getPageSourceMeta(page).pageType !== "journal") {
+      throw new Error("Only journal pages can have journal sections.");
+    }
+
+    return await ensureJournalSections(ctx, page);
   },
 });
 
@@ -4641,7 +4713,9 @@ export const getJournalPageContext = internalQuery({
       .filter((node) => node.parentNodeId === null)
       .sort((left, right) => left.position - right.position);
 
-    const getSectionNode = (slot: "journalThoughts" | "journalFeedback") =>
+    const getSectionNode = (
+      slot: "journalThoughts" | "journalWhatHappened" | "journalFeedback",
+    ) =>
       rootNodes.find((node) => {
         const sourceMeta =
           node.sourceMeta && typeof node.sourceMeta === "object"
@@ -4651,6 +4725,7 @@ export const getJournalPageContext = internalQuery({
       }) ?? null;
 
     const thoughtsSection = getSectionNode("journalThoughts");
+    const whatHappenedSection = getSectionNode("journalWhatHappened");
     const feedbackSection = getSectionNode("journalFeedback");
 
     const getSectionChildren = (sectionNodeId: Doc<"nodes">["_id"] | null) =>
@@ -4661,8 +4736,10 @@ export const getJournalPageContext = internalQuery({
     return {
       page,
       thoughtsSection,
+      whatHappenedSection,
       feedbackSection,
       thoughtLines: getSectionChildren(thoughtsSection?._id ?? null),
+      whatHappenedLines: getSectionChildren(whatHappenedSection?._id ?? null),
       feedbackLines: getSectionChildren(feedbackSection?._id ?? null),
     };
   },

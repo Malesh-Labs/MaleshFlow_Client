@@ -661,17 +661,23 @@ export const generateJournalFeedback = action({
       throw new Error("Journal sections were not found for this page.");
     }
 
+    const whatHappenedLines = journalContext.whatHappenedLines.map(
+      (node: { text: string }) => node.text.trim(),
+    ).filter((line: string) => line.length > 0);
     const thoughtLines = journalContext.thoughtLines.map(
       (node: { text: string }) => node.text.trim(),
     ).filter((line: string) => line.length > 0);
     const explicitLinkedContext = await buildExplicitLinkedContextForNodes(
       ctx,
-      journalContext.thoughtLines.map((node: { _id: Id<"nodes"> }) => node._id),
+      [
+        ...journalContext.whatHappenedLines,
+        ...journalContext.thoughtLines,
+      ].map((node: { _id: Id<"nodes"> }) => node._id),
     );
 
-    if (thoughtLines.length === 0) {
+    if (whatHappenedLines.length === 0 && thoughtLines.length === 0) {
       return {
-        summary: "Add some thoughts first, then generate feedback.",
+        summary: "Add what happened or some thoughts first, then generate feedback.",
         feedbackLines: [],
       };
     }
@@ -697,6 +703,7 @@ export const generateJournalFeedback = action({
             content: buildJournalFeedbackUserPrompt({
               pageTitle: journalContext.page.title,
               userNote: args.userNote,
+              whatHappenedLines,
               thoughtLines,
               explicitLinkedContext,
             }),

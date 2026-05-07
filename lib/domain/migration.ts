@@ -40,6 +40,7 @@ export const MIGRATION_SECTION_SLOTS = [
   "model",
   "recentExamples",
   "journalThoughts",
+  "journalWhatHappened",
   "journalFeedback",
   "scratchpadLive",
   "scratchpadPrevious",
