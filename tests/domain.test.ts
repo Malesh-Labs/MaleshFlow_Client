@@ -5,6 +5,7 @@ import {
   convertHtmlClipboardToMarkdownText,
   extractLinkMatches,
   extractLinks,
+  getExplicitWikiLinkPreviewText,
   rewriteMatchingPageWikiLinks,
   sanitizeGeneratedWikiLinkLabel,
 } from "../lib/domain/links";
@@ -144,6 +145,35 @@ test("extractLinks finds plain email addresses", () => {
       targetUrl: "mailto:support@test.co.uk",
     },
   ]);
+});
+
+test("extractLinks parses parent-inclusive node wiki links", () => {
+  const links = extractLinks(
+    "See [[node:node_123?parent]] and [[Custom label|node:node_456?parent]].",
+  );
+
+  assert.deepEqual(links, [
+    {
+      kind: "node",
+      label: "[[node:node_123?parent]]",
+      targetNodeRef: "node_123",
+      includeParent: true,
+    },
+    {
+      kind: "node",
+      label: "[[Custom label|node:node_456?parent]]",
+      targetNodeRef: "node_456",
+      includeParent: true,
+    },
+  ]);
+});
+
+test("getExplicitWikiLinkPreviewText strips parent-inclusive node targets", () => {
+  assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123?parent]]"), "");
+  assert.equal(
+    getExplicitWikiLinkPreviewText("[[Custom label|node:node_456?parent]]"),
+    "Custom label",
+  );
 });
 
 test("sanitizeGeneratedWikiLinkLabel flattens nested wiki links", () => {

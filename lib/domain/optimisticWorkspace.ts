@@ -57,6 +57,12 @@ export type OptimisticNodeBatchUpdateArgs = {
   updates: OptimisticNodeUpdatePatch[];
 };
 
+export type OptimisticNodeChildrenLinkAutocompleteHiddenArgs = {
+  ownerKey: string;
+  nodeId: Id<"nodes">;
+  hidden: boolean;
+};
+
 export type OptimisticNodeMove = {
   nodeId: Id<"nodes">;
   pageId?: Id<"pages">;
@@ -596,6 +602,25 @@ export function applyOptimisticNodeBatchUpdates(
   for (const update of args.updates) {
     applyOptimisticNodeUpdate(localStore, { ...update, ownerKey: args.ownerKey });
   }
+}
+
+export function applyOptimisticNodeChildrenLinkAutocompleteHidden(
+  localStore: OptimisticLocalStore,
+  args: OptimisticNodeChildrenLinkAutocompleteHiddenArgs,
+) {
+  patchNodeInWorkspaceQueries(localStore, args.ownerKey, args.nodeId, (node) => {
+    const sourceMeta = getSourceMeta(node);
+    if (args.hidden) {
+      sourceMeta.hideChildrenFromLinkAutocomplete = true;
+    } else {
+      delete sourceMeta.hideChildrenFromLinkAutocomplete;
+    }
+    return {
+      ...node,
+      sourceMeta,
+      updatedAt: getTimestamp(),
+    };
+  });
 }
 
 export function applyOptimisticNodeMoves(

@@ -81,6 +81,7 @@ import {
   applyOptimisticInsertNodeAbove,
   applyOptimisticNodeCreates,
   applyOptimisticNodeBatchUpdates,
+  applyOptimisticNodeChildrenLinkAutocompleteHidden,
   applyOptimisticNodeMoves,
   applyOptimisticPlannerTaskCompletion,
   applyOptimisticTaskPageTaskCompletion,
@@ -333,6 +334,9 @@ type NodeLinkTargetResolution = {
   text: string;
   archived: boolean;
   pageArchived: boolean;
+  parentNodeId: Id<"nodes"> | null;
+  parentText: string | null;
+  parentArchived: boolean;
 };
 type LinkSuggestion =
   | {
@@ -494,6 +498,9 @@ type SetTaskPageDoneArchiveEnabledArgs = Parameters<
 >[0];
 type SetSidebarFavoriteArgs = Parameters<
   ReturnType<typeof useMutation<typeof api.workspace.setSidebarFavorite>>
+>[0];
+type SetNodeChildrenLinkAutocompleteHiddenArgs = Parameters<
+  ReturnType<typeof useMutation<typeof api.workspace.setNodeChildrenLinkAutocompleteHidden>>
 >[0];
 type UpdateNodeArgs = Parameters<ReturnType<typeof useMutation<typeof api.workspace.updateNode>>>[0];
 type UpdateNodesBatchArgs = Parameters<
@@ -1773,6 +1780,12 @@ function useFloatingMenuPosition(
   return isOpen ? position : null;
 }
 
+function normalizeNodeLinkPreviewText(value: string) {
+  return stripHeadingSyntaxMarkers(
+    stripInlineFormattingMarkers(replaceLinkMarkupWithLabels(value)),
+  ).trim();
+}
+
 function buildLinkPreviewSegments(
   value: string,
   pagesByTitle: Map<string, PageDoc>,
@@ -1853,18 +1866,21 @@ function buildLinkPreviewSegments(
       });
     } else {
       const targetNode = nodeTargetsById.get(match.link.targetNodeRef);
-      const nodeLabel = stripHeadingSyntaxMarkers(
+      const nodeLabel = normalizeNodeLinkPreviewText(
         getExplicitWikiLinkPreviewText(match.link.label),
-      ).trim();
+      );
       const renderedTargetNodeText = targetNode
-        ? stripHeadingSyntaxMarkers(
-            stripInlineFormattingMarkers(replaceLinkMarkupWithLabels(targetNode.text)),
-          ).trim()
+        ? normalizeNodeLinkPreviewText(targetNode.text)
         : "";
+      const parentNodeText =
+        match.link.includeParent && targetNode?.parentText && !targetNode.parentArchived
+          ? normalizeNodeLinkPreviewText(targetNode.parentText)
+          : "";
+      const childNodeText = nodeLabel || renderedTargetNodeText || "Linked node";
       segments.push({
         key: `node:${match.start}`,
         kind: "link",
-        text: nodeLabel || renderedTargetNodeText || "Linked node",
+        text: parentNodeText ? `${childNodeText} (${parentNodeText})` : childNodeText,
         pageId: targetNode?.pageId ?? null,
         nodeId: targetNode?.nodeId ?? null,
         archived: targetNode?.pageArchived ?? false,
@@ -3197,6 +3213,9 @@ function ConfiguredWorkspace({
   const clearWorkspaceInbox = useMutation(api.workspace.clearWorkspaceInbox);
   const setWorkspaceRandomBox = useMutation(api.workspace.setWorkspaceRandomBox);
   const setSidebarFavoriteRaw = useMutation(api.workspace.setSidebarFavorite);
+  const setNodeChildrenLinkAutocompleteHiddenRaw = useMutation(
+    api.workspace.setNodeChildrenLinkAutocompleteHidden,
+  );
   const mergePinnedPagesInAllSidebar = useMutation(api.workspace.mergePinnedPagesInAllSidebar);
   const deletePageForever = useMutation(api.workspace.deletePageForever);
   const rebuildEmbeddings = useMutation(api.workspace.rebuildEmbeddings);
@@ -3232,6 +3251,10 @@ function ConfiguredWorkspace({
   const updateNodeMutation = updateNodeRaw.withOptimisticUpdate((localStore, args) => {
     applyOptimisticNodeUpdate(localStore, args);
   });
+  const setNodeChildrenLinkAutocompleteHiddenMutation =
+    setNodeChildrenLinkAutocompleteHiddenRaw.withOptimisticUpdate((localStore, args) => {
+      applyOptimisticNodeChildrenLinkAutocompleteHidden(localStore, args);
+    });
   const updateNodesBatchMutation = updateNodesBatchRaw.withOptimisticUpdate(
     (localStore, args) => {
       applyOptimisticNodeBatchUpdates(localStore, args);
@@ -3321,6 +3344,15 @@ function ConfiguredWorkspace({
         "Could not update favorites.",
       ),
     [runTrackedMutation, setSidebarFavoriteRaw],
+  );
+  const setNodeChildrenLinkAutocompleteHidden = useCallback(
+    (args: SetNodeChildrenLinkAutocompleteHiddenArgs) =>
+      runTrackedMutation(
+        () => setNodeChildrenLinkAutocompleteHiddenMutation(args),
+        { nodeIds: [args.nodeId] },
+        "Could not update link autocomplete settings.",
+      ),
+    [runTrackedMutation, setNodeChildrenLinkAutocompleteHiddenMutation],
   );
   const updateNode = useCallback(
     (args: UpdateNodeArgs) =>
@@ -5784,6 +5816,7 @@ function ConfiguredWorkspace({
   const actionResults = useMemo(() => {
     const favoriteContextPage = favoriteTargetPage;
     const favoriteContextNode = favoriteTargetNode;
+    const linkAutocompleteContextNode = favoriteTargetNode;
     const moveTargetRootNodeIds = getActionContextRootNodeIds();
     const isFavoriteContextNode =
       favoriteContextNode !== null &&
@@ -5792,6 +5825,9 @@ function ConfiguredWorkspace({
       favoriteContextNode === null &&
       favoriteContextPage !== null &&
       favoritedPageIds.has(favoriteContextPage._id as string);
+    const isLinkAutocompleteContextHidden =
+      linkAutocompleteContextNode !== null &&
+      getNodeMeta(linkAutocompleteContextNode).hideChildrenFromLinkAutocomplete === true;
     const results: ActionPaletteResult[] = [
       ...SIDEBAR_SECTIONS.map((section) => {
         const title = getPageTypeLabelForSection(section);
@@ -5878,6 +5914,49 @@ function ConfiguredWorkspace({
               })
               .catch(() => undefined);
           }
+        },
+      },
+      {
+        key: "toggle-children-link-autocomplete",
+        title: isLinkAutocompleteContextHidden
+          ? "Show Children In Link Autocomplete"
+          : "Hide Children From Link Autocomplete",
+        subtitle:
+          linkAutocompleteContextNode !== null
+            ? `${linkAutocompleteContextNode.text || "(empty item)"} • ${favoriteContextPage?.title ?? "Unknown page"}`
+            : "Highlight an item, or open Actions while your caret is inside one.",
+        keywords: [
+          "link",
+          "links",
+          "autocomplete",
+          "node",
+          "item",
+          "children",
+          "hide",
+          "show",
+          "search",
+        ],
+        actionLabel:
+          linkAutocompleteContextNode !== null
+            ? isLinkAutocompleteContextHidden
+              ? "Show"
+              : "Hide"
+            : "Select",
+        disabled: linkAutocompleteContextNode === null,
+        onSelect: () => {
+          if (!ownerKey || !linkAutocompleteContextNode) {
+            return;
+          }
+
+          void setNodeChildrenLinkAutocompleteHidden({
+            ownerKey,
+            nodeId: linkAutocompleteContextNode._id as Id<"nodes">,
+            hidden: !isLinkAutocompleteContextHidden,
+          })
+            .then(() => {
+              setPaletteOpen(false);
+            })
+            .catch(() => undefined);
         },
       },
       {
@@ -6116,6 +6195,7 @@ function ConfiguredWorkspace({
     openTaskSchedulePalette,
     paletteQuery,
     setOwnerKey,
+    setNodeChildrenLinkAutocompleteHidden,
     setSidebarFavorite,
     switchPaletteMode,
     taskScheduleSummary,
@@ -13377,6 +13457,8 @@ function OutlineNodeEditor({
   const nodeMeta = getNodeMeta(node);
   const isNoteCompleted = node.kind === "note" && nodeMeta.noteCompleted === true;
   const isTaskCompleted = node.kind === "task" && node.taskStatus === "done";
+  const hidesChildrenFromLinkAutocomplete =
+    nodeMeta.hideChildrenFromLinkAutocomplete === true;
   const isCompleted = isTaskCompleted || isNoteCompleted;
   const isDimmedByCompletedAncestor = hasCompletedAncestorNode(node, nodeMap);
   const isLocked = nodeMeta.locked === true;
@@ -15588,6 +15670,18 @@ function OutlineNodeEditor({
                   : "items-start pt-[2px]",
             )}
           >
+            {hidesChildrenFromLinkAutocomplete ? (
+              <span
+                role="img"
+                aria-label="Children hidden from link autocomplete"
+                title="Children hidden from link autocomplete"
+                className="relative mt-0.5 inline-flex h-4 w-4 flex-none items-center justify-center rounded-full border border-[var(--workspace-border)] text-[var(--workspace-text-faint)]"
+              >
+                <span className="absolute h-2 w-px bg-current" />
+                <span className="absolute h-px w-2 bg-current" />
+                <span className="absolute h-px w-3 rotate-45 bg-current" />
+              </span>
+            ) : null}
             {isPendingSync ? (
               <span
                 className="mt-1 inline-flex h-2 w-2 flex-none animate-pulse rounded-full bg-[var(--workspace-accent)]"

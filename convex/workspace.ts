@@ -260,6 +260,36 @@ function getNodeSourceMeta(node: Pick<Doc<"nodes">, "sourceMeta"> | null | undef
     : {};
 }
 
+function hidesChildrenFromLinkAutocomplete(node: Pick<Doc<"nodes">, "sourceMeta">) {
+  return getNodeSourceMeta(node).hideChildrenFromLinkAutocomplete === true;
+}
+
+function isHiddenByLinkAutocompleteAncestor(
+  node: Doc<"nodes">,
+  nodeMap: Map<string, Doc<"nodes">>,
+) {
+  const visitedNodeIds = new Set<string>();
+  let parentNodeId = node.parentNodeId as string | null;
+
+  while (parentNodeId) {
+    if (visitedNodeIds.has(parentNodeId)) {
+      break;
+    }
+    visitedNodeIds.add(parentNodeId);
+
+    const parentNode = nodeMap.get(parentNodeId);
+    if (!parentNode) {
+      break;
+    }
+    if (hidesChildrenFromLinkAutocomplete(parentNode)) {
+      return true;
+    }
+    parentNodeId = parentNode.parentNodeId as string | null;
+  }
+
+  return false;
+}
+
 const MIN_WORKSPACE_TEXT_BOX_COUNT = 2;
 
 function normalizeWorkspaceTextBoxes(
@@ -2620,13 +2650,16 @@ export const searchLinkTargets = query({
       .slice(0, limit);
 
     const activePageIds = new Set(visiblePages.map((page) => page._id));
-    const nodes = (await ctx.db.query("nodes").collect()).filter(
+    const activeNodes = (await ctx.db.query("nodes").collect()).filter(
+      (node) => !node.archived && activePageIds.has(node.pageId),
+    );
+    const activeNodeMap = new Map(activeNodes.map((node) => [node._id as string, node]));
+    const nodes = activeNodes.filter(
       (node) =>
-        !node.archived &&
-        activePageIds.has(node.pageId) &&
         node._id !== args.excludeNodeId &&
         node.text.trim().length > 0 &&
-        node.text.trim() !== ".",
+        node.text.trim() !== "." &&
+        !isHiddenByLinkAutocompleteAncestor(node, activeNodeMap),
     );
     const pageMap = new Map(visiblePages.map((page) => [page._id, page]));
 
@@ -2681,17 +2714,39 @@ export const resolveNodeLinks = query({
         .filter((page): page is Doc<"pages"> => page !== null)
         .map((page) => [page._id, page]),
     );
+    const parentNodeIds = [
+      ...new Set(
+        nodes
+          .flatMap((node) =>
+            node !== null && node.parentNodeId !== null ? [node.parentNodeId] : [],
+          ),
+      ),
+    ];
+    const parentNodes = await Promise.all(
+      parentNodeIds.map((nodeId) => ctx.db.get(nodeId)),
+    );
+    const parentNodeMap = new Map(
+      parentNodes
+        .filter((node): node is Doc<"nodes"> => node !== null)
+        .map((node) => [node._id, node]),
+    );
 
     return nodes
       .filter((node): node is Doc<"nodes"> => node !== null)
       .map((node) => {
         const page = pageMap.get(node.pageId) ?? null;
+        const parentNode = node.parentNodeId
+          ? (parentNodeMap.get(node.parentNodeId) ?? null)
+          : null;
         return {
           nodeId: node._id,
           pageId: page?._id ?? null,
           text: node.text,
           archived: node.archived,
           pageArchived: page?.archived ?? false,
+          parentNodeId: parentNode?._id ?? null,
+          parentText: parentNode && !parentNode.archived ? parentNode.text : null,
+          parentArchived: parentNode?.archived ?? false,
         };
       });
   },
@@ -3082,6 +3137,38 @@ export const setTaskPageDoneArchiveEnabled = mutation({
     });
 
     return args.enabled;
+  },
+});
+
+export const setNodeChildrenLinkAutocompleteHidden = mutation({
+  args: {
+    ownerKey: v.string(),
+    nodeId: v.id("nodes"),
+    hidden: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const node = await ctx.db.get(args.nodeId);
+    if (!node || node.archived) {
+      throw new Error("Item not found.");
+    }
+
+    const sourceMeta = {
+      ...getNodeSourceMeta(node),
+    };
+    if (args.hidden) {
+      sourceMeta.hideChildrenFromLinkAutocomplete = true;
+    } else {
+      delete sourceMeta.hideChildrenFromLinkAutocomplete;
+    }
+
+    await ctx.db.patch(args.nodeId, {
+      sourceMeta,
+      updatedAt: getTimestamp(),
+    });
+
+    return args.hidden;
   },
 });
 

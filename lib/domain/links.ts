@@ -9,6 +9,7 @@ export type ExtractedLink =
       kind: "node";
       label: string;
       targetNodeRef: string;
+      includeParent?: boolean;
     }
   | {
       kind: "external";
@@ -31,7 +32,7 @@ const PLAIN_URL_PATTERN =
 const PLAIN_EMAIL_PATTERN =
   /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const PAGE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?page:([a-zA-Z0-9_-]+)$/;
-const NODE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?node:([a-zA-Z0-9_-]+)$/;
+const NODE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?node:([a-zA-Z0-9_-]+)(\?parent)?$/;
 const COMPLETE_MARKDOWN_LINK_PATTERN = /^\[([^\]]+)\]\(([^)]*)\)$/;
 const COMPLETE_WIKI_LINK_PATTERN = /^\[\[([^[\]]+)\]\]$/;
 const HTML_ANCHOR_PATTERN = /<a\b[^>]*href=(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi;
@@ -189,6 +190,7 @@ export function extractLinkMatches(text: string) {
           kind: "node",
           label: match[0],
           targetNodeRef: ref,
+          ...(nodeMatch[3] === "?parent" ? { includeParent: true } : {}),
         },
       });
       continue;
@@ -338,8 +340,10 @@ export function getExplicitWikiLinkPreviewText(label: string) {
 
   return label
     .slice(2, -2)
-    .replace(/^(?:node|page):[a-zA-Z0-9_-]+$/, "")
-    .replace(/\|(node|page):[a-zA-Z0-9_-]+$/, "")
+    .replace(/^node:[a-zA-Z0-9_-]+(?:\?parent)?$/, "")
+    .replace(/^page:[a-zA-Z0-9_-]+$/, "")
+    .replace(/\|node:[a-zA-Z0-9_-]+(?:\?parent)?$/, "")
+    .replace(/\|page:[a-zA-Z0-9_-]+$/, "")
     .trim();
 }
 
