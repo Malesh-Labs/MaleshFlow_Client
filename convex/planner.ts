@@ -35,6 +35,7 @@ import {
   comparePlannerTaskOrder,
   getEffectiveTaskDueDateRange,
 } from "../lib/domain/planner";
+import { getAppendPosition } from "../lib/domain/positions";
 import {
   getExplicitWikiLinkPreviewText,
   replaceLinkMarkupWithLabels,
@@ -738,29 +739,19 @@ export const completePlannerDay = mutation({
     }
 
     const orderedCarryChildren = [...keptCarryChildren];
-    let afterNodeId: Id<"nodes"> | null = null;
-    for (const node of focusDirectChildren) {
-      if (node.archived) {
-        continue;
-      }
-      afterNodeId = node._id;
-    }
+    let nextCarryPosition = getAppendPosition(
+      focusDirectChildren[focusDirectChildren.length - 1]?.position ?? null,
+    );
 
     for (const node of orderedCarryChildren) {
-      const nextPosition = await computeNodePosition(
-        ctx.db,
-        page._id,
-        focusSection._id,
-        afterNodeId,
-      );
       await ctx.db.patch(node._id, {
         parentNodeId: focusSection._id,
-        position: nextPosition,
+        position: nextCarryPosition,
         updatedAt: now,
       });
       await updateMovedPlannerSubtreeDate(ctx, node._id, topDayDate, now);
       movedCount += 1;
-      afterNodeId = node._id;
+      nextCarryPosition = getAppendPosition(nextCarryPosition);
     }
 
     await setNodeTreeArchivedState(ctx.db, topDay._id, true, now);
