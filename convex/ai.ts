@@ -20,6 +20,7 @@ import {
   screenshotImportResultSchema,
 } from "../lib/domain/screenshotImport";
 import { replaceLinkMarkupWithLabels, stripLinkMarkup } from "../lib/domain/links";
+import { isSeparatorLineText } from "../lib/domain/displaySyntax";
 
 const taskMetadataSchema = z.object({
   kind: z.enum(["note", "task"]),
@@ -756,6 +757,14 @@ export const generateEmbeddingForNode = internalAction({
 });
 
 function inferTaskMetadataHeuristically(text: string, existingKind: "note" | "task") {
+  if (isSeparatorLineText(text)) {
+    return {
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+    } as const;
+  }
+
   const lowered = text.toLowerCase();
   const likelyTask =
     existingKind === "task" ||
@@ -788,6 +797,16 @@ export const extractTaskMetadata = internalAction({
         : {};
 
     if (sourceMeta.taskKindLocked === true) {
+      return;
+    }
+
+    if (isSeparatorLineText(context.node.text)) {
+      await ctx.runMutation(applyTaskMetadataRef, {
+        nodeId: context.node._id,
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+      });
       return;
     }
 

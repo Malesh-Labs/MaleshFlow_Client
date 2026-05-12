@@ -6,6 +6,7 @@ import {
   parseRecurrenceFrequency,
   type RecurrenceFrequency,
 } from "@/lib/domain/recurrence";
+import { isSeparatorLineText } from "@/lib/domain/displaySyntax";
 
 type PageDoc = Doc<"pages">;
 type NodeDoc = Doc<"nodes">;
@@ -129,6 +130,18 @@ function getSourceMeta(record: { sourceMeta?: unknown } | null | undefined) {
   return record && typeof record.sourceMeta === "object" && record.sourceMeta
     ? { ...(record.sourceMeta as Record<string, unknown>) }
     : {};
+}
+
+function normalizeNodeKindForText(text: string, kind: NodeDoc["kind"] | null | undefined) {
+  return isSeparatorLineText(text) ? "note" : (kind ?? "note");
+}
+
+function normalizeTaskStatusForKind(
+  kind: NodeDoc["kind"],
+  taskStatus: NodeTaskStatus | undefined,
+  fallbackTaskStatus: NodeTaskStatus | undefined = undefined,
+) {
+  return kind === "task" ? (taskStatus ?? fallbackTaskStatus ?? "todo") : null;
 }
 
 function updatePageTreeQueries(
@@ -258,15 +271,24 @@ function applyNodeUpdatePatch(
     ...node,
     updatedAt: getTimestamp(),
   };
+  const nextText = update.text !== undefined ? update.text : node.text;
+  const nextKind = normalizeNodeKindForText(
+    nextText,
+    update.kind !== undefined ? update.kind : node.kind,
+  );
+  const isSeparatorNote = isSeparatorLineText(nextText);
 
   if (update.text !== undefined) {
     nextNode.text = update.text;
   }
 
-  if (update.kind !== undefined) {
-    nextNode.kind = update.kind;
-    nextNode.taskStatus =
-      update.kind === "task" ? (update.taskStatus ?? node.taskStatus ?? "todo") : null;
+  if (update.kind !== undefined || (update.text !== undefined && nextKind !== node.kind)) {
+    nextNode.kind = nextKind;
+    nextNode.taskStatus = normalizeTaskStatusForKind(
+      nextKind,
+      update.taskStatus,
+      node.taskStatus,
+    );
   } else if (update.taskStatus !== undefined) {
     nextNode.taskStatus = update.taskStatus;
   }
@@ -283,11 +305,20 @@ function applyNodeUpdatePatch(
     nextNode.dueEndAt = update.dueEndAt;
   }
 
+  if (isSeparatorNote) {
+    nextNode.kind = "note";
+    nextNode.taskStatus = null;
+    nextNode.priority = null;
+    nextNode.dueAt = null;
+    nextNode.dueEndAt = null;
+  }
+
   if (
     update.lockKind !== undefined ||
     update.noteCompleted !== undefined ||
     update.kind !== undefined ||
-    update.recurrenceFrequency !== undefined
+    update.recurrenceFrequency !== undefined ||
+    isSeparatorNote
   ) {
     const sourceMeta = getSourceMeta(node);
 
@@ -295,15 +326,19 @@ function applyNodeUpdatePatch(
       sourceMeta.taskKindLocked = update.lockKind;
     }
 
-    if (update.noteCompleted !== undefined) {
+    if (isSeparatorNote) {
+      sourceMeta.noteCompleted = false;
+    } else if (update.noteCompleted !== undefined) {
       sourceMeta.noteCompleted = update.noteCompleted;
-    } else if (update.kind === "task") {
+    } else if (nextKind === "task" && update.kind !== undefined) {
       sourceMeta.noteCompleted = false;
     }
 
-    if (update.recurrenceFrequency !== undefined) {
+    if (isSeparatorNote) {
+      sourceMeta.recurrenceFrequency = null;
+    } else if (update.recurrenceFrequency !== undefined) {
       sourceMeta.recurrenceFrequency = update.recurrenceFrequency;
-    } else if (update.kind === "note") {
+    } else if (nextKind === "note" && update.kind !== undefined) {
       sourceMeta.recurrenceFrequency = null;
     }
 
@@ -492,16 +527,17 @@ function applyOptimisticCreatesToNodes(
       parentNodeId,
       afterNodeId,
     );
-    const kind = entry.kind ?? "note";
+    const text = entry.text?.trim() || "";
+    const kind = normalizeNodeKindForText(text, entry.kind);
     const nextNode: NodeDoc = {
       _id: tempNodeId,
       _creationTime: createdAt,
       pageId,
       parentNodeId,
       position,
-      text: entry.text?.trim() || "",
+      text,
       kind,
-      taskStatus: kind === "task" ? (entry.taskStatus ?? "todo") : null,
+      taskStatus: normalizeTaskStatusForKind(kind, entry.taskStatus),
       priority: null,
       dueAt: kind === "task" ? (entry.dueAt ?? null) : null,
       dueEndAt: kind === "task" ? (entry.dueEndAt ?? null) : null,

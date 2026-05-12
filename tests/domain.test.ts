@@ -11,6 +11,7 @@ import {
 } from "../lib/domain/links";
 import {
   cycleHeadingSyntax,
+  isSeparatorLineText,
   parseHeadingSyntax,
   stripHeadingSyntaxMarkers,
 } from "../lib/domain/displaySyntax";
@@ -468,6 +469,13 @@ test("parseHeadingSyntax recognizes markdown-style heading prefixes", () => {
     level: null,
     text: "#not a heading",
   });
+});
+
+test("isSeparatorLineText recognizes trimmed visual separators", () => {
+  assert.equal(isSeparatorLineText("---"), true);
+  assert.equal(isSeparatorLineText("  ---  "), true);
+  assert.equal(isSeparatorLineText("----"), false);
+  assert.equal(isSeparatorLineText("[ ] ---"), false);
 });
 
 test("cycleHeadingSyntax cycles plain text through heading levels and back", () => {

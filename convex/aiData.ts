@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { priorityValidator, taskStatusValidator } from "./lib/validators";
+import { isSeparatorLineText } from "../lib/domain/displaySyntax";
 
 function buildEmbeddingJobReplacement(
   job: Doc<"embeddingJobs">,
@@ -395,14 +396,16 @@ export const applyTaskMetadata = internalMutation({
     if (!node) {
       return;
     }
+    const separatorNote = isSeparatorLineText(node.text);
+    const kind = separatorNote ? "note" : args.kind;
 
     await ctx.db.patch(args.nodeId, {
-      kind: args.kind,
+      kind,
       taskStatus:
-        args.kind === "task"
+        kind === "task"
           ? (args.taskStatus ?? node.taskStatus ?? "todo")
           : null,
-      priority: args.priority ?? node.priority,
+      priority: separatorNote ? null : (args.priority ?? node.priority),
       updatedAt: Date.now(),
     });
   },

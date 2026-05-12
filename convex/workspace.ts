@@ -67,9 +67,25 @@ import {
   rewriteMatchingPageWikiLinks,
 } from "../lib/domain/links";
 import { extractTagMatches } from "../lib/domain/tags";
+import { isSeparatorLineText } from "../lib/domain/displaySyntax";
 
 function getTimestamp() {
   return Date.now();
+}
+
+type NodeKind = Doc<"nodes">["kind"];
+type NodeTaskStatus = Doc<"nodes">["taskStatus"];
+
+function normalizeNodeKindForText(text: string, kind: NodeKind | null | undefined) {
+  return isSeparatorLineText(text) ? "note" : (kind ?? "note");
+}
+
+function normalizeTaskStatusForKind(
+  kind: NodeKind,
+  taskStatus: NodeTaskStatus | undefined,
+  fallbackTaskStatus: NodeTaskStatus | undefined = undefined,
+) {
+  return kind === "task" ? (taskStatus ?? fallbackTaskStatus ?? "todo") : null;
 }
 
 const MAX_BACKLINK_COUNT_NODE_BATCH = 250;
@@ -1657,7 +1673,7 @@ export const setWorkspaceInbox = mutation({
     }
 
     const pages = await ctx.db.query("pages").collect();
-    let sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
+    const sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
 
     if (!sidebarPage) {
       const now = getTimestamp();
@@ -1863,7 +1879,7 @@ export const setWorkspaceRandomBox = mutation({
     }
 
     const pages = await ctx.db.query("pages").collect();
-    let sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
+    const sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
 
     if (!sidebarPage) {
       const now = getTimestamp();
@@ -3604,22 +3620,23 @@ export const createNode = mutation({
       parentNodeId,
       args.afterNodeId ?? null,
     );
+    const text = args.text?.trim() || "";
+    const kind = normalizeNodeKindForText(text, args.kind);
 
     const nodeId = await ctx.db.insert("nodes", {
       pageId: args.pageId,
       parentNodeId,
       position,
-      text: args.text?.trim() || "",
-      kind: args.kind ?? "note",
-      taskStatus: args.kind === "task" ? (args.taskStatus ?? "todo") : null,
+      text,
+      kind,
+      taskStatus: normalizeTaskStatusForKind(kind, args.taskStatus),
       priority: null,
-      dueAt: args.kind === "task" ? (args.dueAt ?? null) : null,
-      dueEndAt: args.kind === "task" ? (args.dueEndAt ?? null) : null,
+      dueAt: kind === "task" ? (args.dueAt ?? null) : null,
+      dueEndAt: kind === "task" ? (args.dueEndAt ?? null) : null,
       archived: false,
       sourceMeta: {
         sourceType: "manual",
-        recurrenceFrequency:
-          args.kind === "task" ? (args.recurrenceFrequency ?? null) : null,
+        recurrenceFrequency: kind === "task" ? (args.recurrenceFrequency ?? null) : null,
       },
       createdAt: now,
       updatedAt: now,
@@ -3668,27 +3685,28 @@ export const createNodesBatch = mutation({
         parentNodeId,
         afterNodeId,
       );
+      const text = entry.text?.trim() || "";
+      const kind = normalizeNodeKindForText(text, entry.kind);
 
       const nodeId = await ctx.db.insert("nodes", {
         pageId: args.pageId,
         parentNodeId,
         position,
-        text: entry.text?.trim() || "",
-        kind: entry.kind ?? "note",
-        taskStatus: entry.kind === "task" ? (entry.taskStatus ?? "todo") : null,
+        text,
+        kind,
+        taskStatus: normalizeTaskStatusForKind(kind, entry.taskStatus),
         priority: null,
-        dueAt: entry.kind === "task" ? (entry.dueAt ?? null) : null,
-        dueEndAt: entry.kind === "task" ? (entry.dueEndAt ?? null) : null,
+        dueAt: kind === "task" ? (entry.dueAt ?? null) : null,
+        dueEndAt: kind === "task" ? (entry.dueEndAt ?? null) : null,
         archived: false,
         sourceMeta: {
           sourceType: "manual",
           taskKindLocked: entry.lockKind ?? false,
           noteCompleted:
-            entry.kind === "note"
+            kind === "note"
               ? (entry.noteCompleted ?? false)
               : false,
-          recurrenceFrequency:
-            entry.kind === "task" ? (entry.recurrenceFrequency ?? null) : null,
+          recurrenceFrequency: kind === "task" ? (entry.recurrenceFrequency ?? null) : null,
         },
         createdAt: now,
         updatedAt: now,
@@ -3739,14 +3757,24 @@ export const updateNode = mutation({
     const patch: Partial<Doc<"nodes">> = {
       updatedAt: getTimestamp(),
     };
+    const nextText = args.text !== undefined ? args.text : node.text;
+    const nextKind = normalizeNodeKindForText(
+      nextText,
+      args.kind !== undefined ? args.kind : node.kind,
+    );
+    const isSeparatorNote = isSeparatorLineText(nextText);
 
     if (args.text !== undefined) {
       patch.text = args.text;
     }
 
-    if (args.kind !== undefined) {
-      patch.kind = args.kind;
-      patch.taskStatus = args.kind === "task" ? (args.taskStatus ?? node.taskStatus ?? "todo") : null;
+    if (args.kind !== undefined || (args.text !== undefined && nextKind !== node.kind)) {
+      patch.kind = nextKind;
+      patch.taskStatus = normalizeTaskStatusForKind(
+        nextKind,
+        args.taskStatus,
+        node.taskStatus,
+      );
     } else if (args.taskStatus !== undefined) {
       patch.taskStatus = args.taskStatus;
     }
@@ -3763,11 +3791,20 @@ export const updateNode = mutation({
       patch.dueEndAt = args.dueEndAt;
     }
 
+    if (isSeparatorNote) {
+      patch.kind = "note";
+      patch.taskStatus = null;
+      patch.priority = null;
+      patch.dueAt = null;
+      patch.dueEndAt = null;
+    }
+
     if (
       args.lockKind !== undefined ||
       args.noteCompleted !== undefined ||
       args.kind !== undefined ||
-      args.recurrenceFrequency !== undefined
+      args.recurrenceFrequency !== undefined ||
+      isSeparatorNote
     ) {
       const sourceMeta =
         node.sourceMeta && typeof node.sourceMeta === "object"
@@ -3778,15 +3815,19 @@ export const updateNode = mutation({
         sourceMeta.taskKindLocked = args.lockKind;
       }
 
-      if (args.noteCompleted !== undefined) {
+      if (isSeparatorNote) {
+        sourceMeta.noteCompleted = false;
+      } else if (args.noteCompleted !== undefined) {
         sourceMeta.noteCompleted = args.noteCompleted;
-      } else if (args.kind === "task") {
+      } else if (nextKind === "task" && args.kind !== undefined) {
         sourceMeta.noteCompleted = false;
       }
 
-      if (args.recurrenceFrequency !== undefined) {
+      if (isSeparatorNote) {
+        sourceMeta.recurrenceFrequency = null;
+      } else if (args.recurrenceFrequency !== undefined) {
         sourceMeta.recurrenceFrequency = args.recurrenceFrequency;
-      } else if (args.kind === "note") {
+      } else if (nextKind === "note" && args.kind !== undefined) {
         sourceMeta.recurrenceFrequency = null;
       }
 
@@ -3838,17 +3879,24 @@ export const updateNodesBatch = mutation({
       const patch: Partial<Doc<"nodes">> = {
         updatedAt: getTimestamp(),
       };
+      const nextText = update.text !== undefined ? update.text : node.text;
+      const nextKind = normalizeNodeKindForText(
+        nextText,
+        update.kind !== undefined ? update.kind : node.kind,
+      );
+      const isSeparatorNote = isSeparatorLineText(nextText);
 
       if (update.text !== undefined) {
         patch.text = update.text;
       }
 
-      if (update.kind !== undefined) {
-        patch.kind = update.kind;
-        patch.taskStatus =
-          update.kind === "task"
-            ? (update.taskStatus ?? node.taskStatus ?? "todo")
-            : null;
+      if (update.kind !== undefined || (update.text !== undefined && nextKind !== node.kind)) {
+        patch.kind = nextKind;
+        patch.taskStatus = normalizeTaskStatusForKind(
+          nextKind,
+          update.taskStatus,
+          node.taskStatus,
+        );
       } else if (update.taskStatus !== undefined) {
         patch.taskStatus = update.taskStatus;
       }
@@ -3865,11 +3913,20 @@ export const updateNodesBatch = mutation({
         patch.dueEndAt = update.dueEndAt;
       }
 
+      if (isSeparatorNote) {
+        patch.kind = "note";
+        patch.taskStatus = null;
+        patch.priority = null;
+        patch.dueAt = null;
+        patch.dueEndAt = null;
+      }
+
       if (
         update.lockKind !== undefined ||
         update.noteCompleted !== undefined ||
         update.kind !== undefined ||
-        update.recurrenceFrequency !== undefined
+        update.recurrenceFrequency !== undefined ||
+        isSeparatorNote
       ) {
         const sourceMeta =
           node.sourceMeta && typeof node.sourceMeta === "object"
@@ -3880,15 +3937,19 @@ export const updateNodesBatch = mutation({
           sourceMeta.taskKindLocked = update.lockKind;
         }
 
-        if (update.noteCompleted !== undefined) {
+        if (isSeparatorNote) {
+          sourceMeta.noteCompleted = false;
+        } else if (update.noteCompleted !== undefined) {
           sourceMeta.noteCompleted = update.noteCompleted;
-        } else if (update.kind === "task") {
+        } else if (nextKind === "task" && update.kind !== undefined) {
           sourceMeta.noteCompleted = false;
         }
 
-        if (update.recurrenceFrequency !== undefined) {
+        if (isSeparatorNote) {
+          sourceMeta.recurrenceFrequency = null;
+        } else if (update.recurrenceFrequency !== undefined) {
           sourceMeta.recurrenceFrequency = update.recurrenceFrequency;
-        } else if (update.kind === "note") {
+        } else if (nextKind === "note" && update.kind !== undefined) {
           sourceMeta.recurrenceFrequency = null;
         }
 
@@ -3945,15 +4006,17 @@ export const insertNodeAbove = mutation({
       node.parentNodeId,
       previousSibling?._id ?? null,
     );
+    const insertedText = args.insertedText.trim();
+    const insertedKind = normalizeNodeKindForText(insertedText, args.insertedKind);
+    const shiftedKind = normalizeNodeKindForText(args.shiftedText, args.shiftedKind);
 
     const insertedNodeId = await ctx.db.insert("nodes", {
       pageId: node.pageId,
       parentNodeId: node.parentNodeId,
       position: insertedPosition,
-      text: args.insertedText.trim(),
-      kind: args.insertedKind,
-      taskStatus:
-        args.insertedKind === "task" ? (args.insertedTaskStatus ?? "todo") : null,
+      text: insertedText,
+      kind: insertedKind,
+      taskStatus: normalizeTaskStatusForKind(insertedKind, args.insertedTaskStatus),
       priority: null,
       dueAt: null,
       dueEndAt: null,
@@ -3973,22 +4036,22 @@ export const insertNodeAbove = mutation({
         ? { ...(node.sourceMeta as Record<string, unknown>) }
         : {};
     nextSourceMeta.noteCompleted =
-      args.shiftedKind === "note"
+      shiftedKind === "note"
         ? Boolean((node.sourceMeta as Record<string, unknown> | null | undefined)?.noteCompleted)
         : false;
     nextSourceMeta.recurrenceFrequency =
-      args.shiftedKind === "task"
+      shiftedKind === "task"
         ? ((node.sourceMeta as Record<string, unknown> | null | undefined)
             ?.recurrenceFrequency ?? null)
         : null;
 
     await ctx.db.patch(args.nodeId, {
       text: args.shiftedText,
-      kind: args.shiftedKind,
-      taskStatus:
-        args.shiftedKind === "task" ? (args.shiftedTaskStatus ?? "todo") : null,
-      dueAt: args.shiftedKind === "task" ? (node.dueAt ?? null) : null,
-      dueEndAt: args.shiftedKind === "task" ? (node.dueEndAt ?? null) : null,
+      kind: shiftedKind,
+      taskStatus: normalizeTaskStatusForKind(shiftedKind, args.shiftedTaskStatus, node.taskStatus),
+      priority: isSeparatorLineText(args.shiftedText) ? null : node.priority,
+      dueAt: shiftedKind === "task" ? (node.dueAt ?? null) : null,
+      dueEndAt: shiftedKind === "task" ? (node.dueEndAt ?? null) : null,
       sourceMeta: nextSourceMeta,
       updatedAt: now,
     });
@@ -4033,10 +4096,24 @@ export const splitNode = mutation({
     }
 
     const now = getTimestamp();
+    const headKind = normalizeNodeKindForText(args.headText, args.headKind);
+    const tailKind = normalizeNodeKindForText(args.tailText, args.tailKind);
+    const headSourceMeta = {
+      ...getNodeSourceMeta(node),
+      noteCompleted: headKind === "note" && !isSeparatorLineText(args.headText)
+        ? getNodeSourceMeta(node).noteCompleted === true
+        : false,
+      recurrenceFrequency:
+        headKind === "task" ? getNodeSourceMeta(node).recurrenceFrequency ?? null : null,
+    };
     await ctx.db.patch(args.nodeId, {
       text: args.headText,
-      kind: args.headKind,
-      taskStatus: args.headKind === "task" ? (args.headTaskStatus ?? "todo") : null,
+      kind: headKind,
+      taskStatus: normalizeTaskStatusForKind(headKind, args.headTaskStatus, node.taskStatus),
+      priority: isSeparatorLineText(args.headText) ? null : node.priority,
+      dueAt: headKind === "task" ? (node.dueAt ?? null) : null,
+      dueEndAt: headKind === "task" ? (node.dueEndAt ?? null) : null,
+      sourceMeta: headSourceMeta,
       updatedAt: now,
     });
 
@@ -4052,13 +4129,16 @@ export const splitNode = mutation({
       parentNodeId: node.parentNodeId,
       position,
       text: args.tailText,
-      kind: args.tailKind,
-      taskStatus: args.tailKind === "task" ? (args.tailTaskStatus ?? "todo") : null,
+      kind: tailKind,
+      taskStatus: normalizeTaskStatusForKind(tailKind, args.tailTaskStatus),
       priority: null,
       dueAt: null,
+      dueEndAt: null,
       archived: false,
       sourceMeta: {
         sourceType: "manual",
+        noteCompleted: false,
+        recurrenceFrequency: null,
       },
       createdAt: now,
       updatedAt: now,
@@ -4109,16 +4189,33 @@ export const replaceNodeAndInsertSiblings = mutation({
     }
 
     const now = getTimestamp();
+    const text = args.text.trim();
+    const kind = normalizeNodeKindForText(text, args.kind);
+    const nextSourceMeta = {
+      ...getNodeSourceMeta(node),
+      noteCompleted:
+        kind === "note" && !isSeparatorLineText(text)
+          ? getNodeSourceMeta(node).noteCompleted === true
+          : false,
+      recurrenceFrequency:
+        kind === "task" ? getNodeSourceMeta(node).recurrenceFrequency ?? null : null,
+    };
     await ctx.db.patch(args.nodeId, {
-      text: args.text.trim(),
-      kind: args.kind,
-      taskStatus: args.kind === "task" ? (args.taskStatus ?? "todo") : null,
+      text,
+      kind,
+      taskStatus: normalizeTaskStatusForKind(kind, args.taskStatus, node.taskStatus),
+      priority: isSeparatorLineText(text) ? null : node.priority,
+      dueAt: kind === "task" ? (node.dueAt ?? null) : null,
+      dueEndAt: kind === "task" ? (node.dueEndAt ?? null) : null,
+      sourceMeta: nextSourceMeta,
       updatedAt: now,
     });
 
     const createdNodes: Doc<"nodes">[] = [];
     let afterNodeId: Id<"nodes"> | null = node._id;
     for (const sibling of args.siblings) {
+      const siblingText = sibling.text.trim();
+      const siblingKind = normalizeNodeKindForText(siblingText, sibling.kind);
       const position = await computeNodePosition(
         ctx.db,
         node.pageId,
@@ -4129,14 +4226,17 @@ export const replaceNodeAndInsertSiblings = mutation({
         pageId: node.pageId,
         parentNodeId: node.parentNodeId,
         position,
-        text: sibling.text.trim(),
-        kind: sibling.kind,
-        taskStatus: sibling.kind === "task" ? (sibling.taskStatus ?? "todo") : null,
+        text: siblingText,
+        kind: siblingKind,
+        taskStatus: normalizeTaskStatusForKind(siblingKind, sibling.taskStatus),
         priority: null,
         dueAt: null,
+        dueEndAt: null,
         archived: false,
         sourceMeta: {
           sourceType: "manual",
+          noteCompleted: false,
+          recurrenceFrequency: null,
         },
         createdAt: now,
         updatedAt: now,

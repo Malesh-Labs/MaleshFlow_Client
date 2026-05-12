@@ -39,6 +39,7 @@ import {
 } from "@/lib/domain/aiPrompts";
 import {
   cycleHeadingSyntax,
+  isSeparatorLineText,
   parseHeadingSyntax,
   stripHeadingSyntaxMarkers,
 } from "@/lib/domain/displaySyntax";
@@ -2419,6 +2420,15 @@ function parseNodeDraft(draft: string) {
         };
   }
 
+  if (isSeparatorLineText(content)) {
+    return {
+      shouldDelete: false as const,
+      text: trimmed,
+      kind: "note" as const,
+      taskStatus: null,
+    };
+  }
+
   return {
     shouldDelete: false as const,
     text: trimmed,
@@ -2471,6 +2481,15 @@ function parseNodeDraftWithFallback(
         };
   }
 
+  if (isSeparatorLineText(content)) {
+    return {
+      shouldDelete: false as const,
+      text: trimmed,
+      kind: "note" as const,
+      taskStatus: null,
+    };
+  }
+
   return {
     shouldDelete: false as const,
     text: trimmed,
@@ -2507,6 +2526,14 @@ function parseSplitSegmentDraft(
       text: `${dimPrefix}${todoMatch[1] ?? ""}`,
       kind: "task" as const,
       taskStatus: "todo" as const,
+    };
+  }
+
+  if (isSeparatorLineText(content)) {
+    return {
+      text: draft,
+      kind: "note" as const,
+      taskStatus: null,
     };
   }
 
@@ -13601,7 +13628,7 @@ function OutlineNodeEditor({
   const nextSibling = siblings[siblingIndex + 1] ?? null;
   const normalizedDraft = draft.trim();
   const isVisualEmptyLine = normalizedDraft === ".";
-  const isVisualSeparatorLine = normalizedDraft === "---";
+  const isVisualSeparatorLine = isSeparatorLineText(normalizedDraft);
   const isDimmedLine = isDimmedSyntaxLine(draft);
   const syntaxDisplayDraft = useMemo(
     () => (isDimmedLine ? stripDimmedSyntaxPrefix(draft) : draft),

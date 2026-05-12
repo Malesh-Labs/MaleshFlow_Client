@@ -10,6 +10,10 @@ export type ParsedHeadingSyntax =
 
 const HEADING_SYNTAX_PATTERN = /^(#{1,3})\s+(.+)$/;
 
+export function isSeparatorLineText(value: string) {
+  return value.trim() === "---";
+}
+
 export function parseHeadingSyntax(value: string): ParsedHeadingSyntax {
   const match = value.match(HEADING_SYNTAX_PATTERN);
   if (!match) {
