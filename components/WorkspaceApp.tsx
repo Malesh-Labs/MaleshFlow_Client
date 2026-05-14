@@ -1,6 +1,7 @@
 "use client";
 
 import clsx from "clsx";
+import JSZip from "jszip";
 import {
   useAction,
   useConvex,
@@ -83,12 +84,14 @@ import {
   applyOptimisticNodeCreates,
   applyOptimisticNodeBatchUpdates,
   applyOptimisticNodeChildrenLinkAutocompleteHidden,
+  applyOptimisticNodeDataDumpExcluded,
   applyOptimisticNodeMoves,
   applyOptimisticPlannerTaskCompletion,
   applyOptimisticTaskPageTaskCompletion,
   applyOptimisticNodeSplit,
   applyOptimisticNodeTreeArchive,
   applyOptimisticNodeUpdate,
+  applyOptimisticPageDataDumpExcluded,
   applyOptimisticPageRename,
   applyOptimisticPlannerScanExcluded,
 } from "@/lib/domain/optimisticWorkspace";
@@ -315,6 +318,20 @@ type ActionPaletteResult = {
   disabled?: boolean;
   onSelect: () => void | Promise<void>;
 };
+type DataDumpExportBundle = {
+  files: Array<{
+    path: string;
+    content: string;
+  }>;
+  legacyFiles: Array<{
+    path: string;
+    fileName: string;
+    filePath: string;
+    mimeType: string | null;
+    size: number;
+    downloadUrl: string | null;
+  }>;
+};
 type PendingPalettePageAction =
   | {
       kind: "moveNodes";
@@ -497,11 +514,17 @@ type SetPlannerScanExcludedArgs = Parameters<
 type SetTaskPageDoneArchiveEnabledArgs = Parameters<
   ReturnType<typeof useMutation<typeof api.workspace.setTaskPageDoneArchiveEnabled>>
 >[0];
+type SetPageDataDumpExcludedArgs = Parameters<
+  ReturnType<typeof useMutation<typeof api.workspace.setPageDataDumpExcluded>>
+>[0];
 type SetSidebarFavoriteArgs = Parameters<
   ReturnType<typeof useMutation<typeof api.workspace.setSidebarFavorite>>
 >[0];
 type SetNodeChildrenLinkAutocompleteHiddenArgs = Parameters<
   ReturnType<typeof useMutation<typeof api.workspace.setNodeChildrenLinkAutocompleteHidden>>
+>[0];
+type SetNodeDataDumpExcludedArgs = Parameters<
+  ReturnType<typeof useMutation<typeof api.workspace.setNodeDataDumpExcluded>>
 >[0];
 type UpdateNodeArgs = Parameters<ReturnType<typeof useMutation<typeof api.workspace.updateNode>>>[0];
 type UpdateNodesBatchArgs = Parameters<
@@ -1014,6 +1037,36 @@ async function copyTextToClipboard(text: string) {
     document.execCommand("copy");
     document.body.removeChild(textarea);
   }
+}
+
+function getLocalDateStamp(date = new Date()) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function assertSafeZipPath(path: string) {
+  const segments = path.split("/");
+  if (
+    path.trim().length === 0 ||
+    path.startsWith("/") ||
+    path.includes("\\") ||
+    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
+  ) {
+    throw new Error(`Unsafe export path: ${path}`);
+  }
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function flattenTreeNodes(nodes: TreeNode[], collapsedNodeIds?: Set<string>): TreeNode[] {
@@ -2968,6 +3021,7 @@ function ConfiguredWorkspace({
   const [isGeneratingJournalFeedback, setIsGeneratingJournalFeedback] = useState(false);
   const [isRebuildingEmbeddings, setIsRebuildingEmbeddings] = useState(false);
   const [isPreparingTaskCalendarFeed, setIsPreparingTaskCalendarFeed] = useState(false);
+  const [isExportingDataDump, setIsExportingDataDump] = useState(false);
   const [isRefreshingSidebarLinks, setIsRefreshingSidebarLinks] = useState(false);
   const [isPlannerAppendingDay, setIsPlannerAppendingDay] = useState(false);
   const [isPlannerCompletingDay, setIsPlannerCompletingDay] = useState(false);
@@ -3236,6 +3290,7 @@ function ConfiguredWorkspace({
   const setTaskPageDoneArchiveEnabledRaw = useMutation(
     api.workspace.setTaskPageDoneArchiveEnabled,
   );
+  const setPageDataDumpExcludedRaw = useMutation(api.workspace.setPageDataDumpExcluded);
   const completeTaskPageTaskRaw = useMutation(api.workspace.completeTaskPageTask);
   const setModelPageCustomPrompt = useMutation(api.workspace.setModelPageCustomPrompt);
   const setWorkspaceInbox = useMutation(api.workspace.setWorkspaceInbox);
@@ -3245,6 +3300,7 @@ function ConfiguredWorkspace({
   const setNodeChildrenLinkAutocompleteHiddenRaw = useMutation(
     api.workspace.setNodeChildrenLinkAutocompleteHidden,
   );
+  const setNodeDataDumpExcludedRaw = useMutation(api.workspace.setNodeDataDumpExcluded);
   const mergePinnedPagesInAllSidebar = useMutation(api.workspace.mergePinnedPagesInAllSidebar);
   const deletePageForever = useMutation(api.workspace.deletePageForever);
   const rebuildEmbeddings = useMutation(api.workspace.rebuildEmbeddings);
@@ -3272,6 +3328,11 @@ function ConfiguredWorkspace({
       applyOptimisticPlannerScanExcluded(localStore, args);
     },
   );
+  const setPageDataDumpExcludedMutation = setPageDataDumpExcludedRaw.withOptimisticUpdate(
+    (localStore, args) => {
+      applyOptimisticPageDataDumpExcluded(localStore, args);
+    },
+  );
   const completeTaskPageTaskMutation = completeTaskPageTaskRaw.withOptimisticUpdate(
     (localStore, args) => {
       applyOptimisticTaskPageTaskCompletion(localStore, args);
@@ -3284,6 +3345,11 @@ function ConfiguredWorkspace({
     setNodeChildrenLinkAutocompleteHiddenRaw.withOptimisticUpdate((localStore, args) => {
       applyOptimisticNodeChildrenLinkAutocompleteHidden(localStore, args);
     });
+  const setNodeDataDumpExcludedMutation = setNodeDataDumpExcludedRaw.withOptimisticUpdate(
+    (localStore, args) => {
+      applyOptimisticNodeDataDumpExcluded(localStore, args);
+    },
+  );
   const updateNodesBatchMutation = updateNodesBatchRaw.withOptimisticUpdate(
     (localStore, args) => {
       applyOptimisticNodeBatchUpdates(localStore, args);
@@ -3362,6 +3428,15 @@ function ConfiguredWorkspace({
       ),
     [runTrackedMutation, setTaskPageDoneArchiveEnabledRaw],
   );
+  const setPageDataDumpExcluded = useCallback(
+    (args: SetPageDataDumpExcludedArgs) =>
+      runTrackedMutation(
+        () => setPageDataDumpExcludedMutation(args),
+        { pageIds: [args.pageId] },
+        "Could not update data dump settings.",
+      ),
+    [runTrackedMutation, setPageDataDumpExcludedMutation],
+  );
   const setSidebarFavorite = useCallback(
     (args: SetSidebarFavoriteArgs) =>
       runTrackedMutation(
@@ -3382,6 +3457,15 @@ function ConfiguredWorkspace({
         "Could not update link autocomplete settings.",
       ),
     [runTrackedMutation, setNodeChildrenLinkAutocompleteHiddenMutation],
+  );
+  const setNodeDataDumpExcluded = useCallback(
+    (args: SetNodeDataDumpExcludedArgs) =>
+      runTrackedMutation(
+        () => setNodeDataDumpExcludedMutation(args),
+        { nodeIds: args.nodeIds },
+        "Could not update data dump settings.",
+      ),
+    [runTrackedMutation, setNodeDataDumpExcludedMutation],
   );
   const updateNode = useCallback(
     (args: UpdateNodeArgs) =>
@@ -3538,6 +3622,7 @@ function ConfiguredWorkspace({
   const findNodesText = useAction(api.ai.findNodesText);
   const searchNodes = useAction(api.ai.searchNodes);
   const chatWithWorkspace = useAction(api.ai.chatWithWorkspace);
+  const exportDataDump = useAction(api.importExport.exportDataDump);
   const pageTitleInputRef = useRef<HTMLInputElement>(null);
   const pageTitleDraftRef = useRef(pageTitleDraft);
   const paletteInputRef = useRef<HTMLInputElement>(null);
@@ -3740,6 +3825,8 @@ function ConfiguredWorkspace({
       : null;
   const isSelectedPageExcludedFromPlannerScan =
     selectedPageSourceMeta?.excludeFromPlannerScan === true;
+  const isSelectedPageExcludedFromDataDump =
+    selectedPageSourceMeta?.excludeFromDataDump === true;
   const isSelectedPageDoneArchiveEnabled =
     selectedPageSourceMeta?.archiveCompletedRootTasksToDone === true;
   const pageTitleEditorId = selectedPage ? getPageTitleEditorId(selectedPage._id) : null;
@@ -5667,6 +5754,46 @@ function ConfiguredWorkspace({
     }
   }, [ensureTaskCalendarFeed, ownerKey]);
 
+  const handleExportDataDump = useCallback(async () => {
+    setIsExportingDataDump(true);
+    try {
+      const bundle = (await exportDataDump({ ownerKey })) as DataDumpExportBundle;
+      const zip = new JSZip();
+
+      for (const file of bundle.files) {
+        assertSafeZipPath(file.path);
+        zip.file(file.path, file.content);
+      }
+
+      for (const legacyFile of bundle.legacyFiles) {
+        assertSafeZipPath(legacyFile.path);
+        if (!legacyFile.downloadUrl) {
+          throw new Error(`Could not export legacy file: ${legacyFile.filePath}`);
+        }
+
+        const response = await fetch(legacyFile.downloadUrl);
+        if (!response.ok) {
+          throw new Error(`Could not fetch legacy file: ${legacyFile.filePath}`);
+        }
+
+        zip.file(legacyFile.path, await response.blob());
+      }
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      downloadBlob(zipBlob, `malesh-flow-data-dump-${getLocalDateStamp()}.zip`);
+      setCopySnackbarMessage(
+        `Exported data dump with ${bundle.files.length} markdown/json file${bundle.files.length === 1 ? "" : "s"} and ${bundle.legacyFiles.length} legacy file${bundle.legacyFiles.length === 1 ? "" : "s"}.`,
+      );
+      setPaletteOpen(false);
+    } catch (error) {
+      setCopySnackbarMessage(
+        error instanceof Error ? error.message : "Could not export the data dump.",
+      );
+    } finally {
+      setIsExportingDataDump(false);
+    }
+  }, [exportDataDump, ownerKey]);
+
   const handleRefreshSidebarLinks = async () => {
     setIsRefreshingSidebarLinks(true);
     try {
@@ -5909,11 +6036,49 @@ function ConfiguredWorkspace({
     });
   }, [history, noteDateTargetNode, ownerKey, updateNode]);
 
+  const handleToggleSelectedPageDataDumpExcluded = useCallback(async () => {
+    if (!selectedPage || isSidebarSpecialPage(selectedPage)) {
+      return;
+    }
+
+    const nextExcluded = !isSelectedPageExcludedFromDataDump;
+    try {
+      await setPageDataDumpExcluded({
+        ownerKey,
+        pageId: selectedPage._id,
+        excluded: nextExcluded,
+      });
+      setCopySnackbarMessage(
+        nextExcluded
+          ? "Excluded this page from data dumps"
+          : "Included this page in data dumps",
+      );
+    } catch (error) {
+      setCopySnackbarMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not update data dump settings.",
+      );
+    }
+  }, [
+    isSelectedPageExcludedFromDataDump,
+    ownerKey,
+    selectedPage,
+    setPageDataDumpExcluded,
+  ]);
+
   const actionResults = useMemo(() => {
     const favoriteContextPage = favoriteTargetPage;
     const favoriteContextNode = favoriteTargetNode;
     const linkAutocompleteContextNode = favoriteTargetNode;
     const moveTargetRootNodeIds = getActionContextRootNodeIds();
+    const dataDumpTargetRootNodeIds = getActionContextRootNodeIds();
+    const dataDumpTargetNodes = dataDumpTargetRootNodeIds
+      .map((nodeId) => workspaceNodeMap.get(nodeId) ?? null)
+      .filter((node): node is Doc<"nodes"> => node !== null && !isOptimisticNodeId(node._id));
+    const areDataDumpTargetsExcluded =
+      dataDumpTargetNodes.length > 0 &&
+      dataDumpTargetNodes.every((node) => getNodeMeta(node).excludeFromDataDump === true);
     const isFavoriteContextNode =
       favoriteContextNode !== null &&
       favoritedNodeIds.has(favoriteContextNode._id as string);
@@ -5947,6 +6112,27 @@ function ConfiguredWorkspace({
         actionLabel: isCreatingPlannerPage ? "Creating…" : "Create",
         disabled: isCreatingPlannerPage,
         onSelect: () => void handleCreatePlannerPage(),
+      },
+      {
+        key: "export-data-dump",
+        title: isExportingDataDump ? "Exporting Data Dump..." : "Export Data Dump",
+        subtitle:
+          "Download pages, archived content, workspace text boxes, legacy files, and a manifest as a ZIP.",
+        keywords: [
+          "export",
+          "data",
+          "dump",
+          "download",
+          "backup",
+          "markdown",
+          "legacy",
+          "journal",
+        ],
+        actionLabel: isExportingDataDump ? "Exporting..." : "Export",
+        disabled: isExportingDataDump,
+        onSelect: () => {
+          void handleExportDataDump();
+        },
       },
       {
         key: "toggle-favorite",
@@ -6010,6 +6196,77 @@ function ConfiguredWorkspace({
               })
               .catch(() => undefined);
           }
+        },
+      },
+      {
+        key: "toggle-page-data-dump",
+        title: isSelectedPageExcludedFromDataDump
+          ? "Include Page In Data Dump"
+          : "Exclude Page From Data Dump",
+        subtitle: selectedPage
+          ? `${selectedPage.title} • Page export setting`
+          : "Open a page first.",
+        keywords: [
+          "export",
+          "data",
+          "dump",
+          "exclude",
+          "include",
+          "page",
+          "backup",
+        ],
+        actionLabel: selectedPage
+          ? isSelectedPageExcludedFromDataDump
+            ? "Include"
+            : "Exclude"
+          : "Select",
+        disabled: selectedPage === null || isSidebarSpecialPage(selectedPage),
+        onSelect: () => {
+          void handleToggleSelectedPageDataDumpExcluded();
+        },
+      },
+      {
+        key: "toggle-item-data-dump",
+        title: areDataDumpTargetsExcluded
+          ? "Include Item In Data Dump"
+          : "Exclude Item From Data Dump",
+        subtitle:
+          dataDumpTargetNodes.length === 1
+            ? `${dataDumpTargetNodes[0]!.text || "(empty item)"} • Excludes or includes its subtree`
+            : dataDumpTargetNodes.length > 1
+              ? `${dataDumpTargetNodes.length} highlighted items • Excludes or includes each subtree`
+              : "Highlight an item, or open Actions while your caret is inside one.",
+        keywords: [
+          "export",
+          "data",
+          "dump",
+          "exclude",
+          "include",
+          "item",
+          "node",
+          "backup",
+        ],
+        actionLabel:
+          dataDumpTargetNodes.length > 0
+            ? areDataDumpTargetsExcluded
+              ? "Include"
+              : "Exclude"
+            : "Select",
+        disabled: dataDumpTargetNodes.length === 0,
+        onSelect: () => {
+          if (!ownerKey || dataDumpTargetNodes.length === 0) {
+            return;
+          }
+
+          void setNodeDataDumpExcluded({
+            ownerKey,
+            nodeIds: dataDumpTargetNodes.map((node) => node._id as Id<"nodes">),
+            excluded: !areDataDumpTargetsExcluded,
+          })
+            .then(() => {
+              setPaletteOpen(false);
+            })
+            .catch(() => undefined);
         },
       },
       {
@@ -6273,8 +6530,10 @@ function ConfiguredWorkspace({
     handleCreatePage,
     handleCreatePlannerPage,
     handleCopyTaskCalendarFeed,
+    handleExportDataDump,
     handleRebuildEmbeddings,
     handleResetLocalState,
+    handleToggleSelectedPageDataDumpExcluded,
     favoriteTargetNode,
     favoriteTargetPage,
     favoritedNodeIds,
@@ -6282,8 +6541,10 @@ function ConfiguredWorkspace({
     getActionContextRootNodeIds,
     isCreatingPage,
     isCreatingPlannerPage,
+    isExportingDataDump,
     isPreparingTaskCalendarFeed,
     isRebuildingEmbeddings,
+    isSelectedPageExcludedFromDataDump,
     noteDateSummary,
     noteDateTargetNode,
     ownerKey,
@@ -6292,11 +6553,13 @@ function ConfiguredWorkspace({
     paletteQuery,
     setOwnerKey,
     setNodeChildrenLinkAutocompleteHidden,
+    setNodeDataDumpExcluded,
     setSidebarFavorite,
     switchPaletteMode,
     taskScheduleSummary,
     taskScheduleTargetNode,
     selectedPage,
+    workspaceNodeMap,
   ]);
 
   const activePaletteResultsCount =
@@ -10207,6 +10470,16 @@ function ConfiguredWorkspace({
                           Archived
                         </span>
                       ) : null}
+                      {isSelectedPageExcludedFromDataDump ? (
+                        <button
+                          type="button"
+                          onClick={() => void handleToggleSelectedPageDataDumpExcluded()}
+                          className="rounded-full border border-[var(--workspace-brand)] px-2 py-1 text-[10px] tracking-[0.2em] text-[var(--workspace-brand)] transition hover:bg-[var(--workspace-brand)] hover:text-[var(--workspace-inverse-text)]"
+                          title="Include this page in future data dumps"
+                        >
+                          Dump Excluded
+                        </button>
+                      ) : null}
                     </div>
                     <input
                       ref={pageTitleInputRef}
@@ -13606,6 +13879,7 @@ function OutlineNodeEditor({
   const isTaskCompleted = node.kind === "task" && node.taskStatus === "done";
   const hidesChildrenFromLinkAutocomplete =
     nodeMeta.hideChildrenFromLinkAutocomplete === true;
+  const isExcludedFromDataDump = nodeMeta.excludeFromDataDump === true;
   const isCompleted = isTaskCompleted || isNoteCompleted;
   const isDimmedByCompletedAncestor = hasCompletedAncestorNode(node, nodeMap);
   const isLocked = nodeMeta.locked === true;
@@ -15817,6 +16091,17 @@ function OutlineNodeEditor({
                   : "items-start pt-[2px]",
             )}
           >
+            {isExcludedFromDataDump ? (
+              <span
+                role="img"
+                aria-label="Excluded from data dump"
+                title="Excluded from data dump"
+                className="relative mt-0.5 inline-flex h-4 w-4 flex-none items-center justify-center rounded-full border border-[var(--workspace-border)] text-[var(--workspace-text-faint)]"
+              >
+                <span className="absolute h-2 w-2 border border-current" />
+                <span className="absolute h-px w-3 rotate-45 bg-current" />
+              </span>
+            ) : null}
             {hidesChildrenFromLinkAutocomplete ? (
               <span
                 role="img"

@@ -64,6 +64,18 @@ export type OptimisticNodeChildrenLinkAutocompleteHiddenArgs = {
   hidden: boolean;
 };
 
+export type OptimisticPageDataDumpExcludedArgs = {
+  ownerKey: string;
+  pageId: Id<"pages">;
+  excluded: boolean;
+};
+
+export type OptimisticNodeDataDumpExcludedArgs = {
+  ownerKey: string;
+  nodeIds: Id<"nodes">[];
+  excluded: boolean;
+};
+
 export type OptimisticNodeMove = {
   nodeId: Id<"nodes">;
   pageId?: Id<"pages">;
@@ -622,6 +634,25 @@ export function applyOptimisticPagePinnedInAllSidebar(
   });
 }
 
+export function applyOptimisticPageDataDumpExcluded(
+  localStore: OptimisticLocalStore,
+  args: OptimisticPageDataDumpExcludedArgs,
+) {
+  patchPageInWorkspaceQueries(localStore, args.ownerKey, args.pageId, (page) => {
+    const sourceMeta = getSourceMeta(page);
+    if (args.excluded) {
+      sourceMeta.excludeFromDataDump = true;
+    } else {
+      delete sourceMeta.excludeFromDataDump;
+    }
+    return {
+      ...page,
+      sourceMeta,
+      updatedAt: getTimestamp(),
+    };
+  });
+}
+
 export function applyOptimisticNodeUpdate(
   localStore: OptimisticLocalStore,
   args: OptimisticNodeUpdateArgs,
@@ -657,6 +688,27 @@ export function applyOptimisticNodeChildrenLinkAutocompleteHidden(
       updatedAt: getTimestamp(),
     };
   });
+}
+
+export function applyOptimisticNodeDataDumpExcluded(
+  localStore: OptimisticLocalStore,
+  args: OptimisticNodeDataDumpExcludedArgs,
+) {
+  for (const nodeId of args.nodeIds) {
+    patchNodeInWorkspaceQueries(localStore, args.ownerKey, nodeId, (node) => {
+      const sourceMeta = getSourceMeta(node);
+      if (args.excluded) {
+        sourceMeta.excludeFromDataDump = true;
+      } else {
+        delete sourceMeta.excludeFromDataDump;
+      }
+      return {
+        ...node,
+        sourceMeta,
+        updatedAt: getTimestamp(),
+      };
+    });
+  }
 }
 
 export function applyOptimisticNodeMoves(

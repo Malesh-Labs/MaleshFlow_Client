@@ -60,6 +60,13 @@ import {
 } from "../lib/domain/migration";
 import { parseImportedTextToOutlineNodes } from "../lib/domain/importer";
 import { getEffectiveTaskDueDateRange } from "../lib/domain/planner";
+import {
+  buildDataDumpManifest,
+  buildUniqueDataDumpPath,
+  filterDataDumpNodes,
+  isDataDumpExcluded,
+  sanitizeDataDumpPathSegment,
+} from "../lib/domain/dataDump";
 
 test("extractLinks finds wiki links and node refs", () => {
   const links = extractLinks(
@@ -98,6 +105,100 @@ test("extractLinks finds wiki links and node refs", () => {
       targetUrl: "openai.com",
     },
   ]);
+});
+
+test("data dump exclusion flags are detected", () => {
+  assert.equal(
+    isDataDumpExcluded({ sourceMeta: { excludeFromDataDump: true } }),
+    true,
+  );
+  assert.equal(
+    isDataDumpExcluded({ sourceMeta: { excludeFromDataDump: false } }),
+    false,
+  );
+  assert.equal(isDataDumpExcluded({ sourceMeta: null }), false);
+});
+
+test("filterDataDumpNodes omits excluded nodes and descendants", () => {
+  const result = filterDataDumpNodes([
+    { _id: "root", parentNodeId: null },
+    { _id: "secret", parentNodeId: null, sourceMeta: { excludeFromDataDump: true } },
+    { _id: "secret-child", parentNodeId: "secret" },
+    { _id: "kept-sibling", parentNodeId: null },
+  ]);
+
+  assert.deepEqual(
+    result.nodes.map((node) => node._id),
+    ["root", "kept-sibling"],
+  );
+  assert.equal(result.excludedNodeCount, 2);
+  assert.equal(result.excludedNodeSubtreeCount, 1);
+  assert.deepEqual([...result.excludedRootIds], ["secret"]);
+});
+
+test("filterDataDumpNodes counts topmost excluded roots only", () => {
+  const result = filterDataDumpNodes([
+    { _id: "root", parentNodeId: null, sourceMeta: { excludeFromDataDump: true } },
+    { _id: "child", parentNodeId: "root", sourceMeta: { excludeFromDataDump: true } },
+    { _id: "grandchild", parentNodeId: "child" },
+  ]);
+
+  assert.deepEqual(result.nodes, []);
+  assert.equal(result.excludedNodeCount, 3);
+  assert.equal(result.excludedNodeSubtreeCount, 1);
+  assert.deepEqual([...result.excludedRootIds], ["root"]);
+});
+
+test("data dump paths are safe and unique", () => {
+  const usedPaths = new Set<string>();
+
+  assert.equal(sanitizeDataDumpPathSegment("../"), "untitled");
+  assert.equal(
+    buildUniqueDataDumpPath({
+      directory: ["pages", "..", "task/list"],
+      name: "../Today.md",
+      extension: "md",
+      usedPaths,
+    }),
+    "pages/folder/task-list/Today.md",
+  );
+  assert.equal(
+    buildUniqueDataDumpPath({
+      directory: ["pages", "..", "task/list"],
+      name: "../Today.md",
+      extension: "md",
+      usedPaths,
+    }),
+    "pages/folder/task-list/Today 2.md",
+  );
+});
+
+test("data dump manifest includes export and exclusion counts", () => {
+  assert.deepEqual(
+    buildDataDumpManifest({
+      generatedAt: "2026-05-13T00:00:00.000Z",
+      exportedPageCount: 2,
+      excludedPageCount: 1,
+      exportedArchivedNodeSubtreeCount: 3,
+      excludedNodeSubtreeCount: 4,
+      excludedNodeCount: 8,
+      legacyFileCount: 5,
+      contentFileCount: 7,
+    }),
+    {
+      version: 1,
+      generatedAt: "2026-05-13T00:00:00.000Z",
+      counts: {
+        exportedPages: 2,
+        excludedPages: 1,
+        exportedArchivedNodeSubtrees: 3,
+        excludedNodeSubtrees: 4,
+        excludedNodes: 8,
+        legacyFiles: 5,
+        contentFiles: 7,
+      },
+    },
+  );
 });
 
 test("extractLinks finds plain external urls without swallowing punctuation", () => {

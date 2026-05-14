@@ -3228,6 +3228,38 @@ export const setTaskPageDoneArchiveEnabled = mutation({
   },
 });
 
+export const setPageDataDumpExcluded = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+    excluded: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const page = await ctx.db.get(args.pageId);
+    if (!page || isSidebarSpecialPage(page) || isPagePendingDeletion(page)) {
+      throw new Error("Page not found.");
+    }
+
+    const sourceMeta = {
+      ...getPageSourceMeta(page),
+    };
+    if (args.excluded) {
+      sourceMeta.excludeFromDataDump = true;
+    } else {
+      delete sourceMeta.excludeFromDataDump;
+    }
+
+    await ctx.db.patch(args.pageId, {
+      sourceMeta,
+      updatedAt: getTimestamp(),
+    });
+
+    return args.excluded;
+  },
+});
+
 export const setNodeChildrenLinkAutocompleteHidden = mutation({
   args: {
     ownerKey: v.string(),
@@ -3257,6 +3289,50 @@ export const setNodeChildrenLinkAutocompleteHidden = mutation({
     });
 
     return args.hidden;
+  },
+});
+
+export const setNodeDataDumpExcluded = mutation({
+  args: {
+    ownerKey: v.string(),
+    nodeIds: v.array(v.id("nodes")),
+    excluded: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const uniqueNodeIds = [
+      ...new Set(args.nodeIds.map((nodeId) => nodeId as string)),
+    ] as Id<"nodes">[];
+    const now = getTimestamp();
+    let updatedCount = 0;
+
+    for (const nodeId of uniqueNodeIds) {
+      const node = await ctx.db.get(nodeId);
+      if (!node) {
+        throw new Error("Item not found.");
+      }
+
+      const sourceMeta = {
+        ...getNodeSourceMeta(node),
+      };
+      if (args.excluded) {
+        sourceMeta.excludeFromDataDump = true;
+      } else {
+        delete sourceMeta.excludeFromDataDump;
+      }
+
+      await ctx.db.patch(nodeId, {
+        sourceMeta,
+        updatedAt: now,
+      });
+      updatedCount += 1;
+    }
+
+    return {
+      updatedCount,
+      excluded: args.excluded,
+    };
   },
 });
 

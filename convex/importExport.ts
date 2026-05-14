@@ -15,6 +15,8 @@ const persistImportedPagesRef = internal.importExportData.persistImportedPages a
 const getImportSummaryRef = internal.importExportData.getImportSummary as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const buildExportBundleRef = internal.importExportData.buildExportBundle as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const buildDataDumpBundleRef = internal.importExportData.buildDataDumpBundle as any;
 
 export const importMarkdownBundle = action({
   args: {
@@ -71,5 +73,28 @@ export const exportWorkspace = action({
   handler: async (ctx, args): Promise<Array<{ path: string; content: string }>> => {
     assertOwnerKey(args.ownerKey);
     return await ctx.runQuery(buildExportBundleRef, {});
+  },
+});
+
+export const exportDataDump = action({
+  args: {
+    ownerKey: v.string(),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    files: Array<{ path: string; content: string }>;
+    legacyFiles: Array<{
+      path: string;
+      fileName: string;
+      filePath: string;
+      mimeType: string | null;
+      size: number;
+      downloadUrl: string | null;
+    }>;
+  }> => {
+    assertOwnerKey(args.ownerKey);
+    return await ctx.runQuery(buildDataDumpBundleRef, {});
   },
 });
