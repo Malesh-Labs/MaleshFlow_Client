@@ -60,6 +60,7 @@ import {
 } from "../lib/domain/migration";
 import { parseImportedTextToOutlineNodes } from "../lib/domain/importer";
 import { getEffectiveTaskDueDateRange } from "../lib/domain/planner";
+import { listEligiblePlannerSidebarSourceTasksFromNodes } from "../convex/lib/planner";
 import {
   buildDataDumpManifest,
   buildUniqueDataDumpPath,
@@ -724,6 +725,87 @@ test("getEffectiveTaskDueDateRange only uses the task item's own due date", () =
     dueAt: null,
     dueEndAt: null,
   });
+});
+
+test("planner sidebar dated tasks are eligible for matching planner days", () => {
+  const plannerDate = dateInputValueToTimestamp("2026-05-14");
+  const nextDate = dateInputValueToTimestamp("2026-05-15");
+  assert.ok(plannerDate);
+  assert.ok(nextDate);
+
+  const nodes = [
+    {
+      _id: "sidebar",
+      pageId: "planner",
+      parentNodeId: null,
+      position: 1024,
+      text: "Sidebar",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      dueEndAt: null,
+      archived: false,
+      sourceMeta: { sectionSlot: "plannerSidebar" },
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    {
+      _id: "dated-task",
+      pageId: "planner",
+      parentNodeId: "sidebar",
+      position: 1024,
+      text: "Dated sidebar task",
+      kind: "task",
+      taskStatus: "todo",
+      priority: null,
+      dueAt: plannerDate,
+      dueEndAt: null,
+      archived: false,
+      sourceMeta: { sourceType: "manual" },
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    {
+      _id: "tomorrow-task",
+      pageId: "planner",
+      parentNodeId: "sidebar",
+      position: 2048,
+      text: "Tomorrow sidebar task",
+      kind: "task",
+      taskStatus: "todo",
+      priority: null,
+      dueAt: nextDate,
+      dueEndAt: null,
+      archived: false,
+      sourceMeta: { sourceType: "manual" },
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    {
+      _id: "day-task",
+      pageId: "planner",
+      parentNodeId: null,
+      position: 3072,
+      text: "Existing day task",
+      kind: "task",
+      taskStatus: "todo",
+      priority: null,
+      dueAt: plannerDate,
+      dueEndAt: null,
+      archived: false,
+      sourceMeta: { sourceType: "manual" },
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  ];
+
+  assert.deepEqual(
+    listEligiblePlannerSidebarSourceTasksFromNodes(nodes as never, {
+      plannerDate,
+    }).map((node) => node._id),
+    ["dated-task"],
+  );
 });
 
 test("parseImportedTextToOutlineNodes converts due markers into real task schedule data", () => {

@@ -174,6 +174,30 @@ function buildNodeMap(nodes: Doc<"nodes">[]) {
   return new Map(nodes.map((node) => [node._id as string, node]));
 }
 
+function isNodeWithinRootSubtree(
+  node: Doc<"nodes">,
+  rootNodeId: Id<"nodes">,
+  nodeMap: Map<string, Doc<"nodes">>,
+) {
+  let currentNode: Doc<"nodes"> | null = node;
+  const visited = new Set<string>();
+
+  while (currentNode) {
+    if (currentNode._id === rootNodeId) {
+      return true;
+    }
+
+    const parentNodeId = currentNode.parentNodeId as string | null;
+    if (!parentNodeId || visited.has(parentNodeId)) {
+      break;
+    }
+    visited.add(parentNodeId);
+    currentNode = nodeMap.get(parentNodeId) ?? null;
+  }
+
+  return false;
+}
+
 function isPlannerNodeCompleted(node: Doc<"nodes">) {
   if (node.kind === "task") {
     return node.taskStatus === "done";
@@ -838,6 +862,67 @@ export async function listEligiblePlannerSourceTasks(
   });
 }
 
+export function listEligiblePlannerSidebarSourceTasksFromNodes(
+  nodes: Doc<"nodes">[],
+  args: {
+    excludeSourceTaskIds?: Set<string>;
+    plannerDate?: number | null;
+    dueByDate?: number | null;
+  } = {},
+) {
+  const sidebarSection = findPlannerSectionNode(nodes, PLANNER_SIDEBAR_SLOT);
+  if (!sidebarSection) {
+    return [] as PlannerSourceTask[];
+  }
+
+  const nodeMap = buildNodeMap(nodes);
+  return nodes.flatMap((task) => {
+    if (
+      task._id === sidebarSection._id ||
+      task.archived ||
+      task.kind !== "task" ||
+      task.taskStatus === "done" ||
+      task.taskStatus === "cancelled" ||
+      isPlannerPlaceholderTaskText(task.text) ||
+      isPlannerDerivedSourceTask(task) ||
+      !isNodeWithinRootSubtree(task, sidebarSection._id, nodeMap)
+    ) {
+      return [];
+    }
+
+    if (args.excludeSourceTaskIds?.has(task._id as string)) {
+      return [];
+    }
+
+    const effectiveDueRange = getEffectiveTaskDueDateRange(task, nodeMap);
+    const effectiveTask: PlannerSourceTask = {
+      ...task,
+      dueAt: effectiveDueRange.dueAt,
+      dueEndAt: effectiveDueRange.dueEndAt ?? null,
+    };
+
+    if (args.plannerDate) {
+      return plannerDayMatchesDueDateRange({
+        dayTimestamp: args.plannerDate,
+        dueAt: effectiveTask.dueAt,
+        dueEndAt: effectiveTask.dueEndAt ?? null,
+      })
+        ? [effectiveTask]
+        : [];
+    }
+
+    if (args.dueByDate) {
+      if (!effectiveTask.dueAt) {
+        return [effectiveTask];
+      }
+
+      return effectiveTask.dueAt <= args.dueByDate ? [effectiveTask] : [];
+    }
+
+    return [effectiveTask];
+  });
+}
+
 export async function completePlannerLinkedTask(
   ctx: MutationCtx,
   args: {
@@ -1069,8 +1154,15 @@ export async function appendPlannerDayCore(
     plannerDate: args.plannerDate,
     excludeSourceTaskIds: existingSourceTaskIds,
   });
-  const sortedEligible = eligibleSourceTasks.sort((left, right) =>
-    comparePlannerTaskOrder(left, right),
+  const eligibleSidebarSourceTasks = listEligiblePlannerSidebarSourceTasksFromNodes(
+    refreshedNodes,
+    {
+      plannerDate: args.plannerDate,
+      excludeSourceTaskIds: existingSourceTaskIds,
+    },
+  );
+  const sortedEligible = [...eligibleSourceTasks, ...eligibleSidebarSourceTasks].sort(
+    (left, right) => comparePlannerTaskOrder(left, right),
   );
 
   for (const task of sortedEligible) {
