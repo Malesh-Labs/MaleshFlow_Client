@@ -60,7 +60,10 @@ import {
 } from "../lib/domain/migration";
 import { parseImportedTextToOutlineNodes } from "../lib/domain/importer";
 import { getEffectiveTaskDueDateRange } from "../lib/domain/planner";
-import { listEligiblePlannerSidebarSourceTasksFromNodes } from "../convex/lib/planner";
+import {
+  listEligiblePlannerSidebarSourceTasksFromNodes,
+  shouldSyncPlannerLinkedRecurringSourceTaskCompletion,
+} from "../convex/lib/planner";
 import {
   buildDataDumpManifest,
   buildUniqueDataDumpPath,
@@ -805,6 +808,66 @@ test("planner sidebar dated tasks are eligible for matching planner days", () =>
       plannerDate,
     }).map((node) => node._id),
     ["dated-task"],
+  );
+});
+
+test("planner linked recurring source completion syncs once", () => {
+  const dueAt = dateInputValueToTimestamp("2026-05-14");
+  assert.ok(dueAt);
+
+  assert.equal(
+    shouldSyncPlannerLinkedRecurringSourceTaskCompletion(
+      {
+        sourceMeta: {
+          plannerKind: "plannerLinkedTask",
+          sourceTaskNodeId: "source-task",
+        },
+      } as never,
+      {
+        dueAt,
+        sourceMeta: {
+          recurrenceFrequency: "weekly",
+        },
+      } as never,
+    ),
+    true,
+  );
+
+  assert.equal(
+    shouldSyncPlannerLinkedRecurringSourceTaskCompletion(
+      {
+        sourceMeta: {
+          plannerKind: "plannerLinkedTask",
+          sourceTaskNodeId: "source-task",
+          sourceTaskCompletionSyncedAt: dueAt,
+        },
+      } as never,
+      {
+        dueAt,
+        sourceMeta: {
+          recurrenceFrequency: "weekly",
+        },
+      } as never,
+    ),
+    false,
+  );
+
+  assert.equal(
+    shouldSyncPlannerLinkedRecurringSourceTaskCompletion(
+      {
+        sourceMeta: {
+          plannerKind: "plannerLinkedTask",
+          sourceTaskNodeId: "source-task",
+        },
+      } as never,
+      {
+        dueAt: null,
+        sourceMeta: {
+          recurrenceFrequency: "weekly",
+        },
+      } as never,
+    ),
+    false,
   );
 });
 

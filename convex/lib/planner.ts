@@ -136,6 +136,29 @@ export function getPlannerLinkedSourceTaskId(
     : null;
 }
 
+export function isPlannerLinkedSourceTaskCompletionSynced(
+  node: Pick<Doc<"nodes">, "sourceMeta"> | null | undefined,
+) {
+  return typeof getNodeSourceMeta(node).sourceTaskCompletionSyncedAt === "number";
+}
+
+export function shouldSyncPlannerLinkedRecurringSourceTaskCompletion(
+  plannerNode: Pick<Doc<"nodes">, "sourceMeta"> | null | undefined,
+  sourceTask: Pick<Doc<"nodes">, "dueAt" | "sourceMeta"> | null | undefined,
+) {
+  if (
+    !getPlannerLinkedSourceTaskId(plannerNode) ||
+    isPlannerLinkedSourceTaskCompletionSynced(plannerNode)
+  ) {
+    return false;
+  }
+
+  return (
+    !!sourceTask?.dueAt &&
+    parseRecurrenceFrequency(getNodeSourceMeta(sourceTask).recurrenceFrequency) !== null
+  );
+}
+
 export function getPlannerDayRoots(nodes: Doc<"nodes">[]) {
   return nodes
     .filter((node) => node.parentNodeId === null && isPlannerDayNode(node))
@@ -316,7 +339,11 @@ async function syncPlannerLinkedSourceTaskCompletion(
 
   for (const plannerNode of plannerNodes) {
     const sourceTaskId = getPlannerLinkedSourceTaskId(plannerNode);
-    if (!sourceTaskId || syncedSourceTaskIds.has(sourceTaskId as string)) {
+    if (
+      !sourceTaskId ||
+      syncedSourceTaskIds.has(sourceTaskId as string) ||
+      isPlannerLinkedSourceTaskCompletionSynced(plannerNode)
+    ) {
       continue;
     }
     syncedSourceTaskIds.add(sourceTaskId as string);
@@ -349,12 +376,48 @@ async function syncPlannerLinkedSourceTaskCompletion(
       });
     }
 
+    await ctx.db.patch(plannerNode._id, {
+      sourceMeta: {
+        ...getNodeSourceMeta(plannerNode),
+        sourceTaskCompletionSyncedAt: now,
+      },
+      updatedAt: now,
+    });
     touchedPageIds.add(sourceTask.pageId as string);
   }
 
   for (const pageId of touchedPageIds) {
     await enqueuePageRootEmbeddingRefresh(ctx, pageId as Id<"pages">);
   }
+}
+
+async function syncPlannerLinkedRecurringSourceTaskCompletionIfReady(
+  ctx: MutationCtx,
+  plannerNode: Doc<"nodes">,
+  completionMode: RecurringCompletionMode,
+  now: number,
+) {
+  const sourceTaskId = getPlannerLinkedSourceTaskId(plannerNode);
+  if (!sourceTaskId || isPlannerLinkedSourceTaskCompletionSynced(plannerNode)) {
+    return false;
+  }
+
+  const sourceTask = await ctx.db.get(sourceTaskId);
+  if (!sourceTask || sourceTask.archived) {
+    return false;
+  }
+
+  if (!shouldSyncPlannerLinkedRecurringSourceTaskCompletion(plannerNode, sourceTask)) {
+    return false;
+  }
+
+  await syncPlannerLinkedSourceTaskCompletion(
+    ctx,
+    [plannerNode],
+    completionMode,
+    now,
+  );
+  return true;
 }
 
 async function archivePlannerSubtreeToPastWeeks(
@@ -964,6 +1027,15 @@ export async function completePlannerLinkedTask(
     throw new Error("Planner item not found after completion.");
   }
 
+  const syncedRecurringSourceThisCall = completedThisCall
+    ? await syncPlannerLinkedRecurringSourceTaskCompletionIfReady(
+      ctx,
+      refreshedPlannerNode,
+      args.completionMode,
+      now,
+    )
+    : false;
+
   const archivableRoot = findArchivablePlannerSubtreeRoot(
     refreshedPlannerNode,
     nodeMap,
@@ -976,6 +1048,7 @@ export async function completePlannerLinkedTask(
     );
     if (
       completedThisCall &&
+      !syncedRecurringSourceThisCall &&
       !hasPlannerArchiveBoundaryAncestor(refreshedPlannerNode, nodeMap) &&
       linkedCompletionRoot &&
       isPlannerSubtreeCompleted(linkedCompletionRoot._id, nodeMap, childrenByParent)
