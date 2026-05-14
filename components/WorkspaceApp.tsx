@@ -332,6 +332,12 @@ type DataDumpExportBundle = {
     downloadUrl: string | null;
   }>;
 };
+type DataDumpExportProgress = {
+  phase: "preparing" | "files" | "legacy" | "compressing" | "done" | "error";
+  label: string;
+  current?: number;
+  total?: number;
+};
 type PendingPalettePageAction =
   | {
       kind: "moveNodes";
@@ -3022,6 +3028,8 @@ function ConfiguredWorkspace({
   const [isRebuildingEmbeddings, setIsRebuildingEmbeddings] = useState(false);
   const [isPreparingTaskCalendarFeed, setIsPreparingTaskCalendarFeed] = useState(false);
   const [isExportingDataDump, setIsExportingDataDump] = useState(false);
+  const [dataDumpExportProgress, setDataDumpExportProgress] =
+    useState<DataDumpExportProgress | null>(null);
   const [isRefreshingSidebarLinks, setIsRefreshingSidebarLinks] = useState(false);
   const [isPlannerAppendingDay, setIsPlannerAppendingDay] = useState(false);
   const [isPlannerCompletingDay, setIsPlannerCompletingDay] = useState(false);
@@ -5755,22 +5763,42 @@ function ConfiguredWorkspace({
   }, [ensureTaskCalendarFeed, ownerKey]);
 
   const handleExportDataDump = useCallback(async () => {
+    if (isExportingDataDump) {
+      return;
+    }
+
     setIsExportingDataDump(true);
+    setPaletteOpen(false);
+    setPaletteQuery("");
+    setDataDumpExportProgress({
+      phase: "preparing",
+      label: "Preparing workspace data...",
+    });
     try {
       const bundle = (await exportDataDump({ ownerKey })) as DataDumpExportBundle;
       const zip = new JSZip();
 
+      setDataDumpExportProgress({
+        phase: "files",
+        label: `Adding ${bundle.files.length} workspace file${bundle.files.length === 1 ? "" : "s"}...`,
+      });
       for (const file of bundle.files) {
         assertSafeZipPath(file.path);
         zip.file(file.path, file.content);
       }
 
-      for (const legacyFile of bundle.legacyFiles) {
+      for (const [index, legacyFile] of bundle.legacyFiles.entries()) {
         assertSafeZipPath(legacyFile.path);
         if (!legacyFile.downloadUrl) {
           throw new Error(`Could not export legacy file: ${legacyFile.filePath}`);
         }
 
+        setDataDumpExportProgress({
+          phase: "legacy",
+          label: `Fetching legacy file ${index + 1} of ${bundle.legacyFiles.length}...`,
+          current: index + 1,
+          total: bundle.legacyFiles.length,
+        });
         const response = await fetch(legacyFile.downloadUrl);
         if (!response.ok) {
           throw new Error(`Could not fetch legacy file: ${legacyFile.filePath}`);
@@ -5779,20 +5807,33 @@ function ConfiguredWorkspace({
         zip.file(legacyFile.path, await response.blob());
       }
 
+      setDataDumpExportProgress({
+        phase: "compressing",
+        label: "Compressing ZIP...",
+      });
       const zipBlob = await zip.generateAsync({ type: "blob" });
       downloadBlob(zipBlob, `malesh-flow-data-dump-${getLocalDateStamp()}.zip`);
+      setDataDumpExportProgress({
+        phase: "done",
+        label: "Data dump download started.",
+        current: 1,
+        total: 1,
+      });
       setCopySnackbarMessage(
         `Exported data dump with ${bundle.files.length} markdown/json file${bundle.files.length === 1 ? "" : "s"} and ${bundle.legacyFiles.length} legacy file${bundle.legacyFiles.length === 1 ? "" : "s"}.`,
       );
-      setPaletteOpen(false);
     } catch (error) {
+      setDataDumpExportProgress({
+        phase: "error",
+        label: "Data dump export failed.",
+      });
       setCopySnackbarMessage(
         error instanceof Error ? error.message : "Could not export the data dump.",
       );
     } finally {
       setIsExportingDataDump(false);
     }
-  }, [exportDataDump, ownerKey]);
+  }, [exportDataDump, isExportingDataDump, ownerKey]);
 
   const handleRefreshSidebarLinks = async () => {
     setIsRefreshingSidebarLinks(true);
@@ -6605,6 +6646,22 @@ function ConfiguredWorkspace({
 
     return () => window.clearTimeout(timeoutId);
   }, [syncErrorMessage]);
+
+  useEffect(() => {
+    if (
+      !dataDumpExportProgress ||
+      (dataDumpExportProgress.phase !== "done" &&
+        dataDumpExportProgress.phase !== "error")
+    ) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setDataDumpExportProgress(null);
+    }, dataDumpExportProgress.phase === "done" ? 2600 : 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [dataDumpExportProgress]);
 
   useEffect(() => {
     inboxDraftsRef.current = inboxDrafts;
@@ -9461,6 +9518,19 @@ function ConfiguredWorkspace({
     );
   };
 
+  const dataDumpProgressPercent =
+    dataDumpExportProgress?.total && dataDumpExportProgress.total > 0
+      ? Math.max(
+          0,
+          Math.min(
+            100,
+            Math.round(
+              ((dataDumpExportProgress.current ?? 0) / dataDumpExportProgress.total) * 100,
+            ),
+          ),
+        )
+      : null;
+
   return (
     <WorkspaceHistoryProvider value={history}>
       <main
@@ -9494,6 +9564,60 @@ function ConfiguredWorkspace({
               Syncing {pendingSyncSnapshot.count} change
               {pendingSyncSnapshot.count === 1 ? "" : "s"}
             </span>
+          </div>
+        ) : null}
+        {dataDumpExportProgress ? (
+          <div
+            className={clsx(
+              "pointer-events-auto w-[min(22rem,calc(100vw-2rem))] border bg-[color-mix(in_srgb,var(--workspace-surface)_94%,transparent)] px-3 py-3 text-[var(--workspace-text)] shadow-[0_18px_40px_-28px_rgba(0,0,0,0.5)] backdrop-blur-sm",
+              dataDumpExportProgress.phase === "error"
+                ? "border-[var(--workspace-danger)]/60"
+                : "border-[var(--workspace-border)]",
+            )}
+            role="status"
+            aria-live="polite"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                  Data Dump
+                </p>
+                <p className="mt-1 text-sm font-medium text-[var(--workspace-text)]">
+                  {dataDumpExportProgress.label}
+                </p>
+              </div>
+              {dataDumpExportProgress.phase === "done" ||
+              dataDumpExportProgress.phase === "error" ? (
+                <button
+                  type="button"
+                  onClick={() => setDataDumpExportProgress(null)}
+                  className="shrink-0 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-faint)] transition hover:text-[var(--workspace-text)]"
+                >
+                  Dismiss
+                </button>
+              ) : (
+                <span className="mt-1 inline-flex h-2 w-2 shrink-0 animate-pulse rounded-full bg-[var(--workspace-accent)]" />
+              )}
+            </div>
+            <div className="mt-3 h-1.5 overflow-hidden bg-[var(--workspace-border-subtle)]">
+              <div
+                className={clsx(
+                  "h-full bg-[var(--workspace-brand)] transition-[width] duration-300",
+                  dataDumpProgressPercent === null ? "animate-pulse" : "",
+                  dataDumpExportProgress.phase === "error"
+                    ? "bg-[var(--workspace-danger)]"
+                    : "",
+                )}
+                style={{
+                  width: `${dataDumpProgressPercent ?? 42}%`,
+                }}
+              />
+            </div>
+            {dataDumpExportProgress.total ? (
+              <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]">
+                {dataDumpExportProgress.current ?? 0} / {dataDumpExportProgress.total}
+              </p>
+            ) : null}
           </div>
         ) : null}
         <div className="pointer-events-auto flex items-center gap-2 border border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface)_88%,transparent)] px-2 py-2 shadow-[0_18px_40px_-28px_rgba(0,0,0,0.5)] backdrop-blur-sm">
