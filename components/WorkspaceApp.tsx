@@ -3963,7 +3963,15 @@ function ConfiguredWorkspace({
             )
         : flattenTreeNodes(genericRoots, effectiveCollapsedNodeIds);
   const sidebarVisibleRows = flattenTreeNodes(sidebarNodes, effectiveCollapsedNodeIds);
-  const visibleNodeOrder = [...sidebarVisibleRows, ...pageVisibleRows].map((node) => node._id);
+  const plannerSidebarVisibleRows =
+    pageMeta.pageType === "planner" && plannerSidebarSection
+      ? flattenTreeNodes(plannerSidebarSection.children, effectiveCollapsedNodeIds)
+      : [];
+  const visibleNodeOrder = [
+    ...sidebarVisibleRows,
+    ...pageVisibleRows,
+    ...plannerSidebarVisibleRows,
+  ].map((node) => node._id);
   const selectionTrees = useMemo(
     () => [...sidebarNodes, ...tree],
     [sidebarNodes, tree],
