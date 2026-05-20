@@ -11,9 +11,12 @@ import {
 } from "../lib/domain/links";
 import {
   cycleHeadingSyntax,
+  isDimmedSyntaxLine,
   isSeparatorLineText,
   parseHeadingSyntax,
+  stripDimmedSyntaxPrefix,
   stripHeadingSyntaxMarkers,
+  stripNodeDisplaySyntaxMarkers,
 } from "../lib/domain/displaySyntax";
 import {
   buildJournalFeedbackUserPrompt,
@@ -617,6 +620,15 @@ test("cycleHeadingSyntax preserves selection relative to visible heading text", 
 test("stripHeadingSyntaxMarkers removes heading markers without changing plain text", () => {
   assert.equal(stripHeadingSyntaxMarkers("### Big heading"), "Big heading");
   assert.equal(stripHeadingSyntaxMarkers("Plain text"), "Plain text");
+});
+
+test("stripNodeDisplaySyntaxMarkers removes dimmed and heading source syntax", () => {
+  assert.equal(isDimmedSyntaxLine("%% ### Big heading"), true);
+  assert.equal(stripDimmedSyntaxPrefix("%% ### Big heading"), "### Big heading");
+  assert.equal(stripNodeDisplaySyntaxMarkers("%% ### Big heading"), "Big heading");
+  assert.equal(stripNodeDisplaySyntaxMarkers("%% Plain text"), "Plain text");
+  assert.equal(stripNodeDisplaySyntaxMarkers("### Big heading"), "Big heading");
+  assert.equal(stripNodeDisplaySyntaxMarkers("Plain text"), "Plain text");
 });
 
 test("parseImportedTextToOutlineNodes normalizes Dynalist links and separators", () => {

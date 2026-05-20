@@ -40,9 +40,11 @@ import {
 } from "@/lib/domain/aiPrompts";
 import {
   cycleHeadingSyntax,
+  isDimmedSyntaxLine,
   isSeparatorLineText,
   parseHeadingSyntax,
-  stripHeadingSyntaxMarkers,
+  stripDimmedSyntaxPrefix,
+  stripNodeDisplaySyntaxMarkers,
 } from "@/lib/domain/displaySyntax";
 import {
   applySelectedInlineFormattingShortcut,
@@ -1842,7 +1844,7 @@ function useFloatingMenuPosition(
 }
 
 function normalizeNodeLinkPreviewText(value: string) {
-  return stripHeadingSyntaxMarkers(
+  return stripNodeDisplaySyntaxMarkers(
     stripInlineFormattingMarkers(replaceLinkMarkupWithLabels(value)),
   ).trim();
 }
@@ -2755,14 +2757,6 @@ function toNodeValueSnapshot(
         | Pick<NodeValueSnapshot, "kind" | "recurrenceFrequency">,
     ),
   };
-}
-
-function isDimmedSyntaxLine(value: string) {
-  return value.trim().startsWith("%%");
-}
-
-function stripDimmedSyntaxPrefix(value: string) {
-  return value.replace(/^(\s*)%%\s*/, "$1");
 }
 
 function applyInlineFormattingToPreviewSegments(segments: LinkPreviewSegment[]) {

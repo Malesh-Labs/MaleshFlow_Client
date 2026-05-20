@@ -9,6 +9,7 @@ export type ParsedHeadingSyntax =
     };
 
 const HEADING_SYNTAX_PATTERN = /^(#{1,3})\s+(.+)$/;
+const DIMMED_SYNTAX_PATTERN = /^(\s*)%%\s*/;
 
 export function isSeparatorLineText(value: string) {
   return value.trim() === "---";
@@ -40,6 +41,18 @@ export function parseHeadingSyntax(value: string): ParsedHeadingSyntax {
 
 export function stripHeadingSyntaxMarkers(value: string) {
   return parseHeadingSyntax(value).text;
+}
+
+export function isDimmedSyntaxLine(value: string) {
+  return value.trim().startsWith("%%");
+}
+
+export function stripDimmedSyntaxPrefix(value: string) {
+  return value.replace(DIMMED_SYNTAX_PATTERN, "$1");
+}
+
+export function stripNodeDisplaySyntaxMarkers(value: string) {
+  return stripHeadingSyntaxMarkers(stripDimmedSyntaxPrefix(value));
 }
 
 export function cycleHeadingSyntax(
