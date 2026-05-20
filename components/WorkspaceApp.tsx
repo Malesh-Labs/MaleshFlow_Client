@@ -402,6 +402,7 @@ type LinkPreviewSegment =
       resolved: boolean;
       linkKind: "page" | "node" | "external";
       href?: string | null;
+      isDimmed?: boolean;
       pageTypeBadge?: string | null;
     }
   | {
@@ -1843,10 +1844,12 @@ function useFloatingMenuPosition(
   return isOpen ? position : null;
 }
 
-function normalizeNodeLinkPreviewText(value: string) {
-  return stripNodeDisplaySyntaxMarkers(
-    stripInlineFormattingMarkers(replaceLinkMarkupWithLabels(value)),
-  ).trim();
+function normalizeNodeLinkPreviewDisplay(value: string) {
+  const syntaxText = stripInlineFormattingMarkers(replaceLinkMarkupWithLabels(value));
+  return {
+    text: stripNodeDisplaySyntaxMarkers(syntaxText).trim(),
+    isDimmed: isDimmedSyntaxLine(syntaxText),
+  };
 }
 
 function buildLinkPreviewSegments(
@@ -1929,27 +1932,31 @@ function buildLinkPreviewSegments(
       });
     } else {
       const targetNode = nodeTargetsById.get(match.link.targetNodeRef);
-      const nodeLabel = normalizeNodeLinkPreviewText(
+      const nodeLabel = normalizeNodeLinkPreviewDisplay(
         getExplicitWikiLinkPreviewText(match.link.label),
       );
-      const renderedTargetNodeText = targetNode
-        ? normalizeNodeLinkPreviewText(targetNode.text)
-        : "";
-      const parentNodeText =
+      const renderedTargetNode = targetNode
+        ? normalizeNodeLinkPreviewDisplay(targetNode.text)
+        : { text: "", isDimmed: false };
+      const parentNode =
         match.link.includeParent && targetNode?.parentText && !targetNode.parentArchived
-          ? normalizeNodeLinkPreviewText(targetNode.parentText)
-          : "";
-      const childNodeText = nodeLabel || renderedTargetNodeText || "Linked node";
+          ? normalizeNodeLinkPreviewDisplay(targetNode.parentText)
+          : { text: "", isDimmed: false };
+      const childNodeText = nodeLabel.text || renderedTargetNode.text || "Linked node";
       segments.push({
         key: `node:${match.start}`,
         kind: "link",
-        text: parentNodeText ? `${childNodeText} (${parentNodeText})` : childNodeText,
+        text: parentNode.text ? `${childNodeText} (${parentNode.text})` : childNodeText,
         pageId: targetNode?.pageId ?? null,
         nodeId: targetNode?.nodeId ?? null,
         archived: targetNode?.pageArchived ?? false,
         resolved: Boolean(targetNode?.pageId),
         linkKind: "node",
         href: null,
+        isDimmed:
+          nodeLabel.isDimmed ||
+          renderedTargetNode.isDimmed ||
+          parentNode.isDimmed,
         pageTypeBadge: null,
       });
     }
@@ -13038,6 +13045,32 @@ function getInlinePreviewStyle({
   };
 }
 
+function getLinkPreviewTextClass({
+  isCompleted,
+  isDimmed,
+  interactive,
+}: {
+  isCompleted: boolean;
+  isDimmed?: boolean;
+  interactive: boolean;
+}) {
+  if (isCompleted) {
+    return interactive
+      ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text-faint)]"
+      : "text-[var(--workspace-text-faint)]";
+  }
+
+  if (isDimmed) {
+    return interactive
+      ? "text-[var(--workspace-text-subtle)] hover:text-[var(--workspace-text)]"
+      : "text-[var(--workspace-text-subtle)]";
+  }
+
+  return interactive
+    ? "text-[var(--workspace-brand)] hover:text-[var(--workspace-brand-hover)]"
+    : "text-[var(--workspace-brand)]";
+}
+
 function LinkedTextPreview({
   segments,
   onFocusLine,
@@ -13139,9 +13172,11 @@ function LinkedTextPreview({
               }}
               className={clsx(
                 "inline cursor-pointer decoration-[1.5px] underline-offset-[3px] transition",
-                isCompleted
-                  ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text-faint)]"
-                  : "text-[var(--workspace-brand)] hover:text-[var(--workspace-brand-hover)]",
+                getLinkPreviewTextClass({
+                  isCompleted,
+                  isDimmed: segment.isDimmed,
+                  interactive: true,
+                }),
               )}
               style={getInlinePreviewStyle({
                 strike: segment.strike || isCompleted,
@@ -13173,9 +13208,11 @@ function LinkedTextPreview({
               }}
               className={clsx(
                 "inline-flex max-w-full align-top cursor-pointer items-start gap-1 text-left transition",
-                isCompleted
-                  ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text-faint)]"
-                  : "text-[var(--workspace-brand)] hover:text-[var(--workspace-brand-hover)]",
+                getLinkPreviewTextClass({
+                  isCompleted,
+                  isDimmed: segment.isDimmed,
+                  interactive: true,
+                }),
                 segment.archived ? "opacity-75" : "",
               )}
             >
@@ -13209,9 +13246,11 @@ function LinkedTextPreview({
               key={segment.key}
               className={clsx(
                 "inline decoration-[1.5px] underline-offset-[3px]",
-                isCompleted
-                  ? "text-[var(--workspace-text-faint)]"
-                  : "text-[var(--workspace-brand)]",
+                getLinkPreviewTextClass({
+                  isCompleted,
+                  isDimmed: segment.isDimmed,
+                  interactive: false,
+                }),
                 segment.linkKind === "node"
                   ? "decoration-dotted"
                   : "decoration-[var(--workspace-brand)]/70",
@@ -13340,9 +13379,11 @@ function LinkPreviewMeasure({
             key={segment.key}
             className={clsx(
               "inline-flex max-w-full align-top items-start gap-1 text-left",
-              isCompleted
-                ? "text-[var(--workspace-text-faint)]"
-                : "text-[var(--workspace-brand)]",
+              getLinkPreviewTextClass({
+                isCompleted,
+                isDimmed: segment.isDimmed,
+                interactive: false,
+              }),
               segment.archived ? "opacity-75" : "",
               !segment.resolved ? "opacity-80" : "",
             )}
