@@ -20,6 +20,7 @@ import {
   useSyncExternalStore,
   type CSSProperties,
   type ErrorInfo,
+  type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
@@ -148,6 +149,12 @@ const ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-archive-section-collaps
 const LEGACY_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-legacy-section-collapsed";
 const RECURRING_TASK_COMPLETION_MODE_STORAGE_KEY =
   "maleshflow-recurring-task-completion-mode";
+const PLANNER_RIGHT_SIDEBAR_WIDTH_STORAGE_KEY =
+  "maleshflow-planner-right-sidebar-width";
+const PLANNER_RIGHT_SIDEBAR_DEFAULT_WIDTH = 272;
+const PLANNER_RIGHT_SIDEBAR_MIN_WIDTH = 220;
+const PLANNER_RIGHT_SIDEBAR_MAX_WIDTH = 560;
+const PLANNER_MAIN_MIN_WIDTH = 420;
 const NODE_DRAG_MIME_TYPE = "application/x-maleshflow-node";
 const OUTLINE_CLIPBOARD_MIME_TYPE = "application/x-maleshflow-outline";
 const OUTLINE_CUT_CLIPBOARD_MIME_TYPE = "application/x-maleshflow-outline-cut";
@@ -2826,6 +2833,24 @@ function readStoredRecurringCompletionMode(defaultValue: RecurringCompletionMode
     : defaultValue;
 }
 
+function readStoredPlannerSidebarWidth() {
+  if (typeof window === "undefined") {
+    return PLANNER_RIGHT_SIDEBAR_DEFAULT_WIDTH;
+  }
+
+  const storedValue = Number.parseInt(
+    window.localStorage.getItem(PLANNER_RIGHT_SIDEBAR_WIDTH_STORAGE_KEY) ?? "",
+    10,
+  );
+  return Number.isFinite(storedValue)
+    ? clamp(
+        storedValue,
+        PLANNER_RIGHT_SIDEBAR_MIN_WIDTH,
+        PLANNER_RIGHT_SIDEBAR_MAX_WIDTH,
+      )
+    : PLANNER_RIGHT_SIDEBAR_DEFAULT_WIDTH;
+}
+
 function persistCollapsedNodeIdsToSessionStorage(nodeIds: Iterable<string>) {
   if (typeof window === "undefined") {
     return;
@@ -3089,6 +3114,10 @@ function ConfiguredWorkspace({
   const [actionContextNodeId, setActionContextNodeId] = useState<string | null>(null);
   const [recurringCompletionMode, setRecurringCompletionMode] =
     useState<RecurringCompletionMode>("dueDate");
+  const [plannerSidebarWidth, setPlannerSidebarWidth] = useState(
+    PLANNER_RIGHT_SIDEBAR_DEFAULT_WIDTH,
+  );
+  const [isPlannerSidebarResizing, setIsPlannerSidebarResizing] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const [isFavoritesSectionCollapsed, setIsFavoritesSectionCollapsed] = useState(false);
   const [isSidebarTextSectionCollapsed, setIsSidebarTextSectionCollapsed] = useState(true);
@@ -3120,6 +3149,8 @@ function ConfiguredWorkspace({
   const [locationPageId, setLocationPageId] = useState<string | null>(null);
   const [cachedTags, setCachedTags] = useState<SidebarTagResult[] | null>(null);
   const [isRefreshingTags, setIsRefreshingTags] = useState(false);
+  const plannerLayoutRef = useRef<HTMLDivElement | null>(null);
+  const isPlannerSidebarResizingRef = useRef(false);
   const convex = useConvex();
   const connectionState = useConvexConnectionState();
   const [hasHydratedSessionUiState, setHasHydratedSessionUiState] = useState(false);
@@ -4011,6 +4042,115 @@ function ConfiguredWorkspace({
             )
           : tree;
   const sectionDepthOffset = isMobileLayout ? 0 : 1;
+  const getPlannerSidebarMaxWidth = useCallback(() => {
+    const layout = plannerLayoutRef.current;
+    if (!layout) {
+      return PLANNER_RIGHT_SIDEBAR_MAX_WIDTH;
+    }
+
+    const layoutWidth = layout.getBoundingClientRect().width;
+    return Math.max(
+      PLANNER_RIGHT_SIDEBAR_MIN_WIDTH,
+      Math.min(
+        PLANNER_RIGHT_SIDEBAR_MAX_WIDTH,
+        layoutWidth - PLANNER_MAIN_MIN_WIDTH,
+      ),
+    );
+  }, []);
+  const clampPlannerSidebarWidth = useCallback(
+    (width: number) =>
+      clamp(
+        Math.round(width),
+        PLANNER_RIGHT_SIDEBAR_MIN_WIDTH,
+        getPlannerSidebarMaxWidth(),
+      ),
+    [getPlannerSidebarMaxWidth],
+  );
+  const updatePlannerSidebarWidthFromClientX = useCallback(
+    (clientX: number) => {
+      const layout = plannerLayoutRef.current;
+      if (!layout) {
+        return;
+      }
+
+      const layoutRect = layout.getBoundingClientRect();
+      setPlannerSidebarWidth(
+        clampPlannerSidebarWidth(layoutRect.right - clientX),
+      );
+    },
+    [clampPlannerSidebarWidth],
+  );
+  const plannerSidebarGridStyle = useMemo(
+    () =>
+      ({
+        "--planner-sidebar-width": `${plannerSidebarWidth}px`,
+      }) as CSSProperties,
+    [plannerSidebarWidth],
+  );
+  const handlePlannerSidebarResizePointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (event.button !== 0) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      isPlannerSidebarResizingRef.current = true;
+      setIsPlannerSidebarResizing(true);
+      event.currentTarget.setPointerCapture(event.pointerId);
+      updatePlannerSidebarWidthFromClientX(event.clientX);
+    },
+    [updatePlannerSidebarWidthFromClientX],
+  );
+  const handlePlannerSidebarResizePointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (!isPlannerSidebarResizingRef.current) {
+        return;
+      }
+
+      event.preventDefault();
+      updatePlannerSidebarWidthFromClientX(event.clientX);
+    },
+    [updatePlannerSidebarWidthFromClientX],
+  );
+  const finishPlannerSidebarResize = useCallback(
+    (event: ReactPointerEvent<HTMLButtonElement>) => {
+      if (!isPlannerSidebarResizingRef.current) {
+        return;
+      }
+
+      isPlannerSidebarResizingRef.current = false;
+      setIsPlannerSidebarResizing(false);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    },
+    [],
+  );
+  const handlePlannerSidebarResizeKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      const step = event.shiftKey ? 48 : 24;
+
+      if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        setPlannerSidebarWidth((current) =>
+          clampPlannerSidebarWidth(current + step),
+        );
+      } else if (event.key === "ArrowRight") {
+        event.preventDefault();
+        setPlannerSidebarWidth((current) =>
+          clampPlannerSidebarWidth(current - step),
+        );
+      } else if (event.key === "Home") {
+        event.preventDefault();
+        setPlannerSidebarWidth(PLANNER_RIGHT_SIDEBAR_MIN_WIDTH);
+      } else if (event.key === "End") {
+        event.preventDefault();
+        setPlannerSidebarWidth(getPlannerSidebarMaxWidth());
+      }
+    },
+    [clampPlannerSidebarWidth, getPlannerSidebarMaxWidth],
+  );
   const plannerTopVisibleRoots = [plannerFocusSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
@@ -5087,6 +5227,7 @@ function ConfiguredWorkspace({
     setRecurringCompletionMode(
       readStoredRecurringCompletionMode("dueDate"),
     );
+    setPlannerSidebarWidth(readStoredPlannerSidebarWidth());
     try {
       const storedCollapsedNodeIdsRaw = window.sessionStorage.getItem(COLLAPSED_NODES_STORAGE_KEY);
       const storedCollapsedNodeIds = JSON.parse(storedCollapsedNodeIdsRaw ?? "[]");
@@ -5348,6 +5489,56 @@ function ConfiguredWorkspace({
       recurringCompletionMode,
     );
   }, [recurringCompletionMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!hasHydratedSessionUiStateRef.current) {
+      return;
+    }
+
+    window.localStorage.setItem(
+      PLANNER_RIGHT_SIDEBAR_WIDTH_STORAGE_KEY,
+      `${plannerSidebarWidth}`,
+    );
+  }, [plannerSidebarWidth]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleResize = () => {
+      setPlannerSidebarWidth((current) => clampPlannerSidebarWidth(current));
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [clampPlannerSidebarWidth]);
+
+  useEffect(() => {
+    if (typeof document === "undefined" || !isPlannerSidebarResizing) {
+      return;
+    }
+
+    const previousBodyCursor = document.body.style.cursor;
+    const previousBodyUserSelect = document.body.style.userSelect;
+    const previousDocumentCursor = document.documentElement.style.cursor;
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.documentElement.style.cursor = "col-resize";
+
+    return () => {
+      document.body.style.cursor = previousBodyCursor;
+      document.body.style.userSelect = previousBodyUserSelect;
+      document.documentElement.style.cursor = previousDocumentCursor;
+    };
+  }, [isPlannerSidebarResizing]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -5884,6 +6075,7 @@ function ConfiguredWorkspace({
     window.localStorage.removeItem(LEGACY_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
     window.localStorage.removeItem(RECURRING_TASK_COMPLETION_MODE_STORAGE_KEY);
+    window.localStorage.removeItem(PLANNER_RIGHT_SIDEBAR_WIDTH_STORAGE_KEY);
     setSelectedPageId(null);
     setLocationPageId(null);
     writePageIdToHistory(null, "replace", null);
@@ -10930,7 +11122,14 @@ function ConfiguredWorkspace({
                         </div>
                       </div>
                     ) : null}
-                    <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start">
+                    <div
+                      ref={plannerLayoutRef}
+                      className={clsx(
+                        "grid gap-8 lg:grid-cols-[minmax(0,1fr)_var(--planner-sidebar-width)] lg:items-start",
+                        isPlannerSidebarResizing ? "select-none" : "",
+                      )}
+                      style={plannerSidebarGridStyle}
+                    >
                       <div className="min-w-0 space-y-1">
                         <OutlineNodeList
                           nodes={
@@ -10984,7 +11183,36 @@ function ConfiguredWorkspace({
                           recurringCompletionMode={recurringCompletionMode}
                         />
                       </div>
-                      <aside className="min-w-0 border-t border-[var(--workspace-border-subtle)] pt-6 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+                      <aside className="relative min-w-0 border-t border-[var(--workspace-border-subtle)] pt-6 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
+                        <button
+                          type="button"
+                          role="separator"
+                          aria-label="Resize planner sidebar"
+                          aria-orientation="vertical"
+                          title="Resize planner sidebar"
+                          aria-valuemin={PLANNER_RIGHT_SIDEBAR_MIN_WIDTH}
+                          aria-valuemax={getPlannerSidebarMaxWidth()}
+                          aria-valuenow={plannerSidebarWidth}
+                          onPointerDown={handlePlannerSidebarResizePointerDown}
+                          onPointerMove={handlePlannerSidebarResizePointerMove}
+                          onPointerUp={finishPlannerSidebarResize}
+                          onPointerCancel={finishPlannerSidebarResize}
+                          onLostPointerCapture={finishPlannerSidebarResize}
+                          onKeyDown={handlePlannerSidebarResizeKeyDown}
+                          className={clsx(
+                            "group absolute bottom-0 left-[-1rem] top-0 hidden w-4 cursor-col-resize touch-none items-stretch justify-center outline-none lg:flex",
+                            "focus-visible:ring-2 focus-visible:ring-[var(--workspace-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--workspace-bg)]",
+                          )}
+                        >
+                          <span
+                            className={clsx(
+                              "my-1 w-px bg-[var(--workspace-border)] transition",
+                              isPlannerSidebarResizing
+                                ? "bg-[var(--workspace-accent)]"
+                                : "group-hover:bg-[var(--workspace-accent)]",
+                            )}
+                          />
+                        </button>
                         {plannerSidebarSection ? (
                           <PageSection
                             title="Sidebar"
