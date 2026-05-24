@@ -33,6 +33,7 @@ const PLAIN_EMAIL_PATTERN =
   /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const PAGE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?page:([a-zA-Z0-9_-]+)$/;
 const NODE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?node:([a-zA-Z0-9_-]+)(\?parent)?$/;
+const NODE_PARENT_LINK_OPTION = "?parent";
 const COMPLETE_MARKDOWN_LINK_PATTERN = /^\[([^\]]+)\]\(([^)]*)\)$/;
 const COMPLETE_WIKI_LINK_PATTERN = /^\[\[([^[\]]+)\]\]$/;
 const HTML_ANCHOR_PATTERN = /<a\b[^>]*href=(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi;
@@ -176,21 +177,32 @@ export function extractLinkMatches(text: string) {
       continue;
     }
 
+    const trailingParentOption =
+      text
+        .slice((match.index ?? 0) + match[0].length)
+        .startsWith(NODE_PARENT_LINK_OPTION);
     const nodeMatch = inner.match(NODE_WIKI_TARGET_PATTERN);
     if (nodeMatch) {
       const ref = nodeMatch[2]?.trim();
       if (!ref) {
         continue;
       }
+      const hasParentOption = nodeMatch[3] === NODE_PARENT_LINK_OPTION || trailingParentOption;
+      const label = trailingParentOption
+        ? `${match[0]}${NODE_PARENT_LINK_OPTION}`
+        : match[0];
 
       matches.push({
         start: match.index ?? 0,
-        end: (match.index ?? 0) + match[0].length,
+        end:
+          (match.index ?? 0) +
+          match[0].length +
+          (trailingParentOption ? NODE_PARENT_LINK_OPTION.length : 0),
         link: {
           kind: "node",
-          label: match[0],
+          label,
           targetNodeRef: ref,
-          ...(nodeMatch[3] === "?parent" ? { includeParent: true } : {}),
+          ...(hasParentOption ? { includeParent: true } : {}),
         },
       });
       continue;
@@ -334,11 +346,18 @@ function getReadableLinkLabel(match: ExtractedLinkMatch) {
 }
 
 export function getExplicitWikiLinkPreviewText(label: string) {
-  if (!label.startsWith("[[") || !label.endsWith("]]")) {
+  if (!label.startsWith("[[")) {
     return "";
   }
 
-  return label
+  const wikiLabel = label.endsWith(`]]${NODE_PARENT_LINK_OPTION}`)
+    ? label.slice(0, -NODE_PARENT_LINK_OPTION.length)
+    : label;
+  if (!wikiLabel.endsWith("]]")) {
+    return "";
+  }
+
+  return wikiLabel
     .slice(2, -2)
     .replace(/^node:[a-zA-Z0-9_-]+(?:\?parent)?$/, "")
     .replace(/^page:[a-zA-Z0-9_-]+$/, "")

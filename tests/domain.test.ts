@@ -6,6 +6,7 @@ import {
   extractLinkMatches,
   extractLinks,
   getExplicitWikiLinkPreviewText,
+  replaceLinkMarkupWithLabels,
   rewriteMatchingPageWikiLinks,
   sanitizeGeneratedWikiLinkLabel,
 } from "../lib/domain/links";
@@ -258,7 +259,7 @@ test("extractLinks finds plain email addresses", () => {
 
 test("extractLinks parses parent-inclusive node wiki links", () => {
   const links = extractLinks(
-    "See [[node:node_123?parent]] and [[Custom label|node:node_456?parent]].",
+    "See [[node:node_123?parent]], [[Custom label|node:node_456?parent]], and [[Autocomplete label|node:node_789]]?parent.",
   );
 
   assert.deepEqual(links, [
@@ -274,14 +275,32 @@ test("extractLinks parses parent-inclusive node wiki links", () => {
       targetNodeRef: "node_456",
       includeParent: true,
     },
+    {
+      kind: "node",
+      label: "[[Autocomplete label|node:node_789]]?parent",
+      targetNodeRef: "node_789",
+      includeParent: true,
+    },
   ]);
 });
 
 test("getExplicitWikiLinkPreviewText strips parent-inclusive node targets", () => {
   assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123?parent]]"), "");
+  assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123]]?parent"), "");
   assert.equal(
     getExplicitWikiLinkPreviewText("[[Custom label|node:node_456?parent]]"),
     "Custom label",
+  );
+  assert.equal(
+    getExplicitWikiLinkPreviewText("[[Custom label|node:node_456]]?parent"),
+    "Custom label",
+  );
+});
+
+test("replaceLinkMarkupWithLabels consumes trailing parent node link options", () => {
+  assert.equal(
+    replaceLinkMarkupWithLabels("See [[Custom label|node:node_456]]?parent now."),
+    "See Custom label now.",
   );
 });
 
