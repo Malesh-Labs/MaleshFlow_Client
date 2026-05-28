@@ -21,6 +21,7 @@ import {
   enqueueNodeEmbeddingRefresh,
   enqueueNodeAiWork,
   enqueuePageRootEmbeddingRefresh,
+  getPageBySlug,
   listPageNodes,
   listSiblingNodes,
   setNodeTreeArchivedState,
@@ -92,6 +93,9 @@ const MAX_BACKLINK_COUNT_NODE_BATCH = 250;
 const MAX_PAGE_TREE_NODES = 2500;
 const MAX_PAGE_TREE_NODE_TEXT_CHARS = 500_000;
 const MAX_PAGE_TREE_BACKLINKS = 1200;
+const MAX_MULTI_PAGE_VIEW_PAGES = 8;
+const MAX_MULTI_PAGE_VIEW_NODES = 5000;
+const MAX_MULTI_PAGE_VIEW_TEXT_CHARS = 1_000_000;
 const MAX_NODE_AI_ANCESTOR_DEPTH = 40;
 const MAX_NODE_AI_SUBTREE_NODES = 2000;
 const PAGE_DELETE_NODE_BATCH_SIZE = 100;
@@ -100,6 +104,7 @@ const PAGE_DELETE_MESSAGE_BATCH_SIZE = 200;
 const FIND_REPLACE_PREVIEW_LIMIT = 40;
 const FIND_REPLACE_BATCH_SIZE = 50;
 const EMBEDDING_REBUILD_BATCH_SIZE = 200;
+const MULTI_PAGE_INCLUDED_PAGES_SLOT = "multiPageIncludedPages";
 
 async function collectEmbeddingJobCountsForRun(
   db: DatabaseReader,
@@ -220,19 +225,42 @@ async function listPageNodesForTree(
   ctx: QueryCtx,
   pageId: Id<"pages">,
 ) {
+  return await listPageNodesForTreeWithCaps(
+    ctx,
+    pageId,
+    MAX_PAGE_TREE_NODES,
+    MAX_PAGE_TREE_NODE_TEXT_CHARS,
+  );
+}
+
+async function listPageNodesForTreeWithCaps(
+  ctx: QueryCtx,
+  pageId: Id<"pages">,
+  maxNodes: number,
+  maxTextChars: number,
+) {
+  const cappedNodeLimit = Math.max(0, Math.min(maxNodes, MAX_PAGE_TREE_NODES));
+  const cappedTextLimit = Math.max(0, Math.min(maxTextChars, MAX_PAGE_TREE_NODE_TEXT_CHARS));
+  if (cappedNodeLimit === 0 || cappedTextLimit <= 0) {
+    return {
+      nodes: [] as Doc<"nodes">[],
+      truncated: true,
+    };
+  }
+
   const fetchedNodes = await ctx.db
     .query("nodes")
     .withIndex("by_page_archived", (query) =>
       query.eq("pageId", pageId).eq("archived", false),
     )
-    .take(MAX_PAGE_TREE_NODES + 1);
+    .take(cappedNodeLimit + 1);
 
   const nodes: Doc<"nodes">[] = [];
   let textChars = 0;
 
   for (const node of fetchedNodes) {
     const nextTextChars = textChars + node.text.length;
-    if (nodes.length >= MAX_PAGE_TREE_NODES || nextTextChars > MAX_PAGE_TREE_NODE_TEXT_CHARS) {
+    if (nodes.length >= cappedNodeLimit || nextTextChars > cappedTextLimit) {
       return {
         nodes,
         truncated: true,
@@ -245,7 +273,7 @@ async function listPageNodesForTree(
 
   return {
     nodes,
-    truncated: fetchedNodes.length > MAX_PAGE_TREE_NODES,
+    truncated: fetchedNodes.length > cappedNodeLimit,
   };
 }
 
@@ -581,6 +609,121 @@ async function ensureJournalSections(ctx: MutationCtx, page: Doc<"pages">) {
   }
 
   return sectionIds;
+}
+
+function isMultiPageViewPage(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
+  return getPageSourceMeta(page).pageType === "multiPage";
+}
+
+async function ensureMultiPageSections(ctx: MutationCtx, page: Doc<"pages">) {
+  const nodes = await listPageNodes(ctx.db, page._id);
+  const existingSection =
+    nodes
+      .filter((node) => node.parentNodeId === null)
+      .find((node) => getNodeSourceMeta(node).sectionSlot === MULTI_PAGE_INCLUDED_PAGES_SLOT) ??
+    null;
+
+  if (existingSection) {
+    return {
+      includedPagesSectionId: existingSection._id,
+    };
+  }
+
+  const rootNodes = nodes.filter((node) => node.parentNodeId === null);
+  const afterNodeId =
+    [...rootNodes].sort((left, right) => left.position - right.position)[
+      rootNodes.length - 1
+    ]?._id ?? null;
+  const now = getTimestamp();
+  const position = await computeNodePosition(ctx.db, page._id, null, afterNodeId);
+  const sectionId = await ctx.db.insert("nodes", {
+    pageId: page._id,
+    parentNodeId: null,
+    position,
+    text: "Included Pages",
+    kind: "note",
+    taskStatus: null,
+    priority: null,
+    dueAt: null,
+    dueEndAt: null,
+    archived: false,
+    sourceMeta: {
+      sourceType: "system",
+      sectionSlot: MULTI_PAGE_INCLUDED_PAGES_SLOT,
+      locked: true,
+    },
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  await enqueuePageRootEmbeddingRefresh(ctx, page._id);
+  return {
+    includedPagesSectionId: sectionId,
+  };
+}
+
+async function resolveMultiPageIncludedPage(
+  db: DatabaseReader,
+  node: Doc<"nodes">,
+) {
+  const pageLink = extractLinks(node.text).find((link) => link.kind === "page");
+  if (!pageLink || pageLink.kind !== "page") {
+    return {
+      page: null as Doc<"pages"> | null,
+      reason: "Add a page link to include a page here.",
+    };
+  }
+
+  if (pageLink.targetPageRef) {
+    try {
+      return {
+        page: await db.get(pageLink.targetPageRef as Id<"pages">),
+        reason: null as string | null,
+      };
+    } catch {
+      return {
+        page: null as Doc<"pages"> | null,
+        reason: "That page link could not be resolved.",
+      };
+    }
+  }
+
+  if (pageLink.targetPageTitle) {
+    const slug = slugify(pageLink.targetPageTitle, { lower: true, strict: true }) || "untitled";
+    return {
+      page: await getPageBySlug(db, slug),
+      reason: null as string | null,
+    };
+  }
+
+  return {
+    page: null as Doc<"pages"> | null,
+    reason: "That page link could not be resolved.",
+  };
+}
+
+function getMultiPageIncludedPageSkipReason(page: Doc<"pages"> | null) {
+  if (!page || isPagePendingDeletion(page)) {
+    return "That page could not be found.";
+  }
+
+  if (page.archived) {
+    return "Archived pages are not shown in multi-page views.";
+  }
+
+  if (isSidebarSpecialPage(page)) {
+    return "System pages are not shown in multi-page views.";
+  }
+
+  if (isPlannerPage(page)) {
+    return "Planner pages are not supported in multi-page views yet.";
+  }
+
+  if (isMultiPageViewPage(page)) {
+    return "Multi-page views cannot include other multi-page views.";
+  }
+
+  return null;
 }
 
 async function archiveTaskPageSubtreeToDone(
@@ -2272,78 +2415,126 @@ export const getPageTree = query({
       return null;
     }
 
-    const warnings: string[] = [];
+    return await buildPageTreeResult(ctx, page);
+  },
+});
 
-    let nodes: Doc<"nodes">[] = [];
-    let nodesTruncated = false;
-    try {
-      const result = await listPageNodesForTree(ctx, args.pageId);
-      nodes = result.nodes;
-      nodesTruncated = result.truncated;
-      if (nodesTruncated) {
-        warnings.push(
-          "This page is too large to load fully right now, so only the first portion is shown.",
-        );
+export const getMultiPageView = query({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived || isPagePendingDeletion(page) || !isMultiPageViewPage(page)) {
+      return null;
+    }
+
+    const nodesResult = await listPageNodesForTree(ctx, page._id);
+    const nodes = nodesResult.nodes;
+    const includedPagesSection =
+      nodes
+        .filter((node) => node.parentNodeId === null)
+        .find((node) => getNodeSourceMeta(node).sectionSlot === MULTI_PAGE_INCLUDED_PAGES_SLOT) ??
+      null;
+
+    if (!includedPagesSection) {
+      return {
+        includedPages: [],
+        skippedRows: [],
+        loadWarning: "Add the Included Pages section to configure this view.",
+      };
+    }
+
+    const includeRows = nodes
+      .filter((node) => node.parentNodeId === includedPagesSection._id && !node.archived)
+      .sort((left, right) => left.position - right.position);
+    const includedPages: Array<{
+      configNodeId: Id<"nodes">;
+      pageTree: Awaited<ReturnType<typeof buildPageTreeResult>>;
+    }> = [];
+    const skippedRows: Array<{
+      configNodeId: Id<"nodes">;
+      text: string;
+      reason: string;
+    }> = [];
+    const includedPageIds = new Set<string>();
+    let remainingNodes = MAX_MULTI_PAGE_VIEW_NODES;
+    let remainingTextChars = MAX_MULTI_PAGE_VIEW_TEXT_CHARS;
+    let reachedPageLimit = false;
+
+    for (const row of includeRows) {
+      if (includedPages.length >= MAX_MULTI_PAGE_VIEW_PAGES) {
+        reachedPageLimit = true;
+        skippedRows.push({
+          configNodeId: row._id,
+          text: row.text,
+          reason: `Only the first ${MAX_MULTI_PAGE_VIEW_PAGES} included pages are shown.`,
+        });
+        continue;
       }
-    } catch (error) {
-      console.error("Failed to load page-tree nodes", {
-        pageId: args.pageId,
-        error,
+
+      const resolved = await resolveMultiPageIncludedPage(ctx.db, row);
+      const skipReason = resolved.page
+        ? getMultiPageIncludedPageSkipReason(resolved.page)
+        : (resolved.reason ?? "That page link could not be resolved.");
+      if (skipReason) {
+        skippedRows.push({
+          configNodeId: row._id,
+          text: row.text,
+          reason: skipReason,
+        });
+        continue;
+      }
+
+      const includedPage = resolved.page;
+      if (!includedPage) {
+        skippedRows.push({
+          configNodeId: row._id,
+          text: row.text,
+          reason: "That page link could not be resolved.",
+        });
+        continue;
+      }
+
+      if (includedPageIds.has(includedPage._id as string)) {
+        skippedRows.push({
+          configNodeId: row._id,
+          text: row.text,
+          reason: "This page is already included above.",
+        });
+        continue;
+      }
+
+      const pageTree = await buildPageTreeResult(ctx, includedPage, {
+        maxNodes: remainingNodes,
+        maxTextChars: remainingTextChars,
       });
-      warnings.push(
-        "Some outline items could not be loaded right now, so this page may be partially empty.",
+      includedPages.push({
+        configNodeId: row._id,
+        pageTree,
+      });
+      includedPageIds.add(includedPage._id as string);
+      remainingNodes = Math.max(0, remainingNodes - pageTree.nodes.length);
+      remainingTextChars = Math.max(
+        0,
+        remainingTextChars - pageTree.nodes.reduce((total, node) => total + node.text.length, 0),
       );
     }
 
-    let visibleBacklinks: Doc<"links">[] = [];
-    let backlinksTruncated = false;
-    if (!page.archived && !nodesTruncated) {
-      try {
-        const backlinkResult = await listPageBacklinksForTree(ctx, args.pageId);
-        backlinksTruncated = backlinkResult.truncated;
-        if (backlinksTruncated) {
-          warnings.push("Backlink counts are partial for this page.");
-        }
-        visibleBacklinks = (await filterVisibleLinks(ctx, backlinkResult.backlinks)).filter(
-          (link) => link.kind === "page",
-        );
-      } catch (error) {
-        console.error("Failed to load page-tree backlinks", {
-          pageId: args.pageId,
-          error,
-        });
-        warnings.push("Backlink metadata was skipped while loading this page.");
-      }
-    }
-
-    let nodeBacklinkCounts: Record<string, number> = {};
-    if (!page.archived && nodes.length > 0 && !nodesTruncated) {
-      try {
-        nodeBacklinkCounts = mergeNodeBacklinkCounts(
-          buildLocalNodeBacklinkCounts(nodes),
-          await buildVisibleNodeBacklinkCounts(
-            ctx,
-            nodes.map((node) => node._id),
-            { excludeSourcePageId: args.pageId },
-          ),
-        );
-      } catch (error) {
-        console.error("Failed to build page-tree node backlink counts", {
-          pageId: args.pageId,
-          error,
-        });
-        warnings.push("Some backlink badges were skipped while loading this page.");
-      }
-    }
+    const warningParts = [
+      reachedPageLimit ? `Only the first ${MAX_MULTI_PAGE_VIEW_PAGES} pages are shown.` : "",
+      remainingNodes === 0 || remainingTextChars === 0
+        ? "This multi-page view hit its load limit, so later content may be omitted."
+        : "",
+    ].filter((value) => value.length > 0);
 
     return {
-      page,
-      nodes,
-      backlinks: visibleBacklinks,
-      pageBacklinkCount: visibleBacklinks.length,
-      pageBacklinkCountTruncated: backlinksTruncated,
-      nodeBacklinkCounts,
-      loadWarning: warnings.length > 0 ? warnings.join(" ") : null,
+      includedPages,
+      skippedRows,
+      loadWarning: warningParts.length > 0 ? warningParts.join(" ") : null,
     };
   },
 });
@@ -2891,6 +3082,97 @@ export const listTasks = query({
   },
 });
 
+async function buildPageTreeResult(
+  ctx: QueryCtx,
+  page: Doc<"pages">,
+  options: {
+    maxNodes?: number;
+    maxTextChars?: number;
+  } = {},
+) {
+  const warnings: string[] = [];
+
+  let nodes: Doc<"nodes">[] = [];
+  let nodesTruncated = false;
+  try {
+    const result =
+      options.maxNodes !== undefined || options.maxTextChars !== undefined
+        ? await listPageNodesForTreeWithCaps(
+            ctx,
+            page._id,
+            options.maxNodes ?? MAX_PAGE_TREE_NODES,
+            options.maxTextChars ?? MAX_PAGE_TREE_NODE_TEXT_CHARS,
+          )
+        : await listPageNodesForTree(ctx, page._id);
+    nodes = result.nodes;
+    nodesTruncated = result.truncated;
+    if (nodesTruncated) {
+      warnings.push(
+        "This page is too large to load fully right now, so only the first portion is shown.",
+      );
+    }
+  } catch (error) {
+    console.error("Failed to load page-tree nodes", {
+      pageId: page._id,
+      error,
+    });
+    warnings.push(
+      "Some outline items could not be loaded right now, so this page may be partially empty.",
+    );
+  }
+
+  let visibleBacklinks: Doc<"links">[] = [];
+  let backlinksTruncated = false;
+  if (!page.archived && !nodesTruncated) {
+    try {
+      const backlinkResult = await listPageBacklinksForTree(ctx, page._id);
+      backlinksTruncated = backlinkResult.truncated;
+      if (backlinksTruncated) {
+        warnings.push("Backlink counts are partial for this page.");
+      }
+      visibleBacklinks = (await filterVisibleLinks(ctx, backlinkResult.backlinks)).filter(
+        (link) => link.kind === "page",
+      );
+    } catch (error) {
+      console.error("Failed to load page-tree backlinks", {
+        pageId: page._id,
+        error,
+      });
+      warnings.push("Backlink metadata was skipped while loading this page.");
+    }
+  }
+
+  let nodeBacklinkCounts: Record<string, number> = {};
+  if (!page.archived && nodes.length > 0 && !nodesTruncated) {
+    try {
+      nodeBacklinkCounts = mergeNodeBacklinkCounts(
+        buildLocalNodeBacklinkCounts(nodes),
+        await buildVisibleNodeBacklinkCounts(
+          ctx,
+          nodes.map((node) => node._id),
+          { excludeSourcePageId: page._id },
+        ),
+      );
+    } catch (error) {
+      console.error("Failed to build page-tree node backlink counts", {
+        pageId: page._id,
+        error,
+      });
+      warnings.push("Some backlink badges were skipped while loading this page.");
+    }
+  }
+
+  return {
+    page,
+    nodes,
+    backlinks: visibleBacklinks,
+    pageBacklinkCount: visibleBacklinks.length,
+    pageBacklinkCountTruncated: backlinksTruncated,
+    nodeBacklinkCounts,
+    loadWarning: warnings.length > 0 ? warnings.join(" ") : null,
+  };
+}
+
 export const createPage = mutation({
   args: {
     ownerKey: v.string(),
@@ -2901,6 +3183,7 @@ export const createPage = mutation({
         v.literal("Models"),
         v.literal("Tasks"),
         v.literal("Notes"),
+        v.literal("Views"),
         v.literal("Templates"),
         v.literal("Journal"),
         v.literal("Scratchpads"),
@@ -2915,6 +3198,7 @@ export const createPage = mutation({
         v.literal("model"),
         v.literal("journal"),
         v.literal("scratchpad"),
+        v.literal("multiPage"),
       ),
     ),
   },
@@ -3074,6 +3358,13 @@ export const createPage = mutation({
       });
     }
 
+    if (args.pageType === "multiPage") {
+      const multiPage = await ctx.db.get(pageId);
+      if (multiPage) {
+        await ensureMultiPageSections(ctx, multiPage);
+      }
+    }
+
     await enqueuePageRootEmbeddingRefresh(ctx, pageId);
 
     return pageId;
@@ -3171,6 +3462,23 @@ export const ensureJournalPageSections = mutation({
     }
 
     return await ensureJournalSections(ctx, page);
+  },
+});
+
+export const ensureMultiPagePageSections = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived || !isMultiPageViewPage(page)) {
+      throw new Error("Only multi-page views can have view sections.");
+    }
+
+    return await ensureMultiPageSections(ctx, page);
   },
 });
 

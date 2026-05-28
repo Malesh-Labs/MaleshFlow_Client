@@ -125,6 +125,7 @@ const SIDEBAR_SECTIONS = [
   "Models",
   "Tasks",
   "Notes",
+  "Views",
   "Templates",
   "Journal",
   "Scratchpads",
@@ -169,6 +170,7 @@ const ALL_PAGE_TYPE_GROUP_ORDER = [
   "Planner",
   "Task",
   "Note",
+  "View",
   "Template",
   "Journal",
   "Model",
@@ -275,7 +277,8 @@ type PageType =
   | "planner"
   | "model"
   | "journal"
-  | "scratchpad";
+  | "scratchpad"
+  | "multiPage";
 type PageDoc = Doc<"pages">;
 type PageTreeResult = {
   page: PageDoc;
@@ -284,6 +287,18 @@ type PageTreeResult = {
   pageBacklinkCount: number;
   pageBacklinkCountTruncated?: boolean;
   nodeBacklinkCounts: Record<string, number>;
+  loadWarning?: string | null;
+};
+type MultiPageViewResult = {
+  includedPages: Array<{
+    configNodeId: Id<"nodes">;
+    pageTree: PageTreeResult;
+  }>;
+  skippedRows: Array<{
+    configNodeId: Id<"nodes">;
+    text: string;
+    reason: string;
+  }>;
   loadWarning?: string | null;
 };
 type SidebarTreeResult = {
@@ -650,7 +665,8 @@ type SectionSlot =
   | "journalWhatHappened"
   | "journalFeedback"
   | "scratchpadLive"
-  | "scratchpadPrevious";
+  | "scratchpadPrevious"
+  | "multiPageIncludedPages";
 
 type TreeNode = OutlineTreeNode<{
   _id: string;
@@ -891,6 +907,8 @@ function getPageMeta(page: Doc<"pages"> | null | undefined) {
         ? "journal"
         : sourceMeta.pageType === "scratchpad"
           ? "scratchpad"
+          : sourceMeta.pageType === "multiPage"
+            ? "multiPage"
           : sourceMeta.pageType === "note" || sourceMeta.sidebarSection === "Notes"
             ? "note"
           : sourceMeta.pageType === "task" || sourceMeta.sidebarSection === "Tasks"
@@ -908,6 +926,8 @@ function getPageMeta(page: Doc<"pages"> | null | undefined) {
         ? "Journal"
         : pageType === "scratchpad"
           ? "Scratchpads"
+          : pageType === "multiPage"
+            ? "Views"
           : pageType === "note"
             ? "Notes"
             : "Tasks";
@@ -938,6 +958,9 @@ function getPageTypeLabel(page: Doc<"pages"> | null | undefined) {
   if (meta.pageType === "planner") {
     return "Planner";
   }
+  if (meta.pageType === "multiPage") {
+    return "View";
+  }
 
   return getPageTypeLabelForSection(meta.sidebarSection);
 }
@@ -950,6 +973,8 @@ function getPageTypeLabelForSection(sidebarSection: SidebarSection) {
       return "Task";
     case "Notes":
       return "Note";
+    case "Views":
+      return "View";
     case "Templates":
       return "Template";
     case "Journal":
@@ -988,6 +1013,8 @@ function getPageTypeEmoji(page: Doc<"pages"> | null | undefined) {
       return "📓";
     case "scratchpad":
       return "✏️";
+    case "multiPage":
+      return "🗂️";
     case "default":
     default: {
       const meta = getPageMeta(page);
@@ -2049,13 +2076,22 @@ function findNodeContextInTree(
 
 function findNodeContext(
   sidebarNodes: TreeNode[],
-  pageNodes: TreeNode[],
+  pageNodeForests: TreeNode[][],
   targetNodeId: string,
 ) {
-  return (
-    findNodeContextInTree(sidebarNodes, targetNodeId) ??
-    findNodeContextInTree(pageNodes, targetNodeId)
-  );
+  const sidebarMatch = findNodeContextInTree(sidebarNodes, targetNodeId);
+  if (sidebarMatch) {
+    return sidebarMatch;
+  }
+
+  for (const pageNodes of pageNodeForests) {
+    const pageMatch = findNodeContextInTree(pageNodes, targetNodeId);
+    if (pageMatch) {
+      return pageMatch;
+    }
+  }
+
+  return null;
 }
 
 function isNodeWithinSelectedSubtree(
@@ -3218,6 +3254,16 @@ function ConfiguredWorkspace({
       ? { ownerKey, pageId: selectedPageId }
       : SKIP,
   ) as PageTreeResult | null | undefined;
+  const multiPageView = useQuery(
+    api.workspace.getMultiPageView,
+    ownerKey &&
+      isOwnerKeyValid &&
+      selectedPageId &&
+      pageTree?.page &&
+      getPageMeta(pageTree.page).pageType === "multiPage"
+      ? { ownerKey, pageId: selectedPageId }
+      : SKIP,
+  ) as MultiPageViewResult | null | undefined;
   const sidebarTree = useQuery(
     api.workspace.getSidebarTree,
     ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
@@ -3324,6 +3370,7 @@ function ConfiguredWorkspace({
   );
   const ensurePlannerPageSections = useMutation(api.planner.ensurePlannerPageSections);
   const ensureJournalPageSections = useMutation(api.workspace.ensureJournalPageSections);
+  const ensureMultiPagePageSections = useMutation(api.workspace.ensureMultiPagePageSections);
   const renamePageRaw = useMutation(api.workspace.renamePage);
   const archivePage = useMutation(api.workspace.archivePage);
   const setPlannerScanExcludedRaw = useMutation(api.workspace.setPlannerScanExcluded);
@@ -3673,6 +3720,7 @@ function ConfiguredWorkspace({
   const hasRequestedTaskSidebarSection = useRef(new Set<string>());
   const hasRequestedPlannerSections = useRef(new Set<string>());
   const hasRequestedJournalSections = useRef(new Set<string>());
+  const hasRequestedMultiPageSections = useRef(new Set<string>());
   const suppressNodeSelectionClearRef = useRef(0);
   const textSelectionGestureRef = useRef<{
     anchorNodeId: string;
@@ -3839,12 +3887,19 @@ function ConfiguredWorkspace({
     (selectedPageId !== null && typeof pageTree === "undefined");
   const activePageTree =
     pageTree ?? (selectedPageId !== null && isMainPaneLoading ? lastResolvedPageTree : null);
+  const historyAuxiliaryPageIds = useMemo(
+    () => [
+      ...(sidebarTree?.page ? [sidebarTree.page._id] : []),
+      ...((multiPageView?.includedPages ?? []).map((entry) => entry.pageTree.page._id)),
+    ],
+    [multiPageView?.includedPages, sidebarTree?.page],
+  );
 
   const history = useWorkspaceHistoryController({
     ownerKey,
     selectedPageId,
     setSelectedPageId,
-    auxiliaryPageIds: sidebarTree?.page ? [sidebarTree.page._id] : [],
+    auxiliaryPageIds: historyAuxiliaryPageIds,
     renamePage: renamePageRaw,
     updateNode: updateNodeRaw,
     moveNode: moveNodeRaw,
@@ -3937,6 +3992,18 @@ function ConfiguredWorkspace({
   const journalFeedbackSection = findSectionNode(tree, "journalFeedback");
   const scratchpadLiveSection = findSectionNode(tree, "scratchpadLive");
   const scratchpadPreviousSection = findSectionNode(tree, "scratchpadPrevious");
+  const multiPageIncludedPagesSection = findSectionNode(tree, "multiPageIncludedPages");
+  const multiPageIncludedPageTrees = useMemo(
+    () =>
+      (multiPageView?.includedPages ?? []).map((entry) => ({
+        configNodeId: entry.configNodeId as string,
+        pageTree: entry.pageTree,
+        tree: toTreeNodes(entry.pageTree.nodes),
+        nodeMap: new Map(entry.pageTree.nodes.map((node) => [node._id as string, node])),
+        nodeBacklinkCounts: new Map(Object.entries(entry.pageTree.nodeBacklinkCounts ?? {})),
+      })),
+    [multiPageView?.includedPages],
+  );
   const modelPromptLines = useMemo(
     () =>
       (modelSection?.children ?? [])
@@ -4040,6 +4107,11 @@ function ConfiguredWorkspace({
                 [scratchpadLiveSection?._id, scratchpadPreviousSection?._id].filter(Boolean) as string[],
               ),
             )
+          : pageMeta.pageType === "multiPage"
+            ? collectChildren(
+                tree,
+                new Set([multiPageIncludedPagesSection?._id].filter(Boolean) as string[]),
+              )
           : tree;
   const sectionDepthOffset = isMobileLayout ? 0 : 1;
   const getPlannerSidebarMaxWidth = useCallback(() => {
@@ -4169,13 +4241,17 @@ function ConfiguredWorkspace({
     (node): node is TreeNode => Boolean(node),
   );
   const scratchpadSelectionRoots = scratchpadVisibleRoots.flatMap((node) => node.children);
+  const multiPageVisibleRoots = [multiPageIncludedPagesSection].filter(
+    (node): node is TreeNode => Boolean(node),
+  );
   const preHydrationCollapsedNodeIds = useMemo(
     () =>
       new Set([
         ...collectExpandableNodeIds(sidebarNodes),
         ...collectExpandableNodeIds(tree),
+        ...multiPageIncludedPageTrees.flatMap((entry) => collectExpandableNodeIds(entry.tree)),
       ]),
-    [sidebarNodes, tree],
+    [multiPageIncludedPageTrees, sidebarNodes, tree],
   );
   const effectiveCollapsedNodeIds = hasHydratedSessionUiState
     ? collapsedNodeIds
@@ -4197,20 +4273,33 @@ function ConfiguredWorkspace({
               [...scratchpadSelectionRoots, ...genericRoots],
               effectiveCollapsedNodeIds,
             )
+        : pageMeta.pageType === "multiPage"
+          ? flattenTreeNodes([...multiPageVisibleRoots, ...genericRoots], effectiveCollapsedNodeIds)
         : flattenTreeNodes(genericRoots, effectiveCollapsedNodeIds);
   const sidebarVisibleRows = flattenTreeNodes(sidebarNodes, effectiveCollapsedNodeIds);
   const plannerSidebarVisibleRows =
     pageMeta.pageType === "planner" && plannerSidebarSection
       ? flattenTreeNodes(plannerSidebarSection.children, effectiveCollapsedNodeIds)
       : [];
+  const multiPageIncludedVisibleRows =
+    pageMeta.pageType === "multiPage"
+      ? multiPageIncludedPageTrees.flatMap((entry) =>
+          flattenTreeNodes(entry.tree, effectiveCollapsedNodeIds),
+        )
+      : [];
   const visibleNodeOrder = [
     ...sidebarVisibleRows,
     ...pageVisibleRows,
     ...plannerSidebarVisibleRows,
+    ...multiPageIncludedVisibleRows,
   ].map((node) => node._id);
+  const workspacePageForests = useMemo(
+    () => [tree, ...multiPageIncludedPageTrees.map((entry) => entry.tree)],
+    [multiPageIncludedPageTrees, tree],
+  );
   const selectionTrees = useMemo(
-    () => [...sidebarNodes, ...tree],
-    [sidebarNodes, tree],
+    () => [...sidebarNodes, ...workspacePageForests.flat()],
+    [sidebarNodes, workspacePageForests],
   );
   const revealNodes = useMemo(() => {
     if (!pendingRevealNodeId) {
@@ -4225,8 +4314,15 @@ function ConfiguredWorkspace({
       return activePageTree?.nodes ?? null;
     }
 
+    const includedPageTree = multiPageIncludedPageTrees.find((entry) =>
+      entry.pageTree.nodes.some((node) => (node._id as string) === pendingRevealNodeId),
+    );
+    if (includedPageTree) {
+      return includedPageTree.pageTree.nodes;
+    }
+
     return null;
-  }, [activePageTree?.nodes, pendingRevealNodeId, sidebarTree?.nodes]);
+  }, [activePageTree?.nodes, multiPageIncludedPageTrees, pendingRevealNodeId, sidebarTree?.nodes]);
   const uncategorizedPages = useMemo(
     () =>
       (pages ?? [])
@@ -4360,8 +4456,13 @@ function ConfiguredWorkspace({
     for (const node of activePageTree?.nodes ?? []) {
       next.set(node._id as string, node);
     }
+    for (const entry of multiPageIncludedPageTrees) {
+      for (const node of entry.pageTree.nodes) {
+        next.set(node._id as string, node);
+      }
+    }
     return next;
-  }, [activePageTree?.nodes, sidebarTree?.nodes]);
+  }, [activePageTree?.nodes, multiPageIncludedPageTrees, sidebarTree?.nodes]);
   const paletteContextNodeId =
     selectedNodeIds.size === 1 ? ([...selectedNodeIds][0] ?? null) : actionContextNodeId;
   const taskScheduleTargetNode = useMemo(() => {
@@ -5753,6 +5854,37 @@ function ConfiguredWorkspace({
   ]);
 
   useEffect(() => {
+    if (!ownerKey || !isOwnerKeyValid || !selectedPage || pageMeta.pageType !== "multiPage") {
+      return;
+    }
+
+    const pageId = selectedPage._id as string;
+    if (multiPageIncludedPagesSection) {
+      hasRequestedMultiPageSections.current.delete(pageId);
+      return;
+    }
+
+    if (hasRequestedMultiPageSections.current.has(pageId)) {
+      return;
+    }
+
+    hasRequestedMultiPageSections.current.add(pageId);
+    void ensureMultiPagePageSections({
+      ownerKey,
+      pageId: selectedPage._id,
+    }).catch(() => {
+      hasRequestedMultiPageSections.current.delete(pageId);
+    });
+  }, [
+    ensureMultiPagePageSections,
+    isOwnerKeyValid,
+    multiPageIncludedPagesSection,
+    ownerKey,
+    pageMeta.pageType,
+    selectedPage,
+  ]);
+
+  useEffect(() => {
     if (!isSidebarQueryLoading) {
       setShowSidebarDiagnostics(false);
       return;
@@ -6093,6 +6225,8 @@ function ConfiguredWorkspace({
             ? "task"
           : section === "Notes"
             ? "note"
+          : section === "Views"
+            ? "multiPage"
           : section === "Journal"
             ? "journal"
             : section === "Scratchpads"
@@ -6101,6 +6235,8 @@ function ConfiguredWorkspace({
       const title =
         section === "Models"
           ? "Untitled Model"
+          : section === "Views"
+            ? "Untitled View"
           : section === "Journal"
             ? formatLocalDateTitle()
             : section === "Scratchpads"
@@ -7251,7 +7387,7 @@ function ConfiguredWorkspace({
       const requestedRootNodeIds =
         payload.rootNodeIds.length > 0 ? payload.rootNodeIds : [payload.nodeId];
       const rootNodeContexts = [...new Set(requestedRootNodeIds)]
-        .map((nodeId) => findNodeContext(sidebarNodes, tree, nodeId))
+        .map((nodeId) => findNodeContext(sidebarNodes, workspacePageForests, nodeId))
         .filter(
           (
             context,
@@ -7348,7 +7484,15 @@ function ConfiguredWorkspace({
         focusAfterRedoId: historyEntries[historyEntries.length - 1]!.focusEditorId,
       });
     },
-    [executeNodeMoveBatch, history, pagesById, selectSingleNode, setExplicitSelectedNodeIds, sidebarNodes, tree],
+    [
+      executeNodeMoveBatch,
+      history,
+      pagesById,
+      selectSingleNode,
+      setExplicitSelectedNodeIds,
+      sidebarNodes,
+      workspacePageForests,
+    ],
   );
 
   const focusLastVisiblePageNode = useCallback(() => {
@@ -7389,7 +7533,7 @@ function ConfiguredWorkspace({
       }
 
       const contexts = selectedRootNodeIds
-        .map((nodeId) => findNodeContext(sidebarNodes, tree, nodeId))
+        .map((nodeId) => findNodeContext(sidebarNodes, workspacePageForests, nodeId))
         .filter(
           (
             context,
@@ -7540,8 +7684,8 @@ function ConfiguredWorkspace({
       selectedNodeIds,
       setDragSelection,
       sidebarNodes,
-      tree,
       visibleNodeOrder,
+      workspacePageForests,
       workspaceNodeMap,
     ],
   );
@@ -7573,7 +7717,7 @@ function ConfiguredWorkspace({
       }
 
       const contexts = selectedRootNodeIds
-        .map((nodeId) => findNodeContext(sidebarNodes, tree, nodeId))
+        .map((nodeId) => findNodeContext(sidebarNodes, workspacePageForests, nodeId))
         .filter(
           (
             context,
@@ -7723,8 +7867,8 @@ function ConfiguredWorkspace({
       setDragSelection,
       setSelectedNodeIds,
       sidebarNodes,
-      tree,
       visibleNodeOrder,
+      workspacePageForests,
       workspaceNodeMap,
     ],
   );
@@ -7740,7 +7884,7 @@ function ConfiguredWorkspace({
         return;
       }
 
-      const context = findNodeContext(sidebarNodes, tree, nodeId);
+      const context = findNodeContext(sidebarNodes, workspacePageForests, nodeId);
       if (!context || context.node.children.length === 0) {
         return;
       }
@@ -7755,7 +7899,7 @@ function ConfiguredWorkspace({
         return next;
       });
     },
-    [selectedNodeIds, sidebarNodes, tree, updateCollapsedNodeIds],
+    [selectedNodeIds, sidebarNodes, updateCollapsedNodeIds, workspacePageForests],
   );
 
   const toggleHighlightedNodeKind = useCallback(async () => {
@@ -8125,9 +8269,7 @@ function ConfiguredWorkspace({
     }
 
     const totalDeletedNodeCount = deletableNodes.reduce((total, node) => {
-      const treeNode =
-        findTreeNodeById(tree, node._id as string) ??
-        findTreeNodeById(sidebarNodes, node._id as string);
+      const treeNode = findTreeNodeById(selectionTrees, node._id as string);
       return total + (treeNode ? countTreeNodeSubtree(treeNode) : 1);
     }, 0);
 
@@ -8144,7 +8286,7 @@ function ConfiguredWorkspace({
     const nodeIdsToArchive: Id<"nodes">[] = [];
 
     for (const node of deletableNodes) {
-      const context = findNodeContext(sidebarNodes, tree, node._id as string);
+      const context = findNodeContext(sidebarNodes, workspacePageForests, node._id as string);
       const focusAfterRedoId =
         context?.previousSibling?._id
           ? getNodeEditorId(context.previousSibling._id as Id<"nodes">)
@@ -8190,9 +8332,10 @@ function ConfiguredWorkspace({
     history,
     pagesById,
     selectedNodeIds,
+    selectionTrees,
     sidebarNodes,
-    tree,
     visibleNodeOrder,
+    workspacePageForests,
     workspaceNodeMap,
   ]);
 
@@ -11757,6 +11900,136 @@ function ConfiguredWorkspace({
                       />
                     </div>
                   </div>
+                ) : pageMeta.pageType === "multiPage" ? (
+                  <div className="space-y-10">
+                    <PageSection
+                      title="Included Pages"
+                      sectionNode={multiPageIncludedPagesSection}
+                      ownerKey={ownerKey}
+                      pageId={selectedPage._id}
+                      nodeBacklinkCounts={pageNodeBacklinkCounts}
+                      nodeMap={nodeMap}
+                      createNodesBatch={createNodesBatch}
+                      insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+                      updateNode={updateNode}
+                      moveNode={moveNode}
+                      insertNodeAbove={insertNodeAbove}
+                      splitNode={splitNode}
+                      replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                      setNodeTreeArchived={setNodeTreeArchived}
+                      isPageReadOnly={isPageArchived}
+                      collapsedNodeIds={effectiveCollapsedNodeIds}
+                      pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
+                      selectedNodeIds={selectedNodeIds}
+                      selectionAnchorNodeId={selectionAnchorNodeId}
+                      onToggleNodeCollapsed={toggleNodeCollapsed}
+                      onSelectSingleNode={selectSingleNode}
+                      onSelectNodeRange={selectNodeRange}
+                      onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
+                      pendingInsertedComposer={pendingInsertedComposer}
+                      onOpenInsertedComposer={openInsertedComposer}
+                      onClearInsertedComposer={clearInsertedComposer}
+                      onBeginTextEditing={clearNodeSelection}
+                      activeDraggedNodeId={activeDraggedNodeId}
+                      activeDraggedNodePayload={activeDraggedNodePayload}
+                      onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                      onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                      onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                      buildDraggedNodePayload={buildDraggedNodePayload}
+                      onDropDraggedNodes={dropDraggedNodes}
+                      onSelectionStart={beginNodeSelection}
+                      onSelectionExtend={extendNodeSelection}
+                      availableTags={sortedTags}
+                      pagesByTitle={pagesByTitle}
+                      pagesById={pagesById}
+                      favoritedNodeIds={favoritedNodeIds}
+                      onOpenPage={handleSelectPage}
+                      onOpenNode={handleOpenLinkedNode}
+                      onOpenTag={openFindPaletteForQuery}
+                      onOpenFindQuery={openFindPaletteForQuery}
+                      onToggleNodeFavorite={toggleNodeFavorite}
+                      recurringCompletionMode={recurringCompletionMode}
+                      depthOffset={sectionDepthOffset}
+                    />
+
+                    <div className="space-y-8">
+                      {typeof multiPageView === "undefined" ? (
+                        <div className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-4 py-3 text-sm text-[var(--workspace-text-subtle)]">
+                          Loading included pages…
+                        </div>
+                      ) : multiPageIncludedPageTrees.length === 0 ? (
+                        <div className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-4 py-3 text-sm text-[var(--workspace-text-subtle)]">
+                          Add page links under Included Pages to show pages here.
+                        </div>
+                      ) : (
+                        multiPageIncludedPageTrees.map((entry) => (
+                          <EmbeddedMultiPageBlock
+                            key={entry.pageTree.page._id}
+                            pageTree={entry.pageTree}
+                            tree={entry.tree}
+                            nodeMap={entry.nodeMap}
+                            nodeBacklinkCounts={entry.nodeBacklinkCounts}
+                            ownerKey={ownerKey}
+                            createNodesBatch={createNodesBatch}
+                            insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+                            updateNode={updateNode}
+                            moveNode={moveNode}
+                            insertNodeAbove={insertNodeAbove}
+                            splitNode={splitNode}
+                            replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                            setNodeTreeArchived={setNodeTreeArchived}
+                            collapsedNodeIds={effectiveCollapsedNodeIds}
+                            pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
+                            selectedNodeIds={selectedNodeIds}
+                            selectionAnchorNodeId={selectionAnchorNodeId}
+                            onToggleNodeCollapsed={toggleNodeCollapsed}
+                            onSelectSingleNode={selectSingleNode}
+                            onSelectNodeRange={selectNodeRange}
+                            onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
+                            pendingInsertedComposer={pendingInsertedComposer}
+                            onOpenInsertedComposer={openInsertedComposer}
+                            onClearInsertedComposer={clearInsertedComposer}
+                            onBeginTextEditing={clearNodeSelection}
+                            activeDraggedNodeId={activeDraggedNodeId}
+                            activeDraggedNodePayload={activeDraggedNodePayload}
+                            onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                            onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                            onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                            buildDraggedNodePayload={buildDraggedNodePayload}
+                            onDropDraggedNodes={dropDraggedNodes}
+                            onSelectionStart={beginNodeSelection}
+                            onSelectionExtend={extendNodeSelection}
+                            availableTags={sortedTags}
+                            pagesByTitle={pagesByTitle}
+                            pagesById={pagesById}
+                            favoritedNodeIds={favoritedNodeIds}
+                            onOpenPage={handleSelectPage}
+                            onOpenNode={handleOpenLinkedNode}
+                            onOpenTag={openFindPaletteForQuery}
+                            onOpenFindQuery={openFindPaletteForQuery}
+                            onToggleNodeFavorite={toggleNodeFavorite}
+                            recurringCompletionMode={recurringCompletionMode}
+                            completeTaskPageTask={completeTaskPageTask}
+                            depthOffset={sectionDepthOffset}
+                          />
+                        ))
+                      )}
+                      {multiPageView?.loadWarning ? (
+                        <p className="text-sm text-[var(--workspace-text-subtle)]">
+                          {multiPageView.loadWarning}
+                        </p>
+                      ) : null}
+                      {multiPageView?.skippedRows.length ? (
+                        <div className="space-y-2 border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-4 py-3 text-sm text-[var(--workspace-text-subtle)]">
+                          {multiPageView.skippedRows.map((row) => (
+                            <p key={row.configNodeId}>
+                              {row.reason}
+                            </p>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
                 ) : (
                   <div className="space-y-1">
                     <OutlineNodeList
@@ -12760,6 +13033,305 @@ function ShortcutsSheet({
         </div>
       </div>
     </div>
+  );
+}
+
+function EmbeddedMultiPageBlock({
+  pageTree,
+  tree,
+  nodeMap,
+  nodeBacklinkCounts,
+  ownerKey,
+  createNodesBatch,
+  insertOutlineClipboardNodes,
+  updateNode,
+  moveNode,
+  insertNodeAbove,
+  splitNode,
+  replaceNodeAndInsertSiblings,
+  setNodeTreeArchived,
+  collapsedNodeIds,
+  pendingSyncNodeIds,
+  selectedNodeIds,
+  selectionAnchorNodeId,
+  onToggleNodeCollapsed,
+  onSelectSingleNode,
+  onSelectNodeRange,
+  onSuppressTextEditingSelectionClear,
+  pendingInsertedComposer,
+  onOpenInsertedComposer,
+  onClearInsertedComposer,
+  onBeginTextEditing,
+  activeDraggedNodeId,
+  activeDraggedNodePayload,
+  onSetActiveDraggedNodeId,
+  onSetActiveDraggedNodePayload,
+  onSetSelectedNodeIds,
+  buildDraggedNodePayload,
+  onDropDraggedNodes,
+  onSelectionStart,
+  onSelectionExtend,
+  availableTags,
+  pagesByTitle,
+  pagesById,
+  favoritedNodeIds,
+  onOpenPage,
+  onOpenNode,
+  onOpenTag,
+  onOpenFindQuery,
+  onToggleNodeFavorite,
+  recurringCompletionMode,
+  completeTaskPageTask,
+  depthOffset,
+}: {
+  pageTree: PageTreeResult;
+  tree: TreeNode[];
+  nodeMap: Map<string, Doc<"nodes">>;
+  nodeBacklinkCounts: Map<string, number>;
+  ownerKey: string;
+  createNodesBatch: CreateNodesBatchMutation;
+  insertOutlineClipboardNodes: InsertOutlineClipboardNodesFn;
+  updateNode: UpdateNodeMutation;
+  moveNode: MoveNodeMutation;
+  insertNodeAbove: InsertNodeAboveMutation;
+  splitNode: SplitNodeMutation;
+  replaceNodeAndInsertSiblings: ReplaceNodeAndInsertSiblingsMutation;
+  setNodeTreeArchived: SetNodeTreeArchivedMutation;
+  collapsedNodeIds: Set<string>;
+  pendingSyncNodeIds: Set<string>;
+  selectedNodeIds: Set<string>;
+  selectionAnchorNodeId: string | null;
+  onToggleNodeCollapsed: (nodeId: string) => void;
+  onSelectSingleNode: (nodeId: string) => void;
+  onSelectNodeRange: (anchorNodeId: string, currentNodeId: string) => void;
+  onSuppressTextEditingSelectionClear: () => void;
+  pendingInsertedComposer: PendingInsertedComposer | null;
+  onOpenInsertedComposer: (
+    pageId: Id<"pages">,
+    parentNodeId: Id<"nodes"> | null,
+    afterNodeId: Id<"nodes">,
+    defaultKind?: "note" | "task",
+  ) => void;
+  onClearInsertedComposer: () => void;
+  onBeginTextEditing: () => void;
+  activeDraggedNodeId: string | null;
+  activeDraggedNodePayload: DraggedNodePayload | null;
+  onSetActiveDraggedNodeId: (nodeId: string | null) => void;
+  onSetActiveDraggedNodePayload: (payload: DraggedNodePayload | null) => void;
+  onSetSelectedNodeIds: (nodeIds: string[]) => void;
+  buildDraggedNodePayload: BuildDraggedNodePayloadFn;
+  onDropDraggedNodes: DropDraggedNodesFn;
+  onSelectionStart: (nodeId: string) => void;
+  onSelectionExtend: (nodeId: string) => void;
+  availableTags: SidebarTagResult[];
+  pagesByTitle: Map<string, PageDoc>;
+  pagesById: Map<string, PageDoc>;
+  favoritedNodeIds: Set<string>;
+  onOpenPage: (pageId: Id<"pages">) => void;
+  onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
+  onOpenTag: (tag: string) => void;
+  onOpenFindQuery: (query: string) => void;
+  onToggleNodeFavorite: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
+  recurringCompletionMode: RecurringCompletionMode;
+  completeTaskPageTask: CompleteTaskPageTaskMutation;
+  depthOffset: number;
+}) {
+  const page = pageTree.page;
+  const pageId = page._id;
+  const pageMeta = getPageMeta(page);
+  const isPageReadOnly = page.archived;
+  const modelSection = findSectionNode(tree, "model");
+  const recentExamplesSection = findSectionNode(tree, "recentExamples");
+  const taskSidebarSection = findSectionNode(tree, "taskSidebar");
+  const journalThoughtsSection = findSectionNode(tree, "journalThoughts");
+  const journalWhatHappenedSection = findSectionNode(tree, "journalWhatHappened");
+  const journalFeedbackSection = findSectionNode(tree, "journalFeedback");
+  const scratchpadLiveSection = findSectionNode(tree, "scratchpadLive");
+  const scratchpadPreviousSection = findSectionNode(tree, "scratchpadPrevious");
+  const excludedSectionIds =
+    pageMeta.pageType === "task"
+      ? new Set([taskSidebarSection?._id].filter(Boolean) as string[])
+      : pageMeta.pageType === "model"
+        ? new Set([modelSection?._id, recentExamplesSection?._id].filter(Boolean) as string[])
+        : pageMeta.pageType === "journal"
+          ? new Set(
+              [
+                journalThoughtsSection?._id,
+                journalWhatHappenedSection?._id,
+                journalFeedbackSection?._id,
+              ].filter(Boolean) as string[],
+            )
+          : pageMeta.pageType === "scratchpad"
+            ? new Set(
+                [scratchpadLiveSection?._id, scratchpadPreviousSection?._id].filter(Boolean) as string[],
+              )
+            : new Set<string>();
+  const genericRoots = collectChildren(tree, excludedSectionIds);
+  const dropWithinPage = async (payload: DraggedNodePayload, dropTarget: NodeDropTarget) => {
+    if (payload.pageId !== pageId) {
+      return;
+    }
+    await onDropDraggedNodes(payload, dropTarget);
+  };
+
+  const sectionProps = {
+    ownerKey,
+    pageId,
+    nodeBacklinkCounts,
+    nodeMap,
+    createNodesBatch,
+    insertOutlineClipboardNodes,
+    updateNode,
+    moveNode,
+    insertNodeAbove,
+    splitNode,
+    replaceNodeAndInsertSiblings,
+    setNodeTreeArchived,
+    isPageReadOnly,
+    collapsedNodeIds,
+    pendingSyncNodeIds,
+    selectedNodeIds,
+    selectionAnchorNodeId,
+    onToggleNodeCollapsed,
+    onSelectSingleNode,
+    onSelectNodeRange,
+    onSuppressTextEditingSelectionClear,
+    pendingInsertedComposer,
+    onOpenInsertedComposer,
+    onClearInsertedComposer,
+    onBeginTextEditing,
+    activeDraggedNodeId,
+    activeDraggedNodePayload,
+    onSetActiveDraggedNodeId,
+    onSetActiveDraggedNodePayload,
+    onSetSelectedNodeIds,
+    buildDraggedNodePayload,
+    onDropDraggedNodes: dropWithinPage,
+    onSelectionStart,
+    onSelectionExtend,
+    availableTags,
+    pagesByTitle,
+    pagesById,
+    favoritedNodeIds,
+    onOpenPage,
+    onOpenNode,
+    onOpenTag,
+    onOpenFindQuery,
+    onToggleNodeFavorite,
+    recurringCompletionMode,
+    completeTaskPageTask,
+  };
+
+  return (
+    <section className="border-t border-[var(--workspace-border-subtle)] pt-8">
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <button
+          type="button"
+          onClick={() => onOpenPage(pageId)}
+          className="flex min-w-0 items-center gap-3 text-left text-2xl font-semibold tracking-tight text-[var(--workspace-text)] transition hover:text-[var(--workspace-accent)]"
+        >
+          <span aria-hidden="true">{getPageTypeEmoji(page)}</span>
+          <span className="min-w-0 [overflow-wrap:anywhere]">{page.title}</span>
+        </button>
+        <span className="text-xs font-semibold uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
+          {getPageTypeDisplayLabel(page)}
+        </span>
+      </div>
+      {pageTree.loadWarning ? (
+        <p className="mb-4 text-sm text-[var(--workspace-text-subtle)]">
+          {pageTree.loadWarning}
+        </p>
+      ) : null}
+      {pageMeta.pageType === "task" ? (
+        <div className="space-y-6">
+          <OutlineNodeList
+            nodes={genericRoots}
+            depth={0}
+            {...sectionProps}
+          />
+          {taskSidebarSection ? (
+            <PageSection
+              title="Sidebar"
+              sectionNode={taskSidebarSection}
+              compact
+              depthOffset={depthOffset}
+              {...sectionProps}
+            />
+          ) : null}
+        </div>
+      ) : pageMeta.pageType === "model" ? (
+        <div className="divide-y divide-[var(--workspace-border-subtle)]">
+          <div className="pb-6">
+            <PageSection
+              title="Model"
+              sectionNode={modelSection}
+              depthOffset={depthOffset}
+              {...sectionProps}
+            />
+          </div>
+          <div className="pt-6">
+            <PageSection
+              title="Recent"
+              sectionNode={recentExamplesSection}
+              depthOffset={depthOffset}
+              {...sectionProps}
+            />
+          </div>
+        </div>
+      ) : pageMeta.pageType === "journal" ? (
+        <div className="divide-y divide-[var(--workspace-border-subtle)]">
+          <div className="pb-6">
+            <PageSection
+              title="Thoughts/Stuff"
+              sectionNode={journalThoughtsSection}
+              depthOffset={depthOffset}
+              {...sectionProps}
+            />
+          </div>
+          <div className="py-6">
+            <PageSection
+              title="What happened"
+              sectionNode={journalWhatHappenedSection}
+              depthOffset={depthOffset}
+              {...sectionProps}
+            />
+          </div>
+          <div className="pt-6">
+            <PageSection
+              title="Feedback"
+              sectionNode={journalFeedbackSection}
+              depthOffset={depthOffset}
+              {...sectionProps}
+            />
+          </div>
+        </div>
+      ) : pageMeta.pageType === "scratchpad" ? (
+        <div className="divide-y divide-[var(--workspace-border-subtle)]">
+          <div className="pb-6">
+            <PageSection
+              title="Live"
+              sectionNode={scratchpadLiveSection}
+              depthOffset={depthOffset}
+              {...sectionProps}
+            />
+          </div>
+          <div className="pt-6">
+            <PageSection
+              title="Previous"
+              sectionNode={scratchpadPreviousSection}
+              depthOffset={depthOffset}
+              {...sectionProps}
+            />
+          </div>
+        </div>
+      ) : (
+        <OutlineNodeList
+          nodes={genericRoots}
+          depth={0}
+          {...sectionProps}
+        />
+      )}
+    </section>
   );
 }
 
