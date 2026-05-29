@@ -6053,7 +6053,7 @@ function ConfiguredWorkspace({
     const nextPageTitle =
       selectedPage?.title ??
       (selectedPageId ? pagesById.get(selectedPageId as string)?.title ?? null : null);
-    const nextDocumentTitle = getDocumentTitle(nextPageTitle);
+    const nextDocumentTitle = getDocumentTitle(focusedNodeLabel || nextPageTitle);
 
     if (document.title !== nextDocumentTitle) {
       document.title = nextDocumentTitle;
@@ -6061,7 +6061,7 @@ function ConfiguredWorkspace({
 
     const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     window.history.replaceState(window.history.state, nextDocumentTitle, currentUrl);
-  }, [pagesById, selectedPage?.title, selectedPageId]);
+  }, [focusedNodeLabel, pagesById, selectedPage?.title, selectedPageId]);
 
   useEffect(() => {
     if (!locationFocusedNodeId) {
@@ -9535,6 +9535,9 @@ function ConfiguredWorkspace({
         return;
       }
 
+      const targetNodeTitle =
+        normalizeNodeLinkPreviewDisplay(targetNode.text).text || targetPage.title;
+
       setIsWorkspaceChatOpen(false);
       setPendingPalettePageAction(null);
       setActionContextSelectedNodeIds([]);
@@ -9551,7 +9554,7 @@ function ConfiguredWorkspace({
         next.delete(nodeId);
         return next;
       });
-      writeFocusedNodeToHistory(targetPageId, nodeId, "push", targetPage.title);
+      writeFocusedNodeToHistory(targetPageId, nodeId, "push", targetNodeTitle);
       setPendingRevealNodeId(null);
       setPaletteOpen(false);
       setPaletteQuery("");
