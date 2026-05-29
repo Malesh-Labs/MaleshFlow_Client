@@ -6053,7 +6053,9 @@ function ConfiguredWorkspace({
     const nextPageTitle =
       selectedPage?.title ??
       (selectedPageId ? pagesById.get(selectedPageId as string)?.title ?? null : null);
-    const nextDocumentTitle = getDocumentTitle(focusedNodeLabel || nextPageTitle);
+    const nextDocumentTitle = getDocumentTitle(
+      isWorkspaceChatOpen ? "AI Chat" : focusedNodeLabel || nextPageTitle,
+    );
 
     if (document.title !== nextDocumentTitle) {
       document.title = nextDocumentTitle;
@@ -6061,7 +6063,7 @@ function ConfiguredWorkspace({
 
     const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     window.history.replaceState(window.history.state, nextDocumentTitle, currentUrl);
-  }, [focusedNodeLabel, pagesById, selectedPage?.title, selectedPageId]);
+  }, [focusedNodeLabel, isWorkspaceChatOpen, pagesById, selectedPage?.title, selectedPageId]);
 
   useEffect(() => {
     if (!locationFocusedNodeId) {
