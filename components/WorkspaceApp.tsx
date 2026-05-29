@@ -13871,14 +13871,20 @@ function getLinkPreviewTextClass({
     : "text-[var(--workspace-brand)]";
 }
 
-function getTagPreviewTextClass({
+function getTagPreviewClass({
   interactive,
+  isCompleted,
 }: {
   interactive: boolean;
+  isCompleted: boolean;
 }) {
-  return interactive
-    ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text-subtle)]"
-    : "text-[var(--workspace-text-faint)]";
+  return clsx(
+    "inline-block max-w-full align-baseline rounded-full border border-[var(--workspace-border-subtle)] bg-[color-mix(in_srgb,var(--workspace-brand)_10%,transparent)] px-1.5 py-[0.08rem] text-[0.9em] leading-[1.25] text-[var(--workspace-text-faint)] no-underline [overflow-wrap:anywhere]",
+    interactive
+      ? "cursor-pointer transition hover:border-[var(--workspace-accent)] hover:bg-[color-mix(in_srgb,var(--workspace-brand)_16%,transparent)] hover:text-[var(--workspace-text-subtle)]"
+      : "",
+    isCompleted ? "opacity-70" : "",
+  );
 }
 
 function LinkedTextPreview({
@@ -13949,16 +13955,13 @@ function LinkedTextPreview({
               event.stopPropagation();
               onOpenTag(segment.text);
             }}
-            className={clsx(
-              "inline cursor-pointer decoration-[1.5px] underline-offset-[3px] transition",
-              getTagPreviewTextClass({ interactive: true }),
-            )}
+            className={getTagPreviewClass({ interactive: true, isCompleted })}
             style={getInlinePreviewStyle({
               strike: segment.strike || isCompleted,
               italic: segment.italic,
               bold: segment.bold,
               code: segment.code,
-              underline: true,
+              underline: false,
             })}
           >
             {segment.text}
@@ -14166,16 +14169,13 @@ function LinkPreviewMeasure({
         ) : segment.kind === "tag" ? (
           <span
             key={segment.key}
-            className={clsx(
-              "inline decoration-[1.5px] underline-offset-[3px]",
-              getTagPreviewTextClass({ interactive: false }),
-            )}
+            className={getTagPreviewClass({ interactive: false, isCompleted })}
             style={getInlinePreviewStyle({
               strike: segment.strike || isCompleted,
               italic: segment.italic,
               bold: segment.bold,
               code: segment.code,
-              underline: true,
+              underline: false,
             })}
           >
             {segment.text}
