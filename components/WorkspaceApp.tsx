@@ -11,7 +11,9 @@ import {
 } from "convex/react";
 import {
   Component,
+  createContext,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -135,6 +137,7 @@ const OWNER_KEY_EVENT = "maleshflow-owner-key-change";
 const LAST_PAGE_STORAGE_KEY = "maleshflow-last-page-id";
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "maleshflow-sidebar-collapsed";
 const COLLAPSED_NODES_STORAGE_KEY = "maleshflow-collapsed-node-ids";
+const FOCUSED_NODE_SEARCH_PARAM = "zoom";
 const SIDEBAR_TEXT_SECTION_COLLAPSE_STORAGE_KEY =
   "maleshflow-sidebar-text-section-collapsed";
 const UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY =
@@ -683,6 +686,8 @@ type TreeNode = OutlineTreeNode<{
   archived: boolean;
   sourceMeta?: Record<string, unknown> | null;
 }>;
+
+const NodeZoomContext = createContext<(nodeId: string) => void>(() => undefined);
 
 function useOwnerKey() {
   const ownerKey = useSyncExternalStore(
@@ -1487,6 +1492,15 @@ function readPageIdFromLocation() {
   return url.searchParams.get("page");
 }
 
+function readFocusedNodeIdFromLocation() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  const url = new URL(window.location.href);
+  return url.searchParams.get(FOCUSED_NODE_SEARCH_PARAM);
+}
+
 function focusWorkspaceAiChatInput() {
   if (typeof document === "undefined") {
     return;
@@ -1511,11 +1525,40 @@ function writePageIdToHistory(
 
   const url = new URL(window.location.href);
   url.searchParams.delete("node");
+  url.searchParams.delete(FOCUSED_NODE_SEARCH_PARAM);
   if (pageId) {
     url.searchParams.set("page", pageId);
   } else {
     url.searchParams.delete("page");
   }
+
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+  const nextTitle = getDocumentTitle(pageTitle);
+  if (document.title !== nextTitle) {
+    document.title = nextTitle;
+  }
+  if (mode === "replace") {
+    window.history.replaceState({}, nextTitle, nextUrl);
+    return;
+  }
+
+  window.history.pushState({}, nextTitle, nextUrl);
+}
+
+function writeFocusedNodeToHistory(
+  pageId: string,
+  nodeId: string,
+  mode: "push" | "replace" = "push",
+  pageTitle?: string | null,
+) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.delete("node");
+  url.searchParams.set("page", pageId);
+  url.searchParams.set(FOCUSED_NODE_SEARCH_PARAM, nodeId);
 
   const nextUrl = `${url.pathname}${url.search}${url.hash}`;
   const nextTitle = getDocumentTitle(pageTitle);
@@ -3183,6 +3226,8 @@ function ConfiguredWorkspace({
   const [pendingInsertedComposer, setPendingInsertedComposer] =
     useState<PendingInsertedComposer | null>(null);
   const [locationPageId, setLocationPageId] = useState<string | null>(null);
+  const [locationFocusedNodeId, setLocationFocusedNodeId] = useState<string | null>(null);
+  const [focusedNodeId, setFocusedNodeId] = useState<string | null>(null);
   const [cachedTags, setCachedTags] = useState<SidebarTagResult[] | null>(null);
   const [isRefreshingTags, setIsRefreshingTags] = useState(false);
   const plannerLayoutRef = useRef<HTMLDivElement | null>(null);
@@ -4244,6 +4289,15 @@ function ConfiguredWorkspace({
   const multiPageVisibleRoots = [multiPageIncludedPagesSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
+  const focusedTreeNode = useMemo(
+    () => (focusedNodeId ? findTreeNodeById(tree, focusedNodeId) : null),
+    [focusedNodeId, tree],
+  );
+  const focusedNodeLabel = focusedTreeNode
+    ? normalizeNodeLinkPreviewDisplay(focusedTreeNode.text).text || "Focused item"
+    : "";
+  const focusedNodeParentId =
+    (focusedTreeNode?.parentNodeId as Id<"nodes"> | null | undefined) ?? null;
   const preHydrationCollapsedNodeIds = useMemo(
     () =>
       new Set([
@@ -4257,7 +4311,9 @@ function ConfiguredWorkspace({
     ? collapsedNodeIds
     : preHydrationCollapsedNodeIds;
   const pageVisibleRows =
-    pageMeta.pageType === "task"
+    focusedTreeNode
+      ? flattenTreeNodes([focusedTreeNode], effectiveCollapsedNodeIds)
+      : pageMeta.pageType === "task"
       ? flattenTreeNodes(genericRoots, effectiveCollapsedNodeIds)
       : pageMeta.pageType === "planner"
       ? flattenTreeNodes(
@@ -4724,6 +4780,8 @@ function ConfiguredWorkspace({
       setNodeSearchResults([]);
       setSelectedPageId(targetPageId);
       setLocationPageId(targetPageId);
+      setLocationFocusedNodeId(null);
+      setFocusedNodeId(null);
       writePageIdToHistory(targetPageId, "push", targetPage.title);
       setPendingRevealNodeId(movedNodeIds[movedNodeIds.length - 1] as string);
       clearNodeSelection();
@@ -5045,6 +5103,8 @@ function ConfiguredWorkspace({
       const firstCreatedRootNodeId = result.createdRootNodeIds[0] ?? null;
       setSelectedPageId(pageId);
       setLocationPageId(pageId);
+      setLocationFocusedNodeId(null);
+      setFocusedNodeId(null);
       writePageIdToHistory(pageId, "push", pageTitle);
       clearNodeSelection();
       if (firstCreatedRootNodeId) {
@@ -5702,9 +5762,11 @@ function ConfiguredWorkspace({
 
   useEffect(() => {
     setLocationPageId(readPageIdFromLocation());
+    setLocationFocusedNodeId(readFocusedNodeIdFromLocation());
 
     const handlePopState = () => {
       setLocationPageId(readPageIdFromLocation());
+      setLocationFocusedNodeId(readFocusedNodeIdFromLocation());
     };
 
     window.addEventListener("popstate", handlePopState);
@@ -5919,6 +5981,8 @@ function ConfiguredWorkspace({
       hasResolvedInitialPageSelection.current = true;
       setSelectedPageId(null);
       setLocationPageId(null);
+      setLocationFocusedNodeId(null);
+      setFocusedNodeId(null);
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
       }
@@ -5941,6 +6005,8 @@ function ConfiguredWorkspace({
       if (matchingStoredPage) {
         setSelectedPageId(matchingStoredPage._id);
         setLocationPageId(matchingStoredPage._id);
+        setLocationFocusedNodeId(null);
+        setFocusedNodeId(null);
         writePageIdToHistory(matchingStoredPage._id, "replace", matchingStoredPage.title);
       } else {
         window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
@@ -5951,6 +6017,8 @@ function ConfiguredWorkspace({
     if (selectedPageId && !pages.some((page) => page._id === selectedPageId)) {
       setSelectedPageId(null);
       setLocationPageId(null);
+      setLocationFocusedNodeId(null);
+      setFocusedNodeId(null);
       if (typeof window !== "undefined") {
         window.localStorage.removeItem(LAST_PAGE_STORAGE_KEY);
       }
@@ -5960,6 +6028,8 @@ function ConfiguredWorkspace({
 
     if (!locationPageId && selectedPageId !== null) {
       setSelectedPageId(null);
+      setLocationFocusedNodeId(null);
+      setFocusedNodeId(null);
     }
   }, [locationPageId, pages, selectedPageId]);
 
@@ -5992,6 +6062,58 @@ function ConfiguredWorkspace({
     const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     window.history.replaceState(window.history.state, nextDocumentTitle, currentUrl);
   }, [pagesById, selectedPage?.title, selectedPageId]);
+
+  useEffect(() => {
+    if (!locationFocusedNodeId) {
+      if (focusedNodeId) {
+        setFocusedNodeId(null);
+      }
+      return;
+    }
+
+    if (!selectedPageId) {
+      setFocusedNodeId(null);
+      return;
+    }
+
+    if (!activePageTree || activePageTree.page._id !== selectedPageId) {
+      return;
+    }
+
+    const matchingNode = findTreeNodeById(tree, locationFocusedNodeId);
+    if (!matchingNode) {
+      setLocationFocusedNodeId(null);
+      setFocusedNodeId(null);
+      writePageIdToHistory(
+        selectedPageId,
+        "replace",
+        selectedPage?.title ?? pagesById.get(selectedPageId as string)?.title ?? null,
+      );
+      return;
+    }
+
+    if (focusedNodeId !== locationFocusedNodeId) {
+      setFocusedNodeId(locationFocusedNodeId);
+    }
+    updateCollapsedNodeIds((current) => {
+      if (!current.has(locationFocusedNodeId)) {
+        return current;
+      }
+
+      const next = new Set(current);
+      next.delete(locationFocusedNodeId);
+      return next;
+    });
+  }, [
+    activePageTree,
+    focusedNodeId,
+    locationFocusedNodeId,
+    pagesById,
+    selectedPage?.title,
+    selectedPageId,
+    tree,
+    updateCollapsedNodeIds,
+  ]);
 
   useEffect(() => {
     setPageTitleDraft(activePageTree?.page?.title ?? "");
@@ -6210,6 +6332,8 @@ function ConfiguredWorkspace({
     window.localStorage.removeItem(PLANNER_RIGHT_SIDEBAR_WIDTH_STORAGE_KEY);
     setSelectedPageId(null);
     setLocationPageId(null);
+    setLocationFocusedNodeId(null);
+    setFocusedNodeId(null);
     writePageIdToHistory(null, "replace", null);
     setOwnerKey("");
     window.location.reload();
@@ -6250,6 +6374,8 @@ function ConfiguredWorkspace({
       });
       setSelectedPageId(pageId);
       setLocationPageId(pageId);
+      setLocationFocusedNodeId(null);
+      setFocusedNodeId(null);
       writePageIdToHistory(pageId, "push", title);
       setPendingRevealNodeId(null);
       setPaletteOpen(false);
@@ -6276,6 +6402,8 @@ function ConfiguredWorkspace({
       });
       setSelectedPageId(pageId);
       setLocationPageId(pageId);
+      setLocationFocusedNodeId(null);
+      setFocusedNodeId(null);
       writePageIdToHistory(pageId, "push", title);
       setPendingRevealNodeId(null);
       setPaletteOpen(false);
@@ -9309,6 +9437,8 @@ function ConfiguredWorkspace({
     setActionContextSelectedNodeIds([]);
     setSelectedPageId(pageId);
     setLocationPageId(pageId);
+    setLocationFocusedNodeId(null);
+    setFocusedNodeId(null);
     writePageIdToHistory(pageId, "push", page?.title ?? null);
     setPendingRevealNodeId(null);
     setPaletteOpen(false);
@@ -9340,6 +9470,8 @@ function ConfiguredWorkspace({
 
     setSelectedPageId(result.page._id);
     setLocationPageId(result.page._id);
+    setLocationFocusedNodeId(null);
+    setFocusedNodeId(null);
     writePageIdToHistory(result.page._id, "push", result.page.title);
     setPendingRevealNodeId(result.node._id as string);
     setPaletteOpen(false);
@@ -9354,6 +9486,8 @@ function ConfiguredWorkspace({
     setIsWorkspaceChatOpen(false);
     setSelectedPageId(pageId);
     setLocationPageId(pageId);
+    setLocationFocusedNodeId(null);
+    setFocusedNodeId(null);
     writePageIdToHistory(pageId, "push", pagesById.get(pageId as string)?.title ?? null);
     setPendingRevealNodeId(nodeId as string);
     clearNodeSelection();
@@ -9387,6 +9521,90 @@ function ConfiguredWorkspace({
     },
     [clearNodeSelection, handleOpenLinkedNode],
   );
+
+  const handleZoomIntoNode = useCallback(
+    (nodeId: string) => {
+      const targetNode = workspaceNodeMap.get(nodeId) ?? null;
+      if (!targetNode) {
+        return;
+      }
+
+      const targetPageId = targetNode.pageId as Id<"pages">;
+      const targetPage = pagesById.get(targetPageId as string) ?? null;
+      if (!targetPage) {
+        return;
+      }
+
+      setIsWorkspaceChatOpen(false);
+      setPendingPalettePageAction(null);
+      setActionContextSelectedNodeIds([]);
+      setSelectedPageId(targetPageId);
+      setLocationPageId(targetPageId);
+      setLocationFocusedNodeId(nodeId);
+      setFocusedNodeId(nodeId);
+      updateCollapsedNodeIds((current) => {
+        if (!current.has(nodeId)) {
+          return current;
+        }
+
+        const next = new Set(current);
+        next.delete(nodeId);
+        return next;
+      });
+      writeFocusedNodeToHistory(targetPageId, nodeId, "push", targetPage.title);
+      setPendingRevealNodeId(null);
+      setPaletteOpen(false);
+      setPaletteQuery("");
+      setPaletteHighlightIndex(0);
+      setPaletteMode("pages");
+      setTextSearchResults([]);
+      setNodeSearchResults([]);
+      clearNodeSelection();
+    },
+    [clearNodeSelection, pagesById, updateCollapsedNodeIds, workspaceNodeMap],
+  );
+
+  const handleExitFocusedNode = useCallback(() => {
+    if (!selectedPageId) {
+      setLocationFocusedNodeId(null);
+      setFocusedNodeId(null);
+      return;
+    }
+
+    setLocationFocusedNodeId(null);
+    setFocusedNodeId(null);
+    writePageIdToHistory(
+      selectedPageId,
+      "replace",
+      selectedPage?.title ?? pagesById.get(selectedPageId as string)?.title ?? null,
+    );
+    clearNodeSelection();
+  }, [clearNodeSelection, pagesById, selectedPage?.title, selectedPageId]);
+
+  useEffect(() => {
+    if (!focusedNodeId || paletteOpen || isWorkspaceChatOpen || isInboxOpen || isRandomBoxOpen) {
+      return;
+    }
+
+    const handleFocusedNodeKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) {
+        return;
+      }
+
+      event.preventDefault();
+      handleExitFocusedNode();
+    };
+
+    window.addEventListener("keydown", handleFocusedNodeKeyDown);
+    return () => window.removeEventListener("keydown", handleFocusedNodeKeyDown);
+  }, [
+    focusedNodeId,
+    handleExitFocusedNode,
+    isInboxOpen,
+    isRandomBoxOpen,
+    isWorkspaceChatOpen,
+    paletteOpen,
+  ]);
 
   const handlePalettePageResultSelect = useCallback(
     async (page: PalettePageFavoriteResult) => {
@@ -9869,6 +10087,7 @@ function ConfiguredWorkspace({
 
   return (
     <WorkspaceHistoryProvider value={history}>
+      <NodeZoomContext.Provider value={handleZoomIntoNode}>
       <main
         className="relative min-h-screen bg-[var(--workspace-bg)] text-[var(--workspace-text)]"
         onMouseDownCapture={(event) => {
@@ -11022,7 +11241,76 @@ function ConfiguredWorkspace({
                   }
                 }}
               >
-                {pageMeta.pageType === "task" ? (
+                {focusedTreeNode ? (
+                  <div className="min-w-0 space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3 border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-3 py-2">
+                      <div className="min-w-0">
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                          Focused Item
+                        </p>
+                        <p className="mt-1 truncate text-sm text-[var(--workspace-text-subtle)]">
+                          {focusedNodeLabel}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleExitFocusedNode}
+                        className="border border-[var(--workspace-border)] px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+                      >
+                        Back
+                      </button>
+                    </div>
+                    <OutlineNodeList
+                      nodes={[focusedTreeNode]}
+                      ownerKey={ownerKey}
+                      pageId={selectedPage._id}
+                      parentNodeId={focusedNodeParentId}
+                      nodeBacklinkCounts={pageNodeBacklinkCounts}
+                      nodeMap={nodeMap}
+                      createNodesBatch={createNodesBatch}
+                      insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+                      updateNode={updateNode}
+                      moveNode={moveNode}
+                      insertNodeAbove={insertNodeAbove}
+                      splitNode={splitNode}
+                      replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                      setNodeTreeArchived={setNodeTreeArchived}
+                      isPageReadOnly={isPageArchived}
+                      collapsedNodeIds={effectiveCollapsedNodeIds}
+                      pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
+                      selectedNodeIds={selectedNodeIds}
+                      selectionAnchorNodeId={selectionAnchorNodeId}
+                      onToggleNodeCollapsed={toggleNodeCollapsed}
+                      onSelectSingleNode={selectSingleNode}
+                      onSelectNodeRange={selectNodeRange}
+                      onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
+                      pendingInsertedComposer={pendingInsertedComposer}
+                      onOpenInsertedComposer={openInsertedComposer}
+                      onClearInsertedComposer={clearInsertedComposer}
+                      onBeginTextEditing={clearNodeSelection}
+                      activeDraggedNodeId={activeDraggedNodeId}
+                      activeDraggedNodePayload={activeDraggedNodePayload}
+                      onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                      onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                      onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                      buildDraggedNodePayload={buildDraggedNodePayload}
+                      onDropDraggedNodes={dropDraggedNodes}
+                      onSelectionStart={beginNodeSelection}
+                      onSelectionExtend={extendNodeSelection}
+                      availableTags={sortedTags}
+                      pagesByTitle={pagesByTitle}
+                      pagesById={pagesById}
+                      favoritedNodeIds={favoritedNodeIds}
+                      onOpenPage={handleSelectPage}
+                      onOpenNode={handleOpenLinkedNode}
+                      onOpenTag={openFindPaletteForQuery}
+                      onOpenFindQuery={openFindPaletteForQuery}
+                      onToggleNodeFavorite={toggleNodeFavorite}
+                      recurringCompletionMode={recurringCompletionMode}
+                      completeTaskPageTask={completeTaskPageTask}
+                    />
+                  </div>
+                ) : pageMeta.pageType === "task" ? (
                   <div className="min-w-0 space-y-1">
                     <OutlineNodeList
                       nodes={genericRoots}
@@ -12844,6 +13132,7 @@ function ConfiguredWorkspace({
         </div>
       ) : null}
       </main>
+      </NodeZoomContext.Provider>
     </WorkspaceHistoryProvider>
   );
 }
@@ -14821,6 +15110,7 @@ function OutlineNodeEditor({
   mobileIndentStep?: number;
 }) {
   const history = useWorkspaceHistory();
+  const onZoomIntoNode = useContext(NodeZoomContext);
   const completePlannerTaskRaw = useMutation(api.planner.completePlannerTask);
   const completePlannerTaskMutation = completePlannerTaskRaw.withOptimisticUpdate(
     (localStore, args) => {
@@ -14837,6 +15127,8 @@ function OutlineNodeEditor({
   const draftRef = useRef(draft);
   const markerHoldTimeoutRef = useRef<number | null>(null);
   const markerLongPressTriggeredRef = useRef(false);
+  const collapseZoomHoldTimeoutRef = useRef<number | null>(null);
+  const collapseZoomTriggeredRef = useRef(false);
   const childrenAnimationFrameRef = useRef<number | null>(null);
 
   const nodeMeta = getNodeMeta(node);
@@ -15076,6 +15368,9 @@ function OutlineNodeEditor({
       if (markerHoldTimeoutRef.current !== null) {
         window.clearTimeout(markerHoldTimeoutRef.current);
       }
+      if (collapseZoomHoldTimeoutRef.current !== null) {
+        window.clearTimeout(collapseZoomHoldTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -15254,6 +15549,73 @@ function OutlineNodeEditor({
     }
 
     onToggleNodeCollapsed(node._id);
+  };
+
+  const clearCollapseZoomHold = () => {
+    if (collapseZoomHoldTimeoutRef.current !== null) {
+      window.clearTimeout(collapseZoomHoldTimeoutRef.current);
+      collapseZoomHoldTimeoutRef.current = null;
+    }
+  };
+
+  const zoomIntoCurrentNode = () => {
+    if (!hasChildren) {
+      return;
+    }
+
+    onZoomIntoNode(node._id);
+  };
+
+  const handleCollapsePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!hasChildren) {
+      return;
+    }
+
+    if (event.pointerType === "mouse" && event.button !== 0) {
+      return;
+    }
+
+    collapseZoomTriggeredRef.current = false;
+    clearCollapseZoomHold();
+    collapseZoomHoldTimeoutRef.current = window.setTimeout(() => {
+      collapseZoomHoldTimeoutRef.current = null;
+      collapseZoomTriggeredRef.current = true;
+      zoomIntoCurrentNode();
+    }, 500);
+  };
+
+  const handleCollapsePointerEnd = () => {
+    clearCollapseZoomHold();
+  };
+
+  const consumeCollapseZoomGesture = () => {
+    if (!collapseZoomTriggeredRef.current) {
+      return false;
+    }
+
+    collapseZoomTriggeredRef.current = false;
+    return true;
+  };
+
+  const handleCollapseClick = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (consumeCollapseZoomGesture() || event.detail > 1) {
+      event.preventDefault();
+      return;
+    }
+
+    handleToggleCollapsed();
+  };
+
+  const handleCollapseDoubleClick = (event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (!hasChildren) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    clearCollapseZoomHold();
+    collapseZoomTriggeredRef.current = false;
+    zoomIntoCurrentNode();
   };
 
   const setCollapsedState = (nextCollapsed: boolean) => {
@@ -17099,8 +17461,14 @@ function OutlineNodeEditor({
             <button
               type="button"
               onMouseDown={(event) => event.preventDefault()}
-              onClick={handleToggleCollapsed}
+              onPointerDown={handleCollapsePointerDown}
+              onPointerUp={handleCollapsePointerEnd}
+              onPointerLeave={handleCollapsePointerEnd}
+              onPointerCancel={handleCollapsePointerEnd}
+              onClick={handleCollapseClick}
+              onDoubleClick={handleCollapseDoubleClick}
               disabled={!hasChildren}
+              title={hasChildren ? "Click to collapse. Double-click or long-press to focus this item." : undefined}
               aria-label={isCollapsed ? "Expand nested items" : "Collapse nested items"}
               className={clsx(
                 "flex flex-none items-center justify-center leading-none transition",
