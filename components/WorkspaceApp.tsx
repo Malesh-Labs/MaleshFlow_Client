@@ -13871,6 +13871,16 @@ function getLinkPreviewTextClass({
     : "text-[var(--workspace-brand)]";
 }
 
+function getTagPreviewTextClass({
+  interactive,
+}: {
+  interactive: boolean;
+}) {
+  return interactive
+    ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text-subtle)]"
+    : "text-[var(--workspace-text-faint)]";
+}
+
 function LinkedTextPreview({
   segments,
   onFocusLine,
@@ -13939,12 +13949,10 @@ function LinkedTextPreview({
               event.stopPropagation();
               onOpenTag(segment.text);
             }}
-              className={clsx(
-                "inline cursor-pointer decoration-[1.5px] underline-offset-[3px] transition",
-                isCompleted
-                  ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text-faint)]"
-                  : "text-[var(--workspace-brand)] hover:text-[var(--workspace-brand-hover)]",
-              )}
+            className={clsx(
+              "inline cursor-pointer decoration-[1.5px] underline-offset-[3px] transition",
+              getTagPreviewTextClass({ interactive: true }),
+            )}
             style={getInlinePreviewStyle({
               strike: segment.strike || isCompleted,
               italic: segment.italic,
@@ -14160,9 +14168,7 @@ function LinkPreviewMeasure({
             key={segment.key}
             className={clsx(
               "inline decoration-[1.5px] underline-offset-[3px]",
-              isCompleted
-                ? "text-[var(--workspace-text-faint)]"
-                : "text-[var(--workspace-brand)]",
+              getTagPreviewTextClass({ interactive: false }),
             )}
             style={getInlinePreviewStyle({
               strike: segment.strike || isCompleted,
