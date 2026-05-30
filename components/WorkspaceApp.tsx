@@ -411,6 +411,11 @@ type LinkSuggestion =
       subtitle: string;
       insertText: string;
     };
+type LinkPreviewTagBadge = {
+  text: string;
+  value: string;
+  normalizedValue: string;
+};
 type LinkPreviewSegment =
   | {
       key: string;
@@ -429,6 +434,7 @@ type LinkPreviewSegment =
       href?: string | null;
       isDimmed?: boolean;
       pageTypeBadge?: string | null;
+      leadingTags?: LinkPreviewTagBadge[];
     }
   | {
       key: string;
@@ -1929,6 +1935,33 @@ function normalizeNodeLinkPreviewDisplay(value: string) {
   };
 }
 
+function splitLeadingTagBadges(value: string): {
+  leadingTags: LinkPreviewTagBadge[];
+  text: string;
+} {
+  let remaining = value.trimStart();
+  const leadingTags: LinkPreviewTagBadge[] = [];
+
+  while (remaining.length > 0) {
+    const tagMatch = extractTagMatches(remaining).find((match) => match.start === 0);
+    if (!tagMatch) {
+      break;
+    }
+
+    leadingTags.push({
+      text: tagMatch.label,
+      value: tagMatch.value,
+      normalizedValue: tagMatch.normalizedValue,
+    });
+    remaining = remaining.slice(tagMatch.end).trimStart();
+  }
+
+  return {
+    leadingTags,
+    text: remaining,
+  };
+}
+
 function buildLinkPreviewSegments(
   value: string,
   pagesByTitle: Map<string, PageDoc>,
@@ -2020,10 +2053,14 @@ function buildLinkPreviewSegments(
           ? normalizeNodeLinkPreviewDisplay(targetNode.parentText)
           : { text: "", isDimmed: false };
       const childNodeText = nodeLabel.text || renderedTargetNode.text || "Linked node";
+      const renderedNodeText = parentNode.text
+        ? `${childNodeText} (${parentNode.text})`
+        : childNodeText;
+      const renderedNodeParts = splitLeadingTagBadges(renderedNodeText);
       segments.push({
         key: `node:${match.start}`,
         kind: "link",
-        text: parentNode.text ? `${childNodeText} (${parentNode.text})` : childNodeText,
+        text: renderedNodeParts.text,
         pageId: targetNode?.pageId ?? null,
         nodeId: targetNode?.nodeId ?? null,
         archived: targetNode?.pageArchived ?? false,
@@ -2035,6 +2072,10 @@ function buildLinkPreviewSegments(
           renderedTargetNode.isDimmed ||
           parentNode.isDimmed,
         pageTypeBadge: null,
+        leadingTags:
+          renderedNodeParts.leadingTags.length > 0
+            ? renderedNodeParts.leadingTags
+            : undefined,
       });
     }
 
@@ -14181,6 +14222,34 @@ function getTagPreviewClass({
   );
 }
 
+function LinkPreviewLeadingTags({
+  tags,
+  isCompleted,
+  style,
+}: {
+  tags?: LinkPreviewTagBadge[];
+  isCompleted: boolean;
+  style: CSSProperties;
+}) {
+  if (!tags?.length) {
+    return null;
+  }
+
+  return (
+    <>
+      {tags.map((tag, index) => (
+        <span
+          key={`${tag.normalizedValue}:${index}`}
+          className={getTagPreviewClass({ interactive: false, isCompleted })}
+          style={style}
+        >
+          {tag.text}
+        </span>
+      ))}
+    </>
+  );
+}
+
 function LinkedTextPreview({
   segments,
   onFocusLine,
@@ -14321,20 +14390,33 @@ function LinkedTextPreview({
                 segment.archived ? "opacity-75" : "",
               )}
             >
-              <span
-                className={clsx(
-                  "min-w-0 decoration-[1.5px] underline-offset-[3px]",
-                )}
+              <LinkPreviewLeadingTags
+                tags={segment.leadingTags}
+                isCompleted={isCompleted}
                 style={getInlinePreviewStyle({
                   strike: segment.strike || isCompleted,
                   italic: segment.italic,
                   bold: segment.bold,
                   code: segment.code,
-                  underline: true,
+                  underline: false,
                 })}
-              >
-                {segment.text}
-              </span>
+              />
+              {segment.text ? (
+                <span
+                  className={clsx(
+                    "min-w-0 decoration-[1.5px] underline-offset-[3px]",
+                  )}
+                  style={getInlinePreviewStyle({
+                    strike: segment.strike || isCompleted,
+                    italic: segment.italic,
+                    bold: segment.bold,
+                    code: segment.code,
+                    underline: true,
+                  })}
+                >
+                  {segment.text}
+                </span>
+              ) : null}
               {segment.pageTypeBadge ? (
                 <span
                   className={clsx(
@@ -14350,7 +14432,9 @@ function LinkedTextPreview({
             <span
               key={segment.key}
               className={clsx(
-                "inline decoration-[1.5px] underline-offset-[3px]",
+                segment.leadingTags?.length
+                  ? "inline-flex max-w-full align-top items-start gap-1 text-left"
+                  : "inline decoration-[1.5px] underline-offset-[3px]",
                 getLinkPreviewTextClass({
                   isCompleted,
                   isDimmed: segment.isDimmed,
@@ -14361,15 +14445,47 @@ function LinkedTextPreview({
                   : "decoration-[var(--workspace-brand)]/70",
                 segment.resolved ? "" : "opacity-80",
               )}
-              style={getInlinePreviewStyle({
-                strike: segment.strike || isCompleted,
-                italic: segment.italic,
-                bold: segment.bold,
-                code: segment.code,
-                underline: true,
-              })}
+              style={
+                segment.leadingTags?.length
+                  ? undefined
+                  : getInlinePreviewStyle({
+                      strike: segment.strike || isCompleted,
+                      italic: segment.italic,
+                      bold: segment.bold,
+                      code: segment.code,
+                      underline: true,
+                    })
+              }
             >
-              {segment.text}
+              <LinkPreviewLeadingTags
+                tags={segment.leadingTags}
+                isCompleted={isCompleted}
+                style={getInlinePreviewStyle({
+                  strike: segment.strike || isCompleted,
+                  italic: segment.italic,
+                  bold: segment.bold,
+                  code: segment.code,
+                  underline: false,
+                })}
+              />
+              {segment.leadingTags?.length ? (
+                segment.text ? (
+                  <span
+                    className="min-w-0 decoration-[1.5px] underline-offset-[3px]"
+                    style={getInlinePreviewStyle({
+                      strike: segment.strike || isCompleted,
+                      italic: segment.italic,
+                      bold: segment.bold,
+                      code: segment.code,
+                      underline: true,
+                    })}
+                  >
+                    {segment.text}
+                  </span>
+                ) : null
+              ) : (
+                segment.text
+              )}
             </span>
           )
         ),
@@ -14488,20 +14604,33 @@ function LinkPreviewMeasure({
               !segment.resolved ? "opacity-80" : "",
             )}
           >
-            <span
-              className={clsx(
-                "min-w-0 decoration-[1.5px] underline-offset-[3px]",
-              )}
+            <LinkPreviewLeadingTags
+              tags={segment.leadingTags}
+              isCompleted={isCompleted}
               style={getInlinePreviewStyle({
                 strike: segment.strike || isCompleted,
                 italic: segment.italic,
                 bold: segment.bold,
                 code: segment.code,
-                underline: true,
+                underline: false,
               })}
-            >
-              {segment.text}
-            </span>
+            />
+            {segment.text ? (
+              <span
+                className={clsx(
+                  "min-w-0 decoration-[1.5px] underline-offset-[3px]",
+                )}
+                style={getInlinePreviewStyle({
+                  strike: segment.strike || isCompleted,
+                  italic: segment.italic,
+                  bold: segment.bold,
+                  code: segment.code,
+                  underline: true,
+                })}
+              >
+                {segment.text}
+              </span>
+            ) : null}
             {segment.pageTypeBadge ? (
               <span
                 className={clsx(
