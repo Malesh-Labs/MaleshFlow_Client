@@ -9700,6 +9700,29 @@ function ConfiguredWorkspace({
     clearNodeSelection();
   }, [clearNodeSelection, pagesById]);
 
+  const openNodeInFocusedView = useCallback(
+    (
+      pageId: Id<"pages">,
+      nodeId: Id<"nodes">,
+      title?: string | null,
+    ) => {
+      setIsWorkspaceChatOpen(false);
+      setSelectedPageId(pageId);
+      setLocationPageId(pageId);
+      setLocationFocusedNodeId(nodeId as string);
+      setFocusedNodeId(nodeId as string);
+      writeFocusedNodeToHistory(
+        pageId,
+        nodeId,
+        "push",
+        title ?? pagesById.get(pageId as string)?.title ?? null,
+      );
+      setPendingRevealNodeId(null);
+      clearNodeSelection();
+    },
+    [clearNodeSelection, pagesById],
+  );
+
   const handleSelectNodeSearchResult = useCallback((result: NodeSearchResult) => {
     if (!result.page) {
       return;
@@ -9718,30 +9741,22 @@ function ConfiguredWorkspace({
       return;
     }
 
-    setSelectedPageId(result.page._id);
-    setLocationPageId(result.page._id);
-    setLocationFocusedNodeId(null);
-    setFocusedNodeId(null);
-    writePageIdToHistory(result.page._id, "push", result.page.title);
-    setPendingRevealNodeId(result.node._id as string);
+    openNodeInFocusedView(
+      result.page._id,
+      result.node._id,
+      normalizeNodeLinkPreviewDisplay(result.node.text).text || result.page.title,
+    );
     setPaletteOpen(false);
     setPaletteQuery("");
     setPaletteHighlightIndex(0);
     setPaletteMode("nodes");
     setTextSearchResults([]);
-    clearNodeSelection();
-  }, [clearNodeSelection]);
+    setNodeSearchResults([]);
+  }, [clearNodeSelection, openNodeInFocusedView]);
 
   const handleOpenLinkedNode = useCallback((pageId: Id<"pages">, nodeId: Id<"nodes">) => {
-    setIsWorkspaceChatOpen(false);
-    setSelectedPageId(pageId);
-    setLocationPageId(pageId);
-    setLocationFocusedNodeId(null);
-    setFocusedNodeId(null);
-    writePageIdToHistory(pageId, "push", pagesById.get(pageId as string)?.title ?? null);
-    setPendingRevealNodeId(nodeId as string);
-    clearNodeSelection();
-  }, [clearNodeSelection, pagesById]);
+    openNodeInFocusedView(pageId, nodeId);
+  }, [openNodeInFocusedView]);
 
   const handleOpenFavoritedNode = useCallback(
     (pageId: Id<"pages">, nodeId: Id<"nodes">, isSidebarFavoriteNode: boolean) => {
