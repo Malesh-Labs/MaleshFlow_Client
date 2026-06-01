@@ -293,11 +293,30 @@ type PageTreeResult = {
   nodeBacklinkCounts: Record<string, number>;
   loadWarning?: string | null;
 };
+type MultiPageIncludedPageResult = {
+  kind?: "page";
+  configNodeId: Id<"nodes">;
+  pageTree: PageTreeResult;
+};
+type MultiPageNodeTreeResult = {
+  sourcePage: PageDoc;
+  rootNode: Doc<"nodes">;
+  nodes: Doc<"nodes">[];
+  nodeBacklinkCounts: Record<string, number>;
+  loadWarning?: string | null;
+};
+type MultiPageIncludedNodeResult = {
+  kind?: "node";
+  configNodeId: Id<"nodes">;
+  nodeTree: MultiPageNodeTreeResult;
+};
+type MultiPageIncludedItemResult =
+  | (MultiPageIncludedPageResult & { kind: "page" })
+  | (MultiPageIncludedNodeResult & { kind: "node" });
 type MultiPageViewResult = {
-  includedPages: Array<{
-    configNodeId: Id<"nodes">;
-    pageTree: PageTreeResult;
-  }>;
+  includedPages: MultiPageIncludedPageResult[];
+  includedNodes?: MultiPageIncludedNodeResult[];
+  includedItems?: MultiPageIncludedItemResult[];
   skippedRows: Array<{
     configNodeId: Id<"nodes">;
     text: string;
@@ -4025,8 +4044,9 @@ function ConfiguredWorkspace({
     () => [
       ...(sidebarTree?.page ? [sidebarTree.page._id] : []),
       ...((multiPageView?.includedPages ?? []).map((entry) => entry.pageTree.page._id)),
+      ...((multiPageView?.includedNodes ?? []).map((entry) => entry.nodeTree.sourcePage._id)),
     ],
-    [multiPageView?.includedPages, sidebarTree?.page],
+    [multiPageView?.includedNodes, multiPageView?.includedPages, sidebarTree?.page],
   );
 
   const history = useWorkspaceHistoryController({
@@ -4127,17 +4147,90 @@ function ConfiguredWorkspace({
   const scratchpadLiveSection = findSectionNode(tree, "scratchpadLive");
   const scratchpadPreviousSection = findSectionNode(tree, "scratchpadPrevious");
   const multiPageIncludedPagesSection = findSectionNode(tree, "multiPageIncludedPages");
+  const multiPageIncludedRawItems = useMemo<MultiPageIncludedItemResult[]>(
+    () =>
+      multiPageView?.includedItems ??
+      [
+        ...(multiPageView?.includedPages ?? []).map((entry) => ({
+          kind: "page" as const,
+          ...entry,
+        })),
+        ...((multiPageView?.includedNodes ?? []).map((entry) => ({
+          kind: "node" as const,
+          ...entry,
+        }))),
+      ],
+    [multiPageView?.includedItems, multiPageView?.includedNodes, multiPageView?.includedPages],
+  );
   const multiPageIncludedPageTrees = useMemo(
     () =>
-      (multiPageView?.includedPages ?? []).map((entry) => ({
-        configNodeId: entry.configNodeId as string,
-        pageTree: entry.pageTree,
-        tree: toTreeNodes(entry.pageTree.nodes),
-        nodeMap: new Map(entry.pageTree.nodes.map((node) => [node._id as string, node])),
-        nodeBacklinkCounts: new Map(Object.entries(entry.pageTree.nodeBacklinkCounts ?? {})),
-      })),
-    [multiPageView?.includedPages],
+      multiPageIncludedRawItems.flatMap((entry) =>
+        entry.kind === "page"
+          ? [
+              {
+                configNodeId: entry.configNodeId as string,
+                pageTree: entry.pageTree,
+                tree: toTreeNodes(entry.pageTree.nodes),
+                nodeMap: new Map(entry.pageTree.nodes.map((node) => [node._id as string, node])),
+                nodeBacklinkCounts: new Map(Object.entries(entry.pageTree.nodeBacklinkCounts ?? {})),
+              },
+            ]
+          : [],
+      ),
+    [multiPageIncludedRawItems],
   );
+  const multiPageIncludedNodeTrees = useMemo(
+    () =>
+      multiPageIncludedRawItems.flatMap((entry) =>
+        entry.kind === "node"
+          ? [
+              {
+                configNodeId: entry.configNodeId as string,
+                nodeTree: entry.nodeTree,
+                tree: toTreeNodes(entry.nodeTree.nodes),
+                nodeMap: new Map(entry.nodeTree.nodes.map((node) => [node._id as string, node])),
+                nodeBacklinkCounts: new Map(Object.entries(entry.nodeTree.nodeBacklinkCounts ?? {})),
+              },
+            ]
+          : [],
+      ),
+    [multiPageIncludedRawItems],
+  );
+  const multiPageIncludedRenderItems = useMemo<
+    Array<
+      | { kind: "page"; entry: (typeof multiPageIncludedPageTrees)[number] }
+      | { kind: "node"; entry: (typeof multiPageIncludedNodeTrees)[number] }
+    >
+  >(() => {
+    const pageEntries = new Map(
+      multiPageIncludedPageTrees.map((entry) => [entry.configNodeId, entry]),
+    );
+    const nodeEntries = new Map(
+      multiPageIncludedNodeTrees.map((entry) => [entry.configNodeId, entry]),
+    );
+    const renderItems: Array<
+      | { kind: "page"; entry: (typeof multiPageIncludedPageTrees)[number] }
+      | { kind: "node"; entry: (typeof multiPageIncludedNodeTrees)[number] }
+    > = [];
+
+    for (const entry of multiPageIncludedRawItems) {
+      const configNodeId = entry.configNodeId as string;
+      if (entry.kind === "page") {
+        const pageEntry = pageEntries.get(configNodeId);
+        if (pageEntry) {
+          renderItems.push({ kind: "page", entry: pageEntry });
+        }
+        continue;
+      }
+
+      const nodeEntry = nodeEntries.get(configNodeId);
+      if (nodeEntry) {
+        renderItems.push({ kind: "node", entry: nodeEntry });
+      }
+    }
+
+    return renderItems;
+  }, [multiPageIncludedNodeTrees, multiPageIncludedPageTrees, multiPageIncludedRawItems]);
   const modelPromptLines = useMemo(
     () =>
       (modelSection?.children ?? [])
@@ -4393,8 +4486,9 @@ function ConfiguredWorkspace({
         ...collectExpandableNodeIds(sidebarNodes),
         ...collectExpandableNodeIds(tree),
         ...multiPageIncludedPageTrees.flatMap((entry) => collectExpandableNodeIds(entry.tree)),
+        ...multiPageIncludedNodeTrees.flatMap((entry) => collectExpandableNodeIds(entry.tree)),
       ]),
-    [multiPageIncludedPageTrees, sidebarNodes, tree],
+    [multiPageIncludedNodeTrees, multiPageIncludedPageTrees, sidebarNodes, tree],
   );
   const effectiveCollapsedNodeIds = hasHydratedSessionUiState
     ? collapsedNodeIds
@@ -4428,9 +4522,14 @@ function ConfiguredWorkspace({
       : [];
   const multiPageIncludedVisibleRows =
     pageMeta.pageType === "multiPage"
-      ? multiPageIncludedPageTrees.flatMap((entry) =>
-          flattenTreeNodes(entry.tree, effectiveCollapsedNodeIds),
-        )
+      ? [
+          ...multiPageIncludedPageTrees.flatMap((entry) =>
+            flattenTreeNodes(entry.tree, effectiveCollapsedNodeIds),
+          ),
+          ...multiPageIncludedNodeTrees.flatMap((entry) =>
+            flattenTreeNodes(entry.tree, effectiveCollapsedNodeIds),
+          ),
+        ]
       : [];
   const visibleNodeOrder = [
     ...sidebarVisibleRows,
@@ -4439,8 +4538,12 @@ function ConfiguredWorkspace({
     ...multiPageIncludedVisibleRows,
   ].map((node) => node._id);
   const workspacePageForests = useMemo(
-    () => [tree, ...multiPageIncludedPageTrees.map((entry) => entry.tree)],
-    [multiPageIncludedPageTrees, tree],
+    () => [
+      tree,
+      ...multiPageIncludedPageTrees.map((entry) => entry.tree),
+      ...multiPageIncludedNodeTrees.map((entry) => entry.tree),
+    ],
+    [multiPageIncludedNodeTrees, multiPageIncludedPageTrees, tree],
   );
   const selectionTrees = useMemo(
     () => [...sidebarNodes, ...workspacePageForests.flat()],
@@ -4466,8 +4569,21 @@ function ConfiguredWorkspace({
       return includedPageTree.pageTree.nodes;
     }
 
+    const includedNodeTree = multiPageIncludedNodeTrees.find((entry) =>
+      entry.nodeTree.nodes.some((node) => (node._id as string) === pendingRevealNodeId),
+    );
+    if (includedNodeTree) {
+      return includedNodeTree.nodeTree.nodes;
+    }
+
     return null;
-  }, [activePageTree?.nodes, multiPageIncludedPageTrees, pendingRevealNodeId, sidebarTree?.nodes]);
+  }, [
+    activePageTree?.nodes,
+    multiPageIncludedNodeTrees,
+    multiPageIncludedPageTrees,
+    pendingRevealNodeId,
+    sidebarTree?.nodes,
+  ]);
   const uncategorizedPages = useMemo(
     () =>
       (pages ?? [])
@@ -4606,8 +4722,18 @@ function ConfiguredWorkspace({
         next.set(node._id as string, node);
       }
     }
+    for (const entry of multiPageIncludedNodeTrees) {
+      for (const node of entry.nodeTree.nodes) {
+        next.set(node._id as string, node);
+      }
+    }
     return next;
-  }, [activePageTree?.nodes, multiPageIncludedPageTrees, sidebarTree?.nodes]);
+  }, [
+    activePageTree?.nodes,
+    multiPageIncludedNodeTrees,
+    multiPageIncludedPageTrees,
+    sidebarTree?.nodes,
+  ]);
   const paletteContextNodeId =
     selectedNodeIds.size === 1 ? ([...selectedNodeIds][0] ?? null) : actionContextNodeId;
   const taskScheduleTargetNode = useMemo(() => {
@@ -12373,62 +12499,114 @@ function ConfiguredWorkspace({
                         <div className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-4 py-3 text-sm text-[var(--workspace-text-subtle)]">
                           Loading included pages…
                         </div>
-                      ) : multiPageIncludedPageTrees.length === 0 ? (
+                      ) : multiPageIncludedRenderItems.length === 0 ? (
                         <div className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-4 py-3 text-sm text-[var(--workspace-text-subtle)]">
-                          Add page links under Included Pages to show pages here.
+                          Add page or node links under Included Pages to show content here.
                         </div>
                       ) : (
-                        multiPageIncludedPageTrees.map((entry) => (
-                          <EmbeddedMultiPageBlock
-                            key={entry.pageTree.page._id}
-                            pageTree={entry.pageTree}
-                            tree={entry.tree}
-                            nodeMap={entry.nodeMap}
-                            nodeBacklinkCounts={entry.nodeBacklinkCounts}
-                            ownerKey={ownerKey}
-                            createNodesBatch={createNodesBatch}
-                            insertOutlineClipboardNodes={insertOutlineClipboardNodes}
-                            updateNode={updateNode}
-                            moveNode={moveNode}
-                            insertNodeAbove={insertNodeAbove}
-                            splitNode={splitNode}
-                            replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
-                            setNodeTreeArchived={setNodeTreeArchived}
-                            collapsedNodeIds={effectiveCollapsedNodeIds}
-                            pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
-                            selectedNodeIds={selectedNodeIds}
-                            selectionAnchorNodeId={selectionAnchorNodeId}
-                            onToggleNodeCollapsed={toggleNodeCollapsed}
-                            onSelectSingleNode={selectSingleNode}
-                            onSelectNodeRange={selectNodeRange}
-                            onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
-                            pendingInsertedComposer={pendingInsertedComposer}
-                            onOpenInsertedComposer={openInsertedComposer}
-                            onClearInsertedComposer={clearInsertedComposer}
-                            onBeginTextEditing={clearNodeSelection}
-                            activeDraggedNodeId={activeDraggedNodeId}
-                            activeDraggedNodePayload={activeDraggedNodePayload}
-                            onSetActiveDraggedNodeId={setActiveDraggedNodeId}
-                            onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
-                            onSetSelectedNodeIds={setExplicitSelectedNodeIds}
-                            buildDraggedNodePayload={buildDraggedNodePayload}
-                            onDropDraggedNodes={dropDraggedNodes}
-                            onSelectionStart={beginNodeSelection}
-                            onSelectionExtend={extendNodeSelection}
-                            availableTags={sortedTags}
-                            pagesByTitle={pagesByTitle}
-                            pagesById={pagesById}
-                            favoritedNodeIds={favoritedNodeIds}
-                            onOpenPage={handleSelectPage}
-                            onOpenNode={handleOpenLinkedNode}
-                            onOpenTag={openFindPaletteForQuery}
-                            onOpenFindQuery={openFindPaletteForQuery}
-                            onToggleNodeFavorite={toggleNodeFavorite}
-                            recurringCompletionMode={recurringCompletionMode}
-                            completeTaskPageTask={completeTaskPageTask}
-                            depthOffset={sectionDepthOffset}
-                          />
-                        ))
+                        multiPageIncludedRenderItems.map((item) =>
+                          item.kind === "page" ? (
+                            <EmbeddedMultiPageBlock
+                              key={`page:${item.entry.pageTree.page._id}`}
+                              pageTree={item.entry.pageTree}
+                              tree={item.entry.tree}
+                              nodeMap={item.entry.nodeMap}
+                              nodeBacklinkCounts={item.entry.nodeBacklinkCounts}
+                              ownerKey={ownerKey}
+                              createNodesBatch={createNodesBatch}
+                              insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+                              updateNode={updateNode}
+                              moveNode={moveNode}
+                              insertNodeAbove={insertNodeAbove}
+                              splitNode={splitNode}
+                              replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                              setNodeTreeArchived={setNodeTreeArchived}
+                              collapsedNodeIds={effectiveCollapsedNodeIds}
+                              pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
+                              selectedNodeIds={selectedNodeIds}
+                              selectionAnchorNodeId={selectionAnchorNodeId}
+                              onToggleNodeCollapsed={toggleNodeCollapsed}
+                              onSelectSingleNode={selectSingleNode}
+                              onSelectNodeRange={selectNodeRange}
+                              onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
+                              pendingInsertedComposer={pendingInsertedComposer}
+                              onOpenInsertedComposer={openInsertedComposer}
+                              onClearInsertedComposer={clearInsertedComposer}
+                              onBeginTextEditing={clearNodeSelection}
+                              activeDraggedNodeId={activeDraggedNodeId}
+                              activeDraggedNodePayload={activeDraggedNodePayload}
+                              onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                              onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                              onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                              buildDraggedNodePayload={buildDraggedNodePayload}
+                              onDropDraggedNodes={dropDraggedNodes}
+                              onSelectionStart={beginNodeSelection}
+                              onSelectionExtend={extendNodeSelection}
+                              availableTags={sortedTags}
+                              pagesByTitle={pagesByTitle}
+                              pagesById={pagesById}
+                              favoritedNodeIds={favoritedNodeIds}
+                              onOpenPage={handleSelectPage}
+                              onOpenNode={handleOpenLinkedNode}
+                              onOpenTag={openFindPaletteForQuery}
+                              onOpenFindQuery={openFindPaletteForQuery}
+                              onToggleNodeFavorite={toggleNodeFavorite}
+                              recurringCompletionMode={recurringCompletionMode}
+                              completeTaskPageTask={completeTaskPageTask}
+                              depthOffset={sectionDepthOffset}
+                            />
+                          ) : (
+                            <EmbeddedMultiPageNodeBlock
+                              key={`node:${item.entry.nodeTree.rootNode._id}`}
+                              nodeTree={item.entry.nodeTree}
+                              tree={item.entry.tree}
+                              nodeMap={item.entry.nodeMap}
+                              nodeBacklinkCounts={item.entry.nodeBacklinkCounts}
+                              ownerKey={ownerKey}
+                              createNodesBatch={createNodesBatch}
+                              insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+                              updateNode={updateNode}
+                              moveNode={moveNode}
+                              insertNodeAbove={insertNodeAbove}
+                              splitNode={splitNode}
+                              replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                              setNodeTreeArchived={setNodeTreeArchived}
+                              collapsedNodeIds={effectiveCollapsedNodeIds}
+                              pendingSyncNodeIds={pendingSyncSnapshot.nodeIds}
+                              selectedNodeIds={selectedNodeIds}
+                              selectionAnchorNodeId={selectionAnchorNodeId}
+                              onToggleNodeCollapsed={toggleNodeCollapsed}
+                              onSelectSingleNode={selectSingleNode}
+                              onSelectNodeRange={selectNodeRange}
+                              onSuppressTextEditingSelectionClear={suppressNextNodeSelectionClear}
+                              pendingInsertedComposer={pendingInsertedComposer}
+                              onOpenInsertedComposer={openInsertedComposer}
+                              onClearInsertedComposer={clearInsertedComposer}
+                              onBeginTextEditing={clearNodeSelection}
+                              activeDraggedNodeId={activeDraggedNodeId}
+                              activeDraggedNodePayload={activeDraggedNodePayload}
+                              onSetActiveDraggedNodeId={setActiveDraggedNodeId}
+                              onSetActiveDraggedNodePayload={setActiveDraggedNodePayload}
+                              onSetSelectedNodeIds={setExplicitSelectedNodeIds}
+                              buildDraggedNodePayload={buildDraggedNodePayload}
+                              onDropDraggedNodes={dropDraggedNodes}
+                              onSelectionStart={beginNodeSelection}
+                              onSelectionExtend={extendNodeSelection}
+                              availableTags={sortedTags}
+                              pagesByTitle={pagesByTitle}
+                              pagesById={pagesById}
+                              favoritedNodeIds={favoritedNodeIds}
+                              onOpenPage={handleSelectPage}
+                              onOpenNode={handleOpenLinkedNode}
+                              onOpenTag={openFindPaletteForQuery}
+                              onOpenFindQuery={openFindPaletteForQuery}
+                              onToggleNodeFavorite={toggleNodeFavorite}
+                              recurringCompletionMode={recurringCompletionMode}
+                              completeTaskPageTask={completeTaskPageTask}
+                              depthOffset={sectionDepthOffset}
+                            />
+                          ),
+                        )
                       )}
                       {multiPageView?.loadWarning ? (
                         <p className="text-sm text-[var(--workspace-text-subtle)]">
@@ -13749,6 +13927,195 @@ function EmbeddedMultiPageBlock({
           {...sectionProps}
         />
       )}
+    </section>
+  );
+}
+
+function EmbeddedMultiPageNodeBlock({
+  nodeTree,
+  tree,
+  nodeMap,
+  nodeBacklinkCounts,
+  ownerKey,
+  createNodesBatch,
+  insertOutlineClipboardNodes,
+  updateNode,
+  moveNode,
+  insertNodeAbove,
+  splitNode,
+  replaceNodeAndInsertSiblings,
+  setNodeTreeArchived,
+  collapsedNodeIds,
+  pendingSyncNodeIds,
+  selectedNodeIds,
+  selectionAnchorNodeId,
+  onToggleNodeCollapsed,
+  onSelectSingleNode,
+  onSelectNodeRange,
+  onSuppressTextEditingSelectionClear,
+  pendingInsertedComposer,
+  onOpenInsertedComposer,
+  onClearInsertedComposer,
+  onBeginTextEditing,
+  activeDraggedNodeId,
+  activeDraggedNodePayload,
+  onSetActiveDraggedNodeId,
+  onSetActiveDraggedNodePayload,
+  onSetSelectedNodeIds,
+  buildDraggedNodePayload,
+  onDropDraggedNodes,
+  onSelectionStart,
+  onSelectionExtend,
+  availableTags,
+  pagesByTitle,
+  pagesById,
+  favoritedNodeIds,
+  onOpenPage,
+  onOpenNode,
+  onOpenTag,
+  onOpenFindQuery,
+  onToggleNodeFavorite,
+  recurringCompletionMode,
+  completeTaskPageTask,
+  depthOffset,
+}: {
+  nodeTree: MultiPageNodeTreeResult;
+  tree: TreeNode[];
+  nodeMap: Map<string, Doc<"nodes">>;
+  nodeBacklinkCounts: Map<string, number>;
+  ownerKey: string;
+  createNodesBatch: CreateNodesBatchMutation;
+  insertOutlineClipboardNodes: InsertOutlineClipboardNodesFn;
+  updateNode: UpdateNodeMutation;
+  moveNode: MoveNodeMutation;
+  insertNodeAbove: InsertNodeAboveMutation;
+  splitNode: SplitNodeMutation;
+  replaceNodeAndInsertSiblings: ReplaceNodeAndInsertSiblingsMutation;
+  setNodeTreeArchived: SetNodeTreeArchivedMutation;
+  collapsedNodeIds: Set<string>;
+  pendingSyncNodeIds: Set<string>;
+  selectedNodeIds: Set<string>;
+  selectionAnchorNodeId: string | null;
+  onToggleNodeCollapsed: (nodeId: string) => void;
+  onSelectSingleNode: (nodeId: string) => void;
+  onSelectNodeRange: (anchorNodeId: string, currentNodeId: string) => void;
+  onSuppressTextEditingSelectionClear: () => void;
+  pendingInsertedComposer: PendingInsertedComposer | null;
+  onOpenInsertedComposer: (
+    pageId: Id<"pages">,
+    parentNodeId: Id<"nodes"> | null,
+    afterNodeId: Id<"nodes">,
+    defaultKind?: "note" | "task",
+  ) => void;
+  onClearInsertedComposer: () => void;
+  onBeginTextEditing: () => void;
+  activeDraggedNodeId: string | null;
+  activeDraggedNodePayload: DraggedNodePayload | null;
+  onSetActiveDraggedNodeId: (nodeId: string | null) => void;
+  onSetActiveDraggedNodePayload: (payload: DraggedNodePayload | null) => void;
+  onSetSelectedNodeIds: (nodeIds: string[]) => void;
+  buildDraggedNodePayload: BuildDraggedNodePayloadFn;
+  onDropDraggedNodes: DropDraggedNodesFn;
+  onSelectionStart: (nodeId: string) => void;
+  onSelectionExtend: (nodeId: string) => void;
+  availableTags: SidebarTagResult[];
+  pagesByTitle: Map<string, PageDoc>;
+  pagesById: Map<string, PageDoc>;
+  favoritedNodeIds: Set<string>;
+  onOpenPage: (pageId: Id<"pages">) => void;
+  onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
+  onOpenTag: (tag: string) => void;
+  onOpenFindQuery: (query: string) => void;
+  onToggleNodeFavorite: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
+  recurringCompletionMode: RecurringCompletionMode;
+  completeTaskPageTask: CompleteTaskPageTaskMutation;
+  depthOffset: number;
+}) {
+  const sourcePage = nodeTree.sourcePage;
+  const rootNode = nodeTree.rootNode;
+  const rootTreeNode = findTreeNodeById(tree, rootNode._id as string) ?? tree[0] ?? null;
+  const sectionTitle =
+    normalizeNodeLinkPreviewDisplay(rootNode.text).text || rootNode.text.trim() || "Linked Item";
+  const dropWithinPage = async (payload: DraggedNodePayload, dropTarget: NodeDropTarget) => {
+    if (payload.pageId !== sourcePage._id) {
+      return;
+    }
+    await onDropDraggedNodes(payload, dropTarget);
+  };
+
+  return (
+    <section className="border-t border-[var(--workspace-border-subtle)] pt-8">
+      <PageSection
+        title={sectionTitle}
+        sectionNode={rootTreeNode}
+        ownerKey={ownerKey}
+        pageId={sourcePage._id}
+        nodeBacklinkCounts={nodeBacklinkCounts}
+        nodeMap={nodeMap}
+        createNodesBatch={createNodesBatch}
+        insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+        updateNode={updateNode}
+        moveNode={moveNode}
+        insertNodeAbove={insertNodeAbove}
+        splitNode={splitNode}
+        replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+        setNodeTreeArchived={setNodeTreeArchived}
+        isPageReadOnly={sourcePage.archived}
+        collapsedNodeIds={collapsedNodeIds}
+        pendingSyncNodeIds={pendingSyncNodeIds}
+        selectedNodeIds={selectedNodeIds}
+        selectionAnchorNodeId={selectionAnchorNodeId}
+        onToggleNodeCollapsed={onToggleNodeCollapsed}
+        onSelectSingleNode={onSelectSingleNode}
+        onSelectNodeRange={onSelectNodeRange}
+        onSuppressTextEditingSelectionClear={onSuppressTextEditingSelectionClear}
+        pendingInsertedComposer={pendingInsertedComposer}
+        onOpenInsertedComposer={onOpenInsertedComposer}
+        onClearInsertedComposer={onClearInsertedComposer}
+        onBeginTextEditing={onBeginTextEditing}
+        activeDraggedNodeId={activeDraggedNodeId}
+        activeDraggedNodePayload={activeDraggedNodePayload}
+        onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
+        onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
+        onSetSelectedNodeIds={onSetSelectedNodeIds}
+        buildDraggedNodePayload={buildDraggedNodePayload}
+        onDropDraggedNodes={dropWithinPage}
+        onSelectionStart={onSelectionStart}
+        onSelectionExtend={onSelectionExtend}
+        availableTags={availableTags}
+        pagesByTitle={pagesByTitle}
+        pagesById={pagesById}
+        favoritedNodeIds={favoritedNodeIds}
+        onOpenPage={onOpenPage}
+        onOpenNode={onOpenNode}
+        onOpenTag={onOpenTag}
+        onOpenFindQuery={onOpenFindQuery}
+        onToggleNodeFavorite={onToggleNodeFavorite}
+        recurringCompletionMode={recurringCompletionMode}
+        completeTaskPageTask={completeTaskPageTask}
+        depthOffset={depthOffset}
+        headerDetail={
+          <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+            <button
+              type="button"
+              onClick={() => onOpenPage(sourcePage._id)}
+              className="transition hover:text-[var(--workspace-accent)]"
+            >
+              {getPageTypeEmoji(sourcePage)} {sourcePage.title}
+            </button>
+            {nodeTree.loadWarning ? <span>{nodeTree.loadWarning}</span> : null}
+          </div>
+        }
+        action={
+          <button
+            type="button"
+            onClick={() => onOpenNode(sourcePage._id, rootNode._id)}
+            className="border border-[var(--workspace-border)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+          >
+            Open
+          </button>
+        }
+      />
     </section>
   );
 }

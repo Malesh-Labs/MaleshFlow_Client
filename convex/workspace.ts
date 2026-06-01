@@ -61,6 +61,7 @@ import {
   type RecurringCompletionMode,
 } from "../lib/domain/recurrence";
 import {
+  type ExtractedLink,
   extractLinkMatches,
   extractLinks,
   getExplicitWikiLinkPreviewText,
@@ -94,6 +95,7 @@ const MAX_PAGE_TREE_NODES = 2500;
 const MAX_PAGE_TREE_NODE_TEXT_CHARS = 500_000;
 const MAX_PAGE_TREE_BACKLINKS = 1200;
 const MAX_MULTI_PAGE_VIEW_PAGES = 8;
+const MAX_MULTI_PAGE_VIEW_NODE_SECTIONS = 16;
 const MAX_MULTI_PAGE_VIEW_NODES = 5000;
 const MAX_MULTI_PAGE_VIEW_TEXT_CHARS = 1_000_000;
 const MAX_NODE_AI_ANCESTOR_DEPTH = 40;
@@ -666,8 +668,8 @@ async function resolveMultiPageIncludedPage(
   db: DatabaseReader,
   node: Doc<"nodes">,
 ) {
-  const pageLink = extractLinks(node.text).find((link) => link.kind === "page");
-  if (!pageLink || pageLink.kind !== "page") {
+  const pageLink = getFirstMultiPageIncludedPageLink(node.text);
+  if (!pageLink) {
     return {
       page: null as Doc<"pages"> | null,
       reason: "Add a page link to include a page here.",
@@ -702,6 +704,48 @@ async function resolveMultiPageIncludedPage(
   };
 }
 
+function getFirstMultiPageIncludedPageLink(text: string) {
+  return extractLinks(text).find(
+    (link): link is ExtractedLink & { kind: "page" } => link.kind === "page",
+  ) ?? null;
+}
+
+function getFirstMultiPageIncludedNodeLink(text: string) {
+  return extractLinks(text).find(
+    (link): link is ExtractedLink & { kind: "node" } => link.kind === "node",
+  ) ?? null;
+}
+
+async function resolveMultiPageIncludedNode(
+  db: DatabaseReader,
+  node: Doc<"nodes">,
+) {
+  const nodeLink = getFirstMultiPageIncludedNodeLink(node.text);
+  if (!nodeLink) {
+    return {
+      node: null as Doc<"nodes"> | null,
+      page: null as Doc<"pages"> | null,
+      reason: "Add a page or node link to include content here.",
+    };
+  }
+
+  try {
+    const linkedNode = await db.get(nodeLink.targetNodeRef as Id<"nodes">);
+    const linkedPage = linkedNode ? await db.get(linkedNode.pageId) : null;
+    return {
+      node: linkedNode,
+      page: linkedPage,
+      reason: null as string | null,
+    };
+  } catch {
+    return {
+      node: null as Doc<"nodes"> | null,
+      page: null as Doc<"pages"> | null,
+      reason: "That node link could not be resolved.",
+    };
+  }
+}
+
 function getMultiPageIncludedPageSkipReason(page: Doc<"pages"> | null) {
   if (!page || isPagePendingDeletion(page)) {
     return "That page could not be found.";
@@ -721,6 +765,33 @@ function getMultiPageIncludedPageSkipReason(page: Doc<"pages"> | null) {
 
   if (isMultiPageViewPage(page)) {
     return "Multi-page views cannot include other multi-page views.";
+  }
+
+  return null;
+}
+
+function getMultiPageIncludedNodeSkipReason(
+  node: Doc<"nodes"> | null,
+  page: Doc<"pages"> | null,
+) {
+  if (!node || !page || isPagePendingDeletion(page)) {
+    return "That node could not be found.";
+  }
+
+  if (node.archived) {
+    return "Archived nodes are not shown in multi-page views.";
+  }
+
+  if (page.archived) {
+    return "Nodes from archived pages are not shown in multi-page views.";
+  }
+
+  if (isSidebarSpecialPage(page)) {
+    return "System page nodes are not shown in multi-page views.";
+  }
+
+  if (isPlannerPage(page)) {
+    return "Planner page nodes are not supported in multi-page views yet.";
   }
 
   return null;
@@ -2443,6 +2514,8 @@ export const getMultiPageView = query({
     if (!includedPagesSection) {
       return {
         includedPages: [],
+        includedNodes: [],
+        includedItems: [],
         skippedRows: [],
         loadWarning: "Add the Included Pages section to configure this view.",
       };
@@ -2455,77 +2528,178 @@ export const getMultiPageView = query({
       configNodeId: Id<"nodes">;
       pageTree: Awaited<ReturnType<typeof buildPageTreeResult>>;
     }> = [];
+    const includedNodes: Array<{
+      configNodeId: Id<"nodes">;
+      nodeTree: Awaited<ReturnType<typeof buildNodeTreeResult>>;
+    }> = [];
+    const includedItems: Array<
+      | {
+          kind: "page";
+          configNodeId: Id<"nodes">;
+          pageTree: Awaited<ReturnType<typeof buildPageTreeResult>>;
+        }
+      | {
+          kind: "node";
+          configNodeId: Id<"nodes">;
+          nodeTree: Awaited<ReturnType<typeof buildNodeTreeResult>>;
+        }
+    > = [];
     const skippedRows: Array<{
       configNodeId: Id<"nodes">;
       text: string;
       reason: string;
     }> = [];
     const includedPageIds = new Set<string>();
+    const includedNodeIds = new Set<string>();
     let remainingNodes = MAX_MULTI_PAGE_VIEW_NODES;
     let remainingTextChars = MAX_MULTI_PAGE_VIEW_TEXT_CHARS;
     let reachedPageLimit = false;
+    let reachedNodeLimit = false;
 
     for (const row of includeRows) {
-      if (includedPages.length >= MAX_MULTI_PAGE_VIEW_PAGES) {
-        reachedPageLimit = true;
-        skippedRows.push({
-          configNodeId: row._id,
-          text: row.text,
-          reason: `Only the first ${MAX_MULTI_PAGE_VIEW_PAGES} included pages are shown.`,
+      if (getFirstMultiPageIncludedPageLink(row.text)) {
+        if (includedPages.length >= MAX_MULTI_PAGE_VIEW_PAGES) {
+          reachedPageLimit = true;
+          skippedRows.push({
+            configNodeId: row._id,
+            text: row.text,
+            reason: `Only the first ${MAX_MULTI_PAGE_VIEW_PAGES} included pages are shown.`,
+          });
+          continue;
+        }
+
+        const resolved = await resolveMultiPageIncludedPage(ctx.db, row);
+        const skipReason = resolved.page
+          ? getMultiPageIncludedPageSkipReason(resolved.page)
+          : (resolved.reason ?? "That page link could not be resolved.");
+        if (skipReason) {
+          skippedRows.push({
+            configNodeId: row._id,
+            text: row.text,
+            reason: skipReason,
+          });
+          continue;
+        }
+
+        const includedPage = resolved.page;
+        if (!includedPage) {
+          skippedRows.push({
+            configNodeId: row._id,
+            text: row.text,
+            reason: "That page link could not be resolved.",
+          });
+          continue;
+        }
+
+        if (includedPageIds.has(includedPage._id as string)) {
+          skippedRows.push({
+            configNodeId: row._id,
+            text: row.text,
+            reason: "This page is already included above.",
+          });
+          continue;
+        }
+
+        const pageTree = await buildPageTreeResult(ctx, includedPage, {
+          maxNodes: remainingNodes,
+          maxTextChars: remainingTextChars,
         });
+        const includedPageEntry = {
+          configNodeId: row._id,
+          pageTree,
+        };
+        includedPages.push(includedPageEntry);
+        includedItems.push({
+          kind: "page",
+          ...includedPageEntry,
+        });
+        includedPageIds.add(includedPage._id as string);
+        remainingNodes = Math.max(0, remainingNodes - pageTree.nodes.length);
+        remainingTextChars = Math.max(
+          0,
+          remainingTextChars - pageTree.nodes.reduce((total, node) => total + node.text.length, 0),
+        );
         continue;
       }
 
-      const resolved = await resolveMultiPageIncludedPage(ctx.db, row);
-      const skipReason = resolved.page
-        ? getMultiPageIncludedPageSkipReason(resolved.page)
-        : (resolved.reason ?? "That page link could not be resolved.");
-      if (skipReason) {
-        skippedRows.push({
-          configNodeId: row._id,
-          text: row.text,
-          reason: skipReason,
+      if (getFirstMultiPageIncludedNodeLink(row.text)) {
+        if (includedNodes.length >= MAX_MULTI_PAGE_VIEW_NODE_SECTIONS) {
+          reachedNodeLimit = true;
+          skippedRows.push({
+            configNodeId: row._id,
+            text: row.text,
+            reason: `Only the first ${MAX_MULTI_PAGE_VIEW_NODE_SECTIONS} included nodes are shown.`,
+          });
+          continue;
+        }
+
+        const resolved = await resolveMultiPageIncludedNode(ctx.db, row);
+        const skipReason = resolved.node
+          ? getMultiPageIncludedNodeSkipReason(resolved.node, resolved.page)
+          : (resolved.reason ?? "That node link could not be resolved.");
+        if (skipReason) {
+          skippedRows.push({
+            configNodeId: row._id,
+            text: row.text,
+            reason: skipReason,
+          });
+          continue;
+        }
+
+        const includedNode = resolved.node;
+        const sourcePage = resolved.page;
+        if (!includedNode || !sourcePage) {
+          skippedRows.push({
+            configNodeId: row._id,
+            text: row.text,
+            reason: "That node link could not be resolved.",
+          });
+          continue;
+        }
+
+        if (includedNodeIds.has(includedNode._id as string)) {
+          skippedRows.push({
+            configNodeId: row._id,
+            text: row.text,
+            reason: "This node is already included above.",
+          });
+          continue;
+        }
+
+        const nodeTree = await buildNodeTreeResult(ctx, includedNode, sourcePage, {
+          maxNodes: remainingNodes,
+          maxTextChars: remainingTextChars,
         });
+        const includedNodeEntry = {
+          configNodeId: row._id,
+          nodeTree,
+        };
+        includedNodes.push(includedNodeEntry);
+        includedItems.push({
+          kind: "node",
+          ...includedNodeEntry,
+        });
+        includedNodeIds.add(includedNode._id as string);
+        remainingNodes = Math.max(0, remainingNodes - nodeTree.nodes.length);
+        remainingTextChars = Math.max(
+          0,
+          remainingTextChars - nodeTree.nodes.reduce((total, node) => total + node.text.length, 0),
+        );
         continue;
       }
 
-      const includedPage = resolved.page;
-      if (!includedPage) {
-        skippedRows.push({
-          configNodeId: row._id,
-          text: row.text,
-          reason: "That page link could not be resolved.",
-        });
-        continue;
-      }
-
-      if (includedPageIds.has(includedPage._id as string)) {
-        skippedRows.push({
-          configNodeId: row._id,
-          text: row.text,
-          reason: "This page is already included above.",
-        });
-        continue;
-      }
-
-      const pageTree = await buildPageTreeResult(ctx, includedPage, {
-        maxNodes: remainingNodes,
-        maxTextChars: remainingTextChars,
-      });
-      includedPages.push({
+      skippedRows.push({
         configNodeId: row._id,
-        pageTree,
+        text: row.text,
+        reason: "Add a page or node link to include content here.",
       });
-      includedPageIds.add(includedPage._id as string);
-      remainingNodes = Math.max(0, remainingNodes - pageTree.nodes.length);
-      remainingTextChars = Math.max(
-        0,
-        remainingTextChars - pageTree.nodes.reduce((total, node) => total + node.text.length, 0),
-      );
     }
 
     const warningParts = [
       reachedPageLimit ? `Only the first ${MAX_MULTI_PAGE_VIEW_PAGES} pages are shown.` : "",
+      reachedNodeLimit
+        ? `Only the first ${MAX_MULTI_PAGE_VIEW_NODE_SECTIONS} nodes are shown.`
+        : "",
       remainingNodes === 0 || remainingTextChars === 0
         ? "This multi-page view hit its load limit, so later content may be omitted."
         : "",
@@ -2533,6 +2707,8 @@ export const getMultiPageView = query({
 
     return {
       includedPages,
+      includedNodes,
+      includedItems,
       skippedRows,
       loadWarning: warningParts.length > 0 ? warningParts.join(" ") : null,
     };
@@ -3168,6 +3344,120 @@ async function buildPageTreeResult(
     backlinks: visibleBacklinks,
     pageBacklinkCount: visibleBacklinks.length,
     pageBacklinkCountTruncated: backlinksTruncated,
+    nodeBacklinkCounts,
+    loadWarning: warnings.length > 0 ? warnings.join(" ") : null,
+  };
+}
+
+async function collectNodeTreeForTreeWithCaps(
+  ctx: QueryCtx,
+  rootNode: Doc<"nodes">,
+  maxNodes: number,
+  maxTextChars: number,
+) {
+  const cappedNodeLimit = Math.max(0, Math.min(maxNodes, MAX_PAGE_TREE_NODES));
+  const cappedTextLimit = Math.max(0, Math.min(maxTextChars, MAX_PAGE_TREE_NODE_TEXT_CHARS));
+  if (cappedNodeLimit === 0 || cappedTextLimit <= 0) {
+    return {
+      nodes: [] as Doc<"nodes">[],
+      truncated: true,
+    };
+  }
+
+  const nodes: Doc<"nodes">[] = [];
+  const queue: Doc<"nodes">[] = [rootNode];
+  let textChars = 0;
+  let truncated = false;
+
+  while (queue.length > 0) {
+    const node = queue.shift()!;
+    if (node.archived) {
+      continue;
+    }
+
+    const nextTextChars = textChars + node.text.length;
+    if (nodes.length >= cappedNodeLimit || nextTextChars > cappedTextLimit) {
+      truncated = true;
+      break;
+    }
+
+    nodes.push(node);
+    textChars = nextTextChars;
+
+    const remainingSlots = cappedNodeLimit - nodes.length;
+    if (remainingSlots <= 0) {
+      if (queue.length > 0) {
+        truncated = true;
+      }
+      continue;
+    }
+
+    const children = await ctx.db
+      .query("nodes")
+      .withIndex("by_page_parent_position", (query) =>
+        query.eq("pageId", node.pageId).eq("parentNodeId", node._id),
+      )
+      .take(remainingSlots + 1);
+    const activeChildren = children.filter((child) => !child.archived);
+    if (children.length > remainingSlots || activeChildren.length > remainingSlots) {
+      truncated = true;
+    }
+    queue.push(...activeChildren.slice(0, remainingSlots));
+  }
+
+  return {
+    nodes,
+    truncated: truncated || queue.length > 0,
+  };
+}
+
+async function buildNodeTreeResult(
+  ctx: QueryCtx,
+  rootNode: Doc<"nodes">,
+  sourcePage: Doc<"pages">,
+  options: {
+    maxNodes?: number;
+    maxTextChars?: number;
+  } = {},
+) {
+  const warnings: string[] = [];
+  const result = await collectNodeTreeForTreeWithCaps(
+    ctx,
+    rootNode,
+    options.maxNodes ?? MAX_PAGE_TREE_NODES,
+    options.maxTextChars ?? MAX_PAGE_TREE_NODE_TEXT_CHARS,
+  );
+  const nodes = result.nodes;
+  if (result.truncated) {
+    warnings.push(
+      "This item is too large to load fully right now, so only the first portion is shown.",
+    );
+  }
+
+  let nodeBacklinkCounts: Record<string, number> = {};
+  if (nodes.length > 0 && !result.truncated) {
+    try {
+      nodeBacklinkCounts = mergeNodeBacklinkCounts(
+        buildLocalNodeBacklinkCounts(nodes),
+        await buildVisibleNodeBacklinkCounts(
+          ctx,
+          nodes.map((node) => node._id),
+          { excludeSourcePageId: sourcePage._id },
+        ),
+      );
+    } catch (error) {
+      console.error("Failed to build multi-page node backlink counts", {
+        nodeId: rootNode._id,
+        error,
+      });
+      warnings.push("Some backlink badges were skipped while loading this item.");
+    }
+  }
+
+  return {
+    sourcePage,
+    rootNode,
+    nodes,
     nodeBacklinkCounts,
     loadWarning: warnings.length > 0 ? warnings.join(" ") : null,
   };
