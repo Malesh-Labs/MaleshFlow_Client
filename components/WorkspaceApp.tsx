@@ -137,6 +137,7 @@ const OWNER_KEY_EVENT = "maleshflow-owner-key-change";
 const LAST_PAGE_STORAGE_KEY = "maleshflow-last-page-id";
 const SIDEBAR_COLLAPSE_STORAGE_KEY = "maleshflow-sidebar-collapsed";
 const COLLAPSED_NODES_STORAGE_KEY = "maleshflow-collapsed-node-ids";
+const PAGE_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-page-section-collapsed-keys";
 const FOCUSED_NODE_SEARCH_PARAM = "zoom";
 const SIDEBAR_TEXT_SECTION_COLLAPSE_STORAGE_KEY =
   "maleshflow-sidebar-text-section-collapsed";
@@ -694,6 +695,13 @@ type TreeNode = OutlineTreeNode<{
 }>;
 
 const NodeZoomContext = createContext<(nodeId: string) => void>(() => undefined);
+const PageSectionCollapseContext = createContext<{
+  collapsedSectionKeys: Set<string>;
+  onToggleSectionCollapsed: (sectionKey: string) => void;
+}>({
+  collapsedSectionKeys: new Set(),
+  onToggleSectionCollapsed: () => undefined,
+});
 
 function useOwnerKey() {
   const ownerKey = useSyncExternalStore(
@@ -1430,6 +1438,23 @@ function getNoteDateSummary(note: {
 
 function findSectionNode(nodes: TreeNode[], slot: SectionSlot) {
   return nodes.find((node) => getNodeMeta(node).sectionSlot === slot) ?? null;
+}
+
+function getPageSectionCollapseKey(
+  pageId: Id<"pages">,
+  title: string,
+  sectionNode: TreeNode | null,
+) {
+  const sectionSlot = getNodeMeta(sectionNode).sectionSlot;
+  const sectionKey =
+    typeof sectionSlot === "string" && sectionSlot.length > 0
+      ? sectionSlot
+      : sectionNode?._id ?? (normalizePageTitleKey(title) || "section");
+  return `${pageId}:${sectionKey}`;
+}
+
+function getPageSectionContentId(sectionKey: string) {
+  return `page-section-${sectionKey.replace(/[^A-Za-z0-9_-]/g, "-")}`;
 }
 
 function formatLocalDateTitle(date = new Date()) {
@@ -3246,6 +3271,9 @@ function ConfiguredWorkspace({
   const [collapsedAllPageTypeSections, setCollapsedAllPageTypeSections] = useState<Set<string>>(
     new Set(ALL_PAGE_TYPE_GROUP_ORDER),
   );
+  const [collapsedPageSectionKeys, setCollapsedPageSectionKeys] = useState<Set<string>>(
+    new Set(),
+  );
   const [isTagsSectionCollapsed, setIsTagsSectionCollapsed] = useState(true);
   const [isArchiveSectionCollapsed, setIsArchiveSectionCollapsed] = useState(true);
   const [isLegacySectionCollapsed, setIsLegacySectionCollapsed] = useState(false);
@@ -3864,6 +3892,26 @@ function ConfiguredWorkspace({
       return next;
     });
   }, [updateCollapsedNodeIds]);
+
+  const togglePageSectionCollapsed = useCallback((sectionKey: string) => {
+    setCollapsedPageSectionKeys((current) => {
+      const next = new Set(current);
+      if (next.has(sectionKey)) {
+        next.delete(sectionKey);
+      } else {
+        next.add(sectionKey);
+      }
+      return next;
+    });
+  }, []);
+
+  const pageSectionCollapseContextValue = useMemo(
+    () => ({
+      collapsedSectionKeys: collapsedPageSectionKeys,
+      onToggleSectionCollapsed: togglePageSectionCollapsed,
+    }),
+    [collapsedPageSectionKeys, togglePageSectionCollapsed],
+  );
 
   const switchPaletteMode = useCallback((mode: PaletteMode) => {
     lastPaletteModeRef.current = mode;
@@ -5426,6 +5474,22 @@ function ConfiguredWorkspace({
     } catch {
       setCollapsedAllPageTypeSections(new Set(ALL_PAGE_TYPE_GROUP_ORDER));
     }
+    try {
+      const storedCollapsedPageSectionKeys = JSON.parse(
+        window.sessionStorage.getItem(PAGE_SECTION_COLLAPSE_STORAGE_KEY) ?? "[]",
+      );
+      if (Array.isArray(storedCollapsedPageSectionKeys)) {
+        setCollapsedPageSectionKeys(
+          new Set(
+            storedCollapsedPageSectionKeys.filter(
+              (value): value is string => typeof value === "string" && value.length > 0,
+            ),
+          ),
+        );
+      }
+    } catch {
+      setCollapsedPageSectionKeys(new Set());
+    }
     setRecurringCompletionMode(
       readStoredRecurringCompletionMode("dueDate"),
     );
@@ -5611,6 +5675,21 @@ function ConfiguredWorkspace({
       JSON.stringify([...collapsedAllPageTypeSections]),
     );
   }, [collapsedAllPageTypeSections]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!hasHydratedSessionUiStateRef.current) {
+      return;
+    }
+
+    window.sessionStorage.setItem(
+      PAGE_SECTION_COLLAPSE_STORAGE_KEY,
+      JSON.stringify([...collapsedPageSectionKeys]),
+    );
+  }, [collapsedPageSectionKeys]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -6354,6 +6433,7 @@ function ConfiguredWorkspace({
     window.sessionStorage.removeItem(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(ALL_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(ALL_PAGE_TYPE_SECTIONS_COLLAPSE_STORAGE_KEY);
+    window.sessionStorage.removeItem(PAGE_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(PINNED_ALL_PAGES_STORAGE_KEY);
     window.sessionStorage.removeItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
@@ -6366,6 +6446,7 @@ function ConfiguredWorkspace({
     window.localStorage.removeItem(UNCATEGORIZED_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(ALL_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(ALL_PAGE_TYPE_SECTIONS_COLLAPSE_STORAGE_KEY);
+    window.localStorage.removeItem(PAGE_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(PINNED_ALL_PAGES_STORAGE_KEY);
     window.localStorage.removeItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
@@ -10134,6 +10215,7 @@ function ConfiguredWorkspace({
   return (
     <WorkspaceHistoryProvider value={history}>
       <NodeZoomContext.Provider value={handleZoomIntoNode}>
+      <PageSectionCollapseContext.Provider value={pageSectionCollapseContextValue}>
       <main
         className="relative min-h-screen bg-[var(--workspace-bg)] text-[var(--workspace-text)]"
         onMouseDownCapture={(event) => {
@@ -13178,6 +13260,7 @@ function ConfiguredWorkspace({
         </div>
       ) : null}
       </main>
+      </PageSectionCollapseContext.Provider>
       </NodeZoomContext.Provider>
     </WorkspaceHistoryProvider>
   );
@@ -13786,13 +13869,21 @@ function PageSection({
   compact?: boolean;
   showHeader?: boolean;
 }) {
+  const { collapsedSectionKeys, onToggleSectionCollapsed } = useContext(
+    PageSectionCollapseContext,
+  );
+  const sectionCollapseKey = getPageSectionCollapseKey(pageId, title, sectionNode);
+  const sectionContentId = getPageSectionContentId(sectionCollapseKey);
+  const isSectionCollapsed = showHeader && collapsedSectionKeys.has(sectionCollapseKey);
+  const sectionSlot =
+    typeof getNodeMeta(sectionNode).sectionSlot === "string"
+      ? (getNodeMeta(sectionNode).sectionSlot as string)
+      : undefined;
+
   return (
     <div
-      data-section-slot={
-        typeof getNodeMeta(sectionNode).sectionSlot === "string"
-          ? (getNodeMeta(sectionNode).sectionSlot as string)
-          : undefined
-      }
+      data-section-slot={sectionSlot}
+      data-section-collapsed={isSectionCollapsed ? "true" : undefined}
     >
       {showHeader ? (
         <>
@@ -13806,16 +13897,34 @@ function PageSection({
             >
               {title}
             </h2>
-            {action}
+            <div className="flex flex-none items-center gap-2">
+              {action}
+              <button
+                type="button"
+                onClick={() => onToggleSectionCollapsed(sectionCollapseKey)}
+                aria-expanded={!isSectionCollapsed}
+                aria-controls={sectionContentId}
+                aria-label={isSectionCollapsed ? `Expand ${title}` : `Collapse ${title}`}
+                title={isSectionCollapsed ? `Expand ${title}` : `Collapse ${title}`}
+                className={clsx(
+                  "flex items-center justify-center border border-[var(--workspace-border)] font-semibold leading-none text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                  compact ? "h-7 w-7 text-xs" : "h-8 w-8 text-sm",
+                )}
+              >
+                {isSectionCollapsed ? "+" : "−"}
+              </button>
+            </div>
           </div>
-          {statusMessage ? (
+          {!isSectionCollapsed && statusMessage ? (
             <p className="mt-2 text-sm text-[var(--workspace-text-subtle)]">{statusMessage}</p>
           ) : null}
-          {headerDetail ? <div className="mt-3">{headerDetail}</div> : null}
+          {!isSectionCollapsed && headerDetail ? <div className="mt-3">{headerDetail}</div> : null}
           <div className="mt-2 border-b border-[var(--workspace-border)]" />
         </>
       ) : null}
+      {!isSectionCollapsed ? (
       <div
+        id={sectionContentId}
         className={clsx(
           showHeader ? (compact ? "mt-3 space-y-1" : "mt-4 space-y-1") : "space-y-1",
         )}
@@ -13872,6 +13981,7 @@ function PageSection({
           mobileIndentStep={mobileIndentStep}
         />
       </div>
+      ) : null}
     </div>
   );
 }
