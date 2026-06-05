@@ -120,6 +120,7 @@ import { ImporterPanel } from "@/components/ImporterPanel";
 import { LegacyPanel } from "@/components/LegacyPanel";
 import { NoteDatePanel } from "@/components/NoteDatePanel";
 import { TaskSchedulePanel } from "@/components/TaskSchedulePanel";
+import type { ChatPlan } from "@/lib/domain/chat";
 import type { ImportedOutlineNode } from "@/lib/domain/importer";
 
 const SKIP = "skip" as const;
@@ -485,6 +486,7 @@ type WorkspaceKnowledgeMessageMetadata = {
   request: string | null;
   sources: WorkspaceKnowledgeSourceSnapshot[];
 };
+type WorkspaceActionPlanPreview = Pick<ChatPlan, "summary" | "rationale" | "preview" | "operations">;
 type SidebarTagResult = {
   label: string;
   value: string;
@@ -1738,6 +1740,67 @@ function readWorkspaceKnowledgeMessageMetadata(
     error: typeof record.error === "string" ? record.error : null,
     request: typeof record.request === "string" ? record.request : null,
     sources,
+  };
+}
+
+function readWorkspaceActionPlan(
+  message: Doc<"chatMessages">,
+): WorkspaceActionPlanPreview | null {
+  const proposedPlan = message.proposedPlan;
+  if (!proposedPlan || typeof proposedPlan !== "object") {
+    return null;
+  }
+
+  const record = proposedPlan as Record<string, unknown>;
+  const rawPreview = Array.isArray(record.preview) ? record.preview : [];
+  const rawOperations = Array.isArray(record.operations) ? record.operations : [];
+  const operations: ChatPlan["operations"] = [];
+
+  for (const operation of rawOperations) {
+    if (!operation || typeof operation !== "object") {
+      continue;
+    }
+
+    const operationRecord = operation as Record<string, unknown>;
+    if (operationRecord.type !== "create_node") {
+      continue;
+    }
+
+    operations.push({
+      type: "create_node",
+      description:
+        typeof operationRecord.description === "string"
+          ? operationRecord.description
+          : "",
+      pageId:
+        typeof operationRecord.pageId === "string" ? operationRecord.pageId : undefined,
+      parentNodeId:
+        typeof operationRecord.parentNodeId === "string"
+          ? operationRecord.parentNodeId
+          : null,
+      text: typeof operationRecord.text === "string" ? operationRecord.text : undefined,
+      kind:
+        operationRecord.kind === "task" || operationRecord.kind === "note"
+          ? operationRecord.kind
+          : undefined,
+      taskStatus:
+        typeof operationRecord.taskStatus === "string"
+          ? (operationRecord.taskStatus as ChatPlan["operations"][number]["taskStatus"])
+          : null,
+    });
+  }
+
+  if (operations.length === 0 && rawPreview.length === 0) {
+    return null;
+  }
+
+  return {
+    summary: typeof record.summary === "string" ? record.summary : "Proposed changes",
+    rationale: typeof record.rationale === "string" ? record.rationale : "",
+    preview: rawPreview
+      .map((entry) => (typeof entry === "string" ? entry : null))
+      .filter((entry): entry is string => entry !== null),
+    operations,
   };
 }
 
@@ -3259,6 +3322,9 @@ function ConfiguredWorkspace({
   const [workspaceChatDraft, setWorkspaceChatDraft] = useState("");
   const [workspaceChatError, setWorkspaceChatError] = useState("");
   const [isWorkspaceChatLoading, setIsWorkspaceChatLoading] = useState(false);
+  const [applyingWorkspaceChatPlanMessageIds, setApplyingWorkspaceChatPlanMessageIds] = useState<
+    Set<string>
+  >(new Set());
   const [plannerRandomTaskExcludedSourceIds, setPlannerRandomTaskExcludedSourceIds] = useState<
     string[]
   >([]);
@@ -3842,6 +3908,7 @@ function ConfiguredWorkspace({
   const findNodesText = useAction(api.ai.findNodesText);
   const searchNodes = useAction(api.ai.searchNodes);
   const chatWithWorkspace = useAction(api.ai.chatWithWorkspace);
+  const applyApprovedChatPlanRaw = useMutation(api.chatData.applyApprovedChatPlan);
   const exportDataDump = useAction(api.importExport.exportDataDump);
   const pageTitleInputRef = useRef<HTMLInputElement>(null);
   const pageTitleDraftRef = useRef(pageTitleDraft);
@@ -9952,6 +10019,41 @@ function ConfiguredWorkspace({
     }
   }, [chatWithWorkspace, ownerKey, pagesById, pagesByTitle, workspaceChatDraft]);
 
+  const handleApplyWorkspaceChatPlan = useCallback(
+    async (messageId: Id<"chatMessages">) => {
+      setApplyingWorkspaceChatPlanMessageIds((current) => {
+        const next = new Set(current);
+        next.add(messageId as string);
+        return next;
+      });
+      setWorkspaceChatError("");
+      try {
+        await runTrackedMutation(
+          () =>
+            applyApprovedChatPlanRaw({
+              ownerKey,
+              messageId,
+            }),
+          {},
+          "Could not apply AI changes.",
+        );
+      } catch (error) {
+        setWorkspaceChatError(
+          error instanceof Error
+            ? error.message
+            : "Could not apply AI changes.",
+        );
+      } finally {
+        setApplyingWorkspaceChatPlanMessageIds((current) => {
+          const next = new Set(current);
+          next.delete(messageId as string);
+          return next;
+        });
+      }
+    },
+    [applyApprovedChatPlanRaw, ownerKey, runTrackedMutation],
+  );
+
   const handleArchivePage = async (page: PageDoc, archived: boolean) => {
     await archivePage({
       ownerKey,
@@ -10664,6 +10766,8 @@ function ConfiguredWorkspace({
               isLoading={isWorkspaceChatLoading}
               error={workspaceChatError}
               onClearError={() => setWorkspaceChatError("")}
+              applyingPlanMessageIds={applyingWorkspaceChatPlanMessageIds}
+              onApplyPlan={handleApplyWorkspaceChatPlan}
               onDismiss={() => setIsWorkspaceChatOpen(false)}
               isMobileLayout={isMobileLayout}
             />
@@ -15206,6 +15310,8 @@ function WorkspaceAiChatPanel({
   isLoading,
   error,
   onClearError,
+  applyingPlanMessageIds,
+  onApplyPlan,
   onDismiss,
   isMobileLayout,
 }: {
@@ -15218,6 +15324,8 @@ function WorkspaceAiChatPanel({
   isLoading: boolean;
   error: string;
   onClearError: () => void;
+  applyingPlanMessageIds: Set<string>;
+  onApplyPlan: (messageId: Id<"chatMessages">) => void;
   onDismiss: () => void;
   isMobileLayout: boolean;
 }) {
@@ -15472,7 +15580,16 @@ function WorkspaceAiChatPanel({
                 message.role === "assistant"
                   ? readWorkspaceKnowledgeMessageMetadata(message)
                   : null;
+              const actionPlan =
+                message.role === "assistant" ? readWorkspaceActionPlan(message) : null;
               const isUser = message.role === "user";
+              const isApplyingPlan = applyingPlanMessageIds.has(message._id as string);
+              const actionPreviewLines =
+                actionPlan && actionPlan.preview.length > 0
+                  ? actionPlan.preview
+                  : (actionPlan?.operations ?? []).map(
+                      (operation) => operation.description || operation.text || "Proposed change",
+                    );
 
               return (
                 <div
@@ -15496,6 +15613,51 @@ function WorkspaceAiChatPanel({
                     <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-[var(--workspace-text)] [overflow-wrap:anywhere]">
                       {message.text}
                     </p>
+                    {!isUser && actionPlan ? (
+                      <div className="mt-4 border border-[var(--workspace-border-subtle)] bg-[color-mix(in_srgb,var(--workspace-brand)_8%,transparent)] px-3 py-3">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                            Proposed Action
+                          </p>
+                          {message.status === "applied" ? (
+                            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                              Applied
+                            </span>
+                          ) : message.status === "error" ? (
+                            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-danger)]">
+                              Error
+                            </span>
+                          ) : actionPlan.operations.length === 0 ? (
+                            <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                              No Changes
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => onApplyPlan(message._id)}
+                              disabled={isApplyingPlan || message.status !== "pending_approval"}
+                              className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition hover:bg-[var(--workspace-brand-hover)] disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {isApplyingPlan ? "Applying…" : "Apply"}
+                            </button>
+                          )}
+                        </div>
+                        {actionPreviewLines.length > 0 ? (
+                          <ul className="mt-3 space-y-2 text-sm leading-6 text-[var(--workspace-text)]">
+                            {actionPreviewLines.map((line, index) => (
+                              <li key={`${message._id}-preview-${index}`} className="[overflow-wrap:anywhere]">
+                                {line}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        {message.status === "error" ? (
+                          <p className="mt-3 text-sm leading-6 text-[var(--workspace-danger)]">
+                            {message.error || "Could not apply the proposed changes."}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
                     {!isUser && metadata ? (
                       <div className="mt-4 flex min-w-0 items-center justify-between gap-3 border-t border-[var(--workspace-border-subtle)] pt-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
                           <span className="min-w-0 shrink-0">{metadata.model}</span>

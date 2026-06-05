@@ -75,6 +75,7 @@ import {
   isDataDumpExcluded,
   sanitizeDataDumpPathSegment,
 } from "../lib/domain/dataDump";
+import { chatPlanSchema } from "../lib/domain/chat";
 
 test("extractLinks finds wiki links and node refs", () => {
   const links = extractLinks(
@@ -113,6 +114,29 @@ test("extractLinks finds wiki links and node refs", () => {
       targetUrl: "openai.com",
     },
   ]);
+});
+
+test("chat plans can propose creating a child node under a parent", () => {
+  const parsed = chatPlanSchema.parse({
+    summary: "Add a date idea.",
+    rationale: "The request maps to the Ava ideas parent.",
+    preview: ['Add "sunset picnic" under "#temp do things with/for Ava"'],
+    operations: [
+      {
+        type: "create_node",
+        description: "Add sunset picnic under Ava date ideas",
+        pageId: "page_123",
+        parentNodeId: "node_parent",
+        text: "sunset picnic",
+        kind: "note",
+        taskStatus: null,
+      },
+    ],
+  });
+
+  assert.equal(parsed.operations[0]?.type, "create_node");
+  assert.equal(parsed.operations[0]?.parentNodeId, "node_parent");
+  assert.equal(parsed.operations[0]?.text, "sunset picnic");
 });
 
 test("data dump exclusion flags are detected", () => {

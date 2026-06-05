@@ -7,6 +7,7 @@ import {
   computeNodePosition,
   deleteNodeTree,
   enqueueNodeAiWork,
+  enqueuePageRootEmbeddingRefresh,
   syncLinksForNode,
 } from "./lib/workspace";
 import { chatPlanSchema, type ChatOperation } from "../lib/domain/chat";
@@ -363,14 +364,49 @@ async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
     }
     case "create_node": {
       if (!operation.pageId || !operation.text) {
-        return;
+        throw new Error("The proposed item is missing a destination or text.");
       }
 
       const pageId = operation.pageId as Id<"pages">;
+      const page = await ctx.db.get(pageId);
+      if (!page || page.archived) {
+        throw new Error("The destination page is no longer available.");
+      }
+
       const parentNodeId =
         (operation.parentNodeId as Id<"nodes"> | null | undefined) ?? null;
-      const afterNodeId =
+      if (parentNodeId) {
+        const parent = await ctx.db.get(parentNodeId);
+        if (!parent || parent.archived || parent.pageId !== pageId) {
+          throw new Error("The destination parent item is no longer available.");
+        }
+      }
+
+      const explicitAfterNodeId =
         (operation.afterNodeId as Id<"nodes"> | null | undefined) ?? null;
+      if (explicitAfterNodeId) {
+        const afterNode = await ctx.db.get(explicitAfterNodeId);
+        if (
+          !afterNode ||
+          afterNode.archived ||
+          afterNode.pageId !== pageId ||
+          afterNode.parentNodeId !== parentNodeId
+        ) {
+          throw new Error("The requested insertion position is no longer available.");
+        }
+      }
+
+      const lastSibling =
+        explicitAfterNodeId === null
+          ? (await ctx.db
+              .query("nodes")
+              .withIndex("by_page_parent_position", (query) =>
+                query.eq("pageId", pageId).eq("parentNodeId", parentNodeId),
+              )
+              .order("desc")
+              .take(1))[0] ?? null
+          : null;
+      const afterNodeId = explicitAfterNodeId ?? lastSibling?._id ?? null;
       const position = await computeNodePosition(
         ctx.db,
         pageId,
@@ -387,9 +423,14 @@ async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
           operation.kind === "task" ? (operation.taskStatus ?? "todo") : null,
         priority: operation.priority ?? null,
         dueAt: operation.dueAt ?? null,
+        dueEndAt: null,
         archived: false,
         sourceMeta: {
           sourceType: "chat",
+          generatedFrom: "workspace_ai_action",
+          taskKindLocked: false,
+          noteCompleted: false,
+          recurrenceFrequency: null,
         },
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -399,6 +440,7 @@ async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
         await syncLinksForNode(ctx.db, node);
         await enqueueNodeAiWork(ctx, nodeId);
       }
+      await enqueuePageRootEmbeddingRefresh(ctx, pageId);
       return;
     }
     case "update_node": {
@@ -504,6 +546,48 @@ async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
   }
 }
 
+async function validateOperation(ctx: MutationCtx, operation: ChatOperation) {
+  switch (operation.type) {
+    case "create_node": {
+      if (!operation.pageId || !operation.text?.trim()) {
+        throw new Error("The proposed item is missing a destination or text.");
+      }
+
+      const pageId = operation.pageId as Id<"pages">;
+      const page = await ctx.db.get(pageId);
+      if (!page || page.archived) {
+        throw new Error("The destination page is no longer available.");
+      }
+
+      const parentNodeId =
+        (operation.parentNodeId as Id<"nodes"> | null | undefined) ?? null;
+      if (parentNodeId) {
+        const parent = await ctx.db.get(parentNodeId);
+        if (!parent || parent.archived || parent.pageId !== pageId) {
+          throw new Error("The destination parent item is no longer available.");
+        }
+      }
+
+      const afterNodeId =
+        (operation.afterNodeId as Id<"nodes"> | null | undefined) ?? null;
+      if (afterNodeId) {
+        const afterNode = await ctx.db.get(afterNodeId);
+        if (
+          !afterNode ||
+          afterNode.archived ||
+          afterNode.pageId !== pageId ||
+          afterNode.parentNodeId !== parentNodeId
+        ) {
+          throw new Error("The requested insertion position is no longer available.");
+        }
+      }
+      return;
+    }
+    default:
+      return;
+  }
+}
+
 async function applyPlannerOperation(
   ctx: MutationCtx,
   operation: PlannerChatOperation,
@@ -577,17 +661,35 @@ export const applyApprovedChatPlan = mutation({
       throw new Error("Stored plan is invalid.");
     }
 
-    for (const operation of parsedPlan.data.operations) {
-      await applyOperation(ctx, operation);
-    }
+    try {
+      for (const operation of parsedPlan.data.operations) {
+        await validateOperation(ctx, operation);
+      }
 
-    await ctx.db.patch(args.messageId, {
-      status: "applied",
-      appliedAt: Date.now(),
-    });
-    await ctx.db.patch(message.threadId, {
-      updatedAt: Date.now(),
-    });
+      for (const operation of parsedPlan.data.operations) {
+        await applyOperation(ctx, operation);
+      }
+
+      await ctx.db.patch(args.messageId, {
+        status: "applied",
+        appliedAt: Date.now(),
+      });
+      await ctx.db.patch(message.threadId, {
+        updatedAt: Date.now(),
+      });
+    } catch (error) {
+      const now = Date.now();
+      await ctx.db.patch(args.messageId, {
+        status: "error",
+        error:
+          error instanceof Error && error.message.trim().length > 0
+            ? error.message
+            : "Could not apply the proposed changes.",
+      });
+      await ctx.db.patch(message.threadId, {
+        updatedAt: now,
+      });
+    }
 
     return parsedPlan.data;
   },

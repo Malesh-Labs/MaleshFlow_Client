@@ -69,7 +69,10 @@ import {
   rewriteMatchingPageWikiLinks,
 } from "../lib/domain/links";
 import { extractTagMatches } from "../lib/domain/tags";
-import { isSeparatorLineText } from "../lib/domain/displaySyntax";
+import {
+  isSeparatorLineText,
+  stripNodeDisplaySyntaxMarkers,
+} from "../lib/domain/displaySyntax";
 
 function getTimestamp() {
   return Date.now();
@@ -107,6 +110,10 @@ const FIND_REPLACE_PREVIEW_LIMIT = 40;
 const FIND_REPLACE_BATCH_SIZE = 50;
 const EMBEDDING_REBUILD_BATCH_SIZE = 200;
 const MULTI_PAGE_INCLUDED_PAGES_SLOT = "multiPageIncludedPages";
+const MAX_WORKSPACE_ACTION_PARENT_CANDIDATES = 12;
+const MAX_WORKSPACE_ACTION_LINK_BACKLINKS = 40;
+const MAX_WORKSPACE_ACTION_CHILD_PREVIEW = 5;
+const MAX_WORKSPACE_ACTION_ANCESTOR_DEPTH = 8;
 
 async function collectEmbeddingJobCountsForRun(
   db: DatabaseReader,
@@ -5668,6 +5675,180 @@ export const getResolvedLinkedTargetsForNodes = internalQuery({
       pageIds: [...pageIds],
       nodeIds: [...nodeIds],
     };
+  },
+});
+
+function normalizeWorkspaceActionCandidateText(text: string) {
+  const replacedText = replaceLinkMarkupWithLabels(text).trim() || text.trim();
+  return stripNodeDisplaySyntaxMarkers(replacedText).trim() || replacedText;
+}
+
+function isWorkspaceActionCandidateNode(
+  page: Doc<"pages">,
+  node: Doc<"nodes">,
+) {
+  if (page.archived || isPagePendingDeletion(page) || isSidebarSpecialPage(page)) {
+    return false;
+  }
+
+  if (node.archived || node.text.trim().length === 0 || node.text.trim() === ".") {
+    return false;
+  }
+
+  if (!isPlannerPage(page)) {
+    return true;
+  }
+
+  const sourceMeta = getNodeSourceMeta(node);
+  return (
+    sourceMeta.locked !== true &&
+    sourceMeta.sectionSlot !== PLANNER_TEMPLATE_SLOT &&
+    typeof sourceMeta.plannerTemplateWeekday !== "string"
+  );
+}
+
+async function collectWorkspaceActionCandidateIdsFromLinks(
+  db: DatabaseReader,
+  args: {
+    linkedNodeIds: Id<"nodes">[];
+    linkedPageIds: Id<"pages">[];
+  },
+) {
+  const nodeIds: Id<"nodes">[] = [];
+
+  for (const linkedNodeId of args.linkedNodeIds) {
+    const [resolvedLinks, refLinks] = await Promise.all([
+      db
+        .query("links")
+        .withIndex("by_target_node", (query) => query.eq("targetNodeId", linkedNodeId))
+        .take(MAX_WORKSPACE_ACTION_LINK_BACKLINKS),
+      db
+        .query("links")
+        .withIndex("by_target_node_ref", (query) =>
+          query.eq("targetNodeRef", linkedNodeId as string),
+        )
+        .take(MAX_WORKSPACE_ACTION_LINK_BACKLINKS),
+    ]);
+
+    for (const link of [...resolvedLinks, ...refLinks]) {
+      if (link.sourceNodeId) {
+        nodeIds.push(link.sourceNodeId);
+      }
+    }
+  }
+
+  for (const linkedPageId of args.linkedPageIds) {
+    const pageLinks = await db
+      .query("links")
+      .withIndex("by_target_page", (query) => query.eq("targetPageId", linkedPageId))
+      .take(MAX_WORKSPACE_ACTION_LINK_BACKLINKS);
+
+    for (const link of pageLinks) {
+      if (link.sourceNodeId) {
+        nodeIds.push(link.sourceNodeId);
+      }
+    }
+  }
+
+  return nodeIds;
+}
+
+async function buildWorkspaceActionCandidatePath(
+  db: DatabaseReader,
+  node: Doc<"nodes">,
+) {
+  const ancestors: string[] = [];
+  let parentNodeId = node.parentNodeId;
+  let depth = 0;
+
+  while (parentNodeId && depth < MAX_WORKSPACE_ACTION_ANCESTOR_DEPTH) {
+    const parent = await db.get(parentNodeId);
+    if (!parent) {
+      break;
+    }
+
+    ancestors.unshift(normalizeWorkspaceActionCandidateText(parent.text));
+    parentNodeId = parent.parentNodeId;
+    depth += 1;
+  }
+
+  return [...ancestors, normalizeWorkspaceActionCandidateText(node.text)]
+    .filter((value) => value.length > 0)
+    .join(" > ");
+}
+
+export const getWorkspaceActionParentCandidates = internalQuery({
+  args: {
+    nodeIds: v.array(v.id("nodes")),
+    linkedNodeIds: v.optional(v.array(v.id("nodes"))),
+    linkedPageIds: v.optional(v.array(v.id("pages"))),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const limit = Math.max(
+      1,
+      Math.min(args.limit ?? MAX_WORKSPACE_ACTION_PARENT_CANDIDATES, MAX_WORKSPACE_ACTION_PARENT_CANDIDATES),
+    );
+    const linkedCandidateNodeIds = await collectWorkspaceActionCandidateIdsFromLinks(ctx.db, {
+      linkedNodeIds: args.linkedNodeIds ?? [],
+      linkedPageIds: args.linkedPageIds ?? [],
+    });
+    const orderedNodeIds = [
+      ...new Set(
+        [...args.nodeIds, ...(args.linkedNodeIds ?? []), ...linkedCandidateNodeIds]
+          .map((nodeId) => nodeId as string),
+      ),
+    ] as Id<"nodes">[];
+    const candidates: Array<{
+      nodeId: Id<"nodes">;
+      pageId: Id<"pages">;
+      pageTitle: string;
+      text: string;
+      rawText: string;
+      kind: Doc<"nodes">["kind"];
+      taskStatus: Doc<"nodes">["taskStatus"];
+      ancestorPath: string;
+      childPreview: string[];
+    }> = [];
+
+    for (const nodeId of orderedNodeIds) {
+      if (candidates.length >= limit) {
+        break;
+      }
+
+      const node = await ctx.db.get(nodeId);
+      if (!node) {
+        continue;
+      }
+
+      const page = await ctx.db.get(node.pageId);
+      if (!page || !isWorkspaceActionCandidateNode(page, node)) {
+        continue;
+      }
+
+      const childPreviewNodes = await ctx.db
+        .query("nodes")
+        .withIndex("by_page_parent_position", (query) =>
+          query.eq("pageId", node.pageId).eq("parentNodeId", node._id),
+        )
+        .take(MAX_WORKSPACE_ACTION_CHILD_PREVIEW);
+      candidates.push({
+        nodeId: node._id,
+        pageId: page._id,
+        pageTitle: page.title,
+        text: normalizeWorkspaceActionCandidateText(node.text),
+        rawText: node.text,
+        kind: node.kind,
+        taskStatus: node.taskStatus,
+        ancestorPath: await buildWorkspaceActionCandidatePath(ctx.db, node),
+        childPreview: childPreviewNodes
+          .filter((child) => !child.archived)
+          .map((child) => normalizeWorkspaceActionCandidateText(child.text))
+          .filter((text) => text.length > 0),
+      });
+    }
+
+    return candidates;
   },
 });
 
