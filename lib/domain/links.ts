@@ -465,6 +465,68 @@ export function rewriteMatchingPageWikiLinks(
   return nextText;
 }
 
+function sanitizeWikiLinkReplacementLabel(value: string) {
+  return value
+    .replace(/\|/g, "/")
+    .replace(/\]\]/g, "] ]")
+    .trim();
+}
+
+export function rewritePlainPageWikiLinksToNode(
+  text: string,
+  shouldRewrite: (
+    link: Extract<ExtractedLink, { kind: "page" }>,
+  ) => boolean,
+  targetNodeRef: string,
+) {
+  const matches = extractLinkMatches(text);
+  if (matches.length === 0) {
+    return null;
+  }
+
+  let cursor = 0;
+  let nextText = "";
+  let occurrenceCount = 0;
+
+  for (const match of matches) {
+    if (match.start > cursor) {
+      nextText += text.slice(cursor, match.start);
+    }
+
+    if (
+      match.link.kind === "page" &&
+      !match.link.targetPageRef &&
+      match.link.targetPageTitle &&
+      shouldRewrite(match.link)
+    ) {
+      const label =
+        sanitizeWikiLinkReplacementLabel(
+          getExplicitWikiLinkPreviewText(match.link.label) ||
+            match.link.targetPageTitle,
+        ) || "Linked node";
+      nextText += `[[${label}|node:${targetNodeRef}]]`;
+      occurrenceCount += 1;
+    } else {
+      nextText += text.slice(match.start, match.end);
+    }
+
+    cursor = match.end;
+  }
+
+  if (cursor < text.length) {
+    nextText += text.slice(cursor);
+  }
+
+  if (occurrenceCount === 0) {
+    return null;
+  }
+
+  return {
+    value: nextText,
+    occurrenceCount,
+  };
+}
+
 export function applySelectedLinkShortcut(
   text: string,
   selectionStart: number,

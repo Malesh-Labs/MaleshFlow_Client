@@ -8,6 +8,7 @@ import {
   getExplicitWikiLinkPreviewText,
   replaceLinkMarkupWithLabels,
   rewriteMatchingPageWikiLinks,
+  rewritePlainPageWikiLinksToNode,
   sanitizeGeneratedWikiLinkLabel,
 } from "../lib/domain/links";
 import {
@@ -497,6 +498,34 @@ test("rewriteMatchingPageWikiLinks updates only matched resolved page links", ()
   assert.equal(
     rewritten,
     "See [[New Title]], [[New Title]], [[New Title|page:page_123]], [[page:page_123]], [[Custom label|page:page_123]], [[Other Page]], [[Label|node:node_123]], and [OpenAI](openai.com).",
+  );
+});
+
+test("rewritePlainPageWikiLinksToNode converts only matching plain page wiki links", () => {
+  const text =
+    "See [[test]], [[Test]], [[Other]], [[Test|page:page_123]], [[Label|node:node_123]], and [[pipe|label]].";
+
+  const rewritten = rewritePlainPageWikiLinksToNode(
+    text,
+    (link) => link.targetPageTitle?.toLowerCase() === "test",
+    "node_456",
+  );
+
+  assert.deepEqual(rewritten, {
+    value:
+      "See [[test|node:node_456]], [[Test|node:node_456]], [[Other]], [[Test|page:page_123]], [[Label|node:node_123]], and [[pipe|label]].",
+    occurrenceCount: 2,
+  });
+});
+
+test("rewritePlainPageWikiLinksToNode returns null when no plain page links match", () => {
+  assert.equal(
+    rewritePlainPageWikiLinksToNode(
+      "See [[Test|page:page_123]] and [[Label|node:node_123]].",
+      (link) => link.targetPageTitle?.toLowerCase() === "test",
+      "node_456",
+    ),
+    null,
   );
 });
 

@@ -67,6 +67,7 @@ import {
   getExplicitWikiLinkPreviewText,
   replaceLinkMarkupWithLabels,
   rewriteMatchingPageWikiLinks,
+  rewritePlainPageWikiLinksToNode,
 } from "../lib/domain/links";
 import { extractTagMatches } from "../lib/domain/tags";
 import {
@@ -108,6 +109,11 @@ const PAGE_DELETE_LINK_BATCH_SIZE = 200;
 const PAGE_DELETE_MESSAGE_BATCH_SIZE = 200;
 const FIND_REPLACE_PREVIEW_LIMIT = 40;
 const FIND_REPLACE_BATCH_SIZE = 50;
+const UNRESOLVED_PAGE_LINK_SCAN_PAGE_LIMIT = 1000;
+const UNRESOLVED_PAGE_LINK_SCAN_NODE_LIMIT = 5000;
+const UNRESOLVED_PAGE_LINK_GROUP_LIMIT = 100;
+const UNRESOLVED_PAGE_LINK_SAMPLE_LIMIT = 4;
+const UNRESOLVED_PAGE_LINK_REPLACE_BATCH_SIZE = 50;
 const EMBEDDING_REBUILD_BATCH_SIZE = 200;
 const MULTI_PAGE_INCLUDED_PAGES_SLOT = "multiPageIncludedPages";
 const MAX_WORKSPACE_ACTION_PARENT_CANDIDATES = 12;
@@ -971,6 +977,76 @@ async function takePageDeletionNodeBatch(
 
 function normalizeLinkSearchQuery(value: string) {
   return value.trim().toLowerCase();
+}
+
+function normalizePlainPageWikiLinkTitle(value: string) {
+  return slugify(value, { lower: true, strict: true }) || "untitled";
+}
+
+function isPlainUnresolvedPageWikiLink(
+  link: Extract<ExtractedLink, { kind: "page" }>,
+  activePageSlugs: Set<string>,
+) {
+  if (link.targetPageRef || !link.targetPageTitle) {
+    return false;
+  }
+
+  return !activePageSlugs.has(normalizePlainPageWikiLinkTitle(link.targetPageTitle));
+}
+
+async function listActiveWorkspacePagesForLinkMaintenance(
+  db: DatabaseReader | DatabaseWriter,
+) {
+  const fetchedPages = await db
+    .query("pages")
+    .withIndex("by_archived_position", (query) => query.eq("archived", false))
+    .take(UNRESOLVED_PAGE_LINK_SCAN_PAGE_LIMIT + 1);
+  const pages = fetchedPages
+    .slice(0, UNRESOLVED_PAGE_LINK_SCAN_PAGE_LIMIT)
+    .filter((page) => !isSidebarSpecialPage(page) && !isPagePendingDeletion(page));
+
+  return {
+    pages,
+    truncated: fetchedPages.length > UNRESOLVED_PAGE_LINK_SCAN_PAGE_LIMIT,
+  };
+}
+
+async function listActiveWorkspaceNodesForLinkMaintenance(
+  db: DatabaseReader | DatabaseWriter,
+  pages: Doc<"pages">[],
+  maxNodes: number,
+) {
+  const nodes: Doc<"nodes">[] = [];
+  let truncated = false;
+
+  for (const page of pages) {
+    const remaining = maxNodes - nodes.length;
+    if (remaining <= 0) {
+      truncated = true;
+      break;
+    }
+
+    const pageNodes = await db
+      .query("nodes")
+      .withIndex("by_page_archived", (query) =>
+        query.eq("pageId", page._id).eq("archived", false),
+      )
+      .take(remaining + 1);
+    const visiblePageNodes = pageNodes
+      .slice(0, remaining)
+      .sort((left, right) => left.position - right.position);
+    nodes.push(...visiblePageNodes);
+
+    if (pageNodes.length > remaining) {
+      truncated = true;
+      break;
+    }
+  }
+
+  return {
+    nodes,
+    truncated,
+  };
 }
 
 function linkSearchScore(text: string, query: string) {
@@ -3087,6 +3163,228 @@ export const getBacklinks = query({
     }
 
     return [];
+  },
+});
+
+export const listUnresolvedPageLinkGroups = query({
+  args: {
+    ownerKey: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const limit = Math.max(
+      1,
+      Math.min(args.limit ?? UNRESOLVED_PAGE_LINK_GROUP_LIMIT, UNRESOLVED_PAGE_LINK_GROUP_LIMIT),
+    );
+    const pageResult = await listActiveWorkspacePagesForLinkMaintenance(ctx.db);
+    const activePageSlugs = new Set(pageResult.pages.map((page) => page.slug));
+    const pageMap = new Map(pageResult.pages.map((page) => [page._id, page]));
+    const nodeResult = await listActiveWorkspaceNodesForLinkMaintenance(
+      ctx.db,
+      pageResult.pages,
+      UNRESOLVED_PAGE_LINK_SCAN_NODE_LIMIT,
+    );
+    const groups = new Map<
+      string,
+      {
+        normalizedTitle: string;
+        title: string;
+        occurrenceCount: number;
+        nodeIds: Set<string>;
+        samples: Array<{
+          nodeId: Id<"nodes">;
+          pageId: Id<"pages">;
+          pageTitle: string;
+          nodeText: string;
+          occurrenceCount: number;
+        }>;
+      }
+    >();
+
+    for (const node of nodeResult.nodes) {
+      const page = pageMap.get(node.pageId);
+      if (!page) {
+        continue;
+      }
+
+      const occurrencesByTitle = new Map<string, number>();
+      const titleByNormalizedTitle = new Map<string, string>();
+      for (const match of extractLinkMatches(node.text)) {
+        if (
+          match.link.kind !== "page" ||
+          !isPlainUnresolvedPageWikiLink(match.link, activePageSlugs)
+        ) {
+          continue;
+        }
+
+        const targetPageTitle = match.link.targetPageTitle ?? "";
+        const normalizedTitle = normalizePlainPageWikiLinkTitle(targetPageTitle);
+        occurrencesByTitle.set(
+          normalizedTitle,
+          (occurrencesByTitle.get(normalizedTitle) ?? 0) + 1,
+        );
+        if (!titleByNormalizedTitle.has(normalizedTitle)) {
+          titleByNormalizedTitle.set(normalizedTitle, targetPageTitle.trim());
+        }
+      }
+
+      for (const [normalizedTitle, nodeOccurrenceCount] of occurrencesByTitle) {
+        const existing = groups.get(normalizedTitle) ?? {
+          normalizedTitle,
+          title: titleByNormalizedTitle.get(normalizedTitle) ?? normalizedTitle,
+          occurrenceCount: 0,
+          nodeIds: new Set<string>(),
+          samples: [],
+        };
+
+        existing.occurrenceCount += nodeOccurrenceCount;
+        existing.nodeIds.add(node._id as string);
+        if (existing.samples.length < UNRESOLVED_PAGE_LINK_SAMPLE_LIMIT) {
+          existing.samples.push({
+            nodeId: node._id,
+            pageId: page._id,
+            pageTitle: page.title,
+            nodeText: node.text,
+            occurrenceCount: nodeOccurrenceCount,
+          });
+        }
+        groups.set(normalizedTitle, existing);
+      }
+    }
+
+    return {
+      groups: [...groups.values()]
+        .sort((left, right) => {
+          if (left.occurrenceCount !== right.occurrenceCount) {
+            return right.occurrenceCount - left.occurrenceCount;
+          }
+
+          return left.title.localeCompare(right.title);
+        })
+        .slice(0, limit)
+        .map((group) => ({
+          normalizedTitle: group.normalizedTitle,
+          title: group.title,
+          occurrenceCount: group.occurrenceCount,
+          nodeCount: group.nodeIds.size,
+          samples: group.samples,
+        })),
+      scanTruncated: pageResult.truncated || nodeResult.truncated,
+      scannedNodeCount: nodeResult.nodes.length,
+    };
+  },
+});
+
+export const replaceUnresolvedPageLinksWithNode = mutation({
+  args: {
+    ownerKey: v.string(),
+    normalizedTitle: v.string(),
+    targetNodeId: v.id("nodes"),
+    batchSize: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const targetNode = await ctx.db.get(args.targetNodeId);
+    if (!targetNode || targetNode.archived) {
+      throw new Error("Target item not found.");
+    }
+
+    const targetPage = await ctx.db.get(targetNode.pageId);
+    if (
+      !targetPage ||
+      targetPage.archived ||
+      isSidebarSpecialPage(targetPage) ||
+      isPagePendingDeletion(targetPage)
+    ) {
+      throw new Error("Target item must be on an active workspace page.");
+    }
+
+    const normalizedTitle = args.normalizedTitle.trim();
+    if (normalizedTitle.length === 0) {
+      throw new Error("Choose an unresolved link to resolve.");
+    }
+
+    const batchSize = Math.max(
+      1,
+      Math.min(
+        args.batchSize ?? UNRESOLVED_PAGE_LINK_REPLACE_BATCH_SIZE,
+        UNRESOLVED_PAGE_LINK_REPLACE_BATCH_SIZE,
+      ),
+    );
+    const pageResult = await listActiveWorkspacePagesForLinkMaintenance(ctx.db);
+    const activePageSlugs = new Set(pageResult.pages.map((page) => page.slug));
+    const nodeResult = await listActiveWorkspaceNodesForLinkMaintenance(
+      ctx.db,
+      pageResult.pages,
+      UNRESOLVED_PAGE_LINK_SCAN_NODE_LIMIT,
+    );
+    const replacements: Array<{
+      nodeId: Id<"nodes">;
+      pageId: Id<"pages">;
+      text: string;
+      occurrenceCount: number;
+    }> = [];
+
+    for (const node of nodeResult.nodes) {
+      const replacement = rewritePlainPageWikiLinksToNode(
+        node.text,
+        (link) =>
+          isPlainUnresolvedPageWikiLink(link, activePageSlugs) &&
+          normalizePlainPageWikiLinkTitle(link.targetPageTitle ?? "") === normalizedTitle,
+        targetNode._id as string,
+      );
+
+      if (!replacement) {
+        continue;
+      }
+
+      replacements.push({
+        nodeId: node._id,
+        pageId: node.pageId,
+        text: replacement.value,
+        occurrenceCount: replacement.occurrenceCount,
+      });
+      if (replacements.length >= batchSize) {
+        break;
+      }
+    }
+
+    let replacedOccurrenceCount = 0;
+    const touchedPageIds = new Set<Id<"pages">>();
+    const now = getTimestamp();
+
+    for (const replacement of replacements) {
+      await ctx.db.patch(replacement.nodeId, {
+        text: replacement.text,
+        updatedAt: now,
+      });
+      const refreshedNode = await ctx.db.get(replacement.nodeId);
+      if (!refreshedNode) {
+        continue;
+      }
+
+      replacedOccurrenceCount += replacement.occurrenceCount;
+      touchedPageIds.add(replacement.pageId);
+      await syncLinksForNode(ctx.db, refreshedNode);
+      await enqueueNodeAiWork(ctx, refreshedNode._id);
+    }
+
+    for (const pageId of touchedPageIds) {
+      await enqueuePageRootEmbeddingRefresh(ctx, pageId);
+    }
+
+    const scanTruncated = pageResult.truncated || nodeResult.truncated;
+    return {
+      replacedNodeCount: replacements.length,
+      replacedOccurrenceCount,
+      hasMore: replacements.length >= batchSize || (scanTruncated && replacements.length > 0),
+      scanTruncated,
+      targetNodeId: targetNode._id,
+      targetPageId: targetPage._id,
+    };
   },
 });
 

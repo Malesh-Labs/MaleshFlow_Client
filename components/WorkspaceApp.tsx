@@ -120,6 +120,7 @@ import { ImporterPanel } from "@/components/ImporterPanel";
 import { LegacyPanel } from "@/components/LegacyPanel";
 import { NoteDatePanel } from "@/components/NoteDatePanel";
 import { TaskSchedulePanel } from "@/components/TaskSchedulePanel";
+import { UnresolvedLinksPanel } from "@/components/UnresolvedLinksPanel";
 import type { ChatPlan } from "@/lib/domain/chat";
 import type { ImportedOutlineNode } from "@/lib/domain/importer";
 
@@ -337,6 +338,7 @@ type PaletteMode =
   | "nodes"
   | "actions"
   | "replace"
+  | "resolveLinks"
   | "archive"
   | "importer"
   | "legacyUpload"
@@ -7140,6 +7142,25 @@ function ConfiguredWorkspace({
         },
       },
       {
+        key: "resolve-empty-links",
+        title: "Resolve Empty Links",
+        subtitle: "Step through unresolved [[wiki links]], choose a node target, and replace all matching uses.",
+        keywords: [
+          "links",
+          "resolve",
+          "empty",
+          "wiki",
+          "node",
+          "find",
+          "replace",
+          "autocomplete",
+        ],
+        actionLabel: "Open",
+        onSelect: () => {
+          switchPaletteMode("resolveLinks");
+        },
+      },
+      {
         key: "view-shortcuts",
         title: "View Shortcuts",
         subtitle: "See the main keyboard shortcuts and selection gestures available in the app.",
@@ -12848,6 +12869,7 @@ function ConfiguredWorkspace({
             className={clsx(
               "mx-auto mt-16 flex h-[calc(100vh-8rem)] w-full flex-col overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]",
               paletteMode === "replace" ||
+                paletteMode === "resolveLinks" ||
                 paletteMode === "archive" ||
                 paletteMode === "importer" ||
                 paletteMode === "legacyUpload" ||
@@ -12940,6 +12962,17 @@ function ConfiguredWorkspace({
                     Find &amp; Replace
                   </button>
                 ) : null}
+                {paletteMode === "resolveLinks" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      switchPaletteMode("resolveLinks");
+                    }}
+                    className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition"
+                  >
+                    Resolve Links
+                  </button>
+                ) : null}
                 {paletteMode === "importer" ? (
                   <button
                     type="button"
@@ -13008,6 +13041,7 @@ function ConfiguredWorkspace({
                 ) : null}
               </div>
               {paletteMode === "replace" ||
+              paletteMode === "resolveLinks" ||
               paletteMode === "archive" ||
               paletteMode === "importer" ||
               paletteMode === "legacyUpload" ||
@@ -13018,6 +13052,8 @@ function ConfiguredWorkspace({
                 <p className="text-sm text-[var(--workspace-text-subtle)]">
                   {paletteMode === "replace"
                     ? "Preview and replace exact text in the current page or across the active workspace."
+                    : paletteMode === "resolveLinks"
+                      ? "Step through unresolved wiki links, choose node targets, and replace all matching uses."
                     : paletteMode === "archive"
                       ? "Search archived pages and nodes without mixing them into active workspace results."
                       : paletteMode === "importer"
@@ -13068,6 +13104,7 @@ function ConfiguredWorkspace({
               className={clsx(
                 "min-h-0 h-full flex-1",
               paletteMode === "replace" ||
+              paletteMode === "resolveLinks" ||
               paletteMode === "archive" ||
               paletteMode === "importer" ||
               paletteMode === "legacyUpload" ||
@@ -13248,6 +13285,13 @@ function ConfiguredWorkspace({
                   currentPageId={selectedPage?._id ?? null}
                   currentPageTitle={selectedPage?.title ?? null}
                   onSelectResult={handleSelectNodeSearchResult}
+                  onApplied={(message) => {
+                    setCopySnackbarMessage(message);
+                  }}
+                />
+              ) : paletteMode === "resolveLinks" ? (
+                <UnresolvedLinksPanel
+                  ownerKey={ownerKey}
                   onApplied={(message) => {
                     setCopySnackbarMessage(message);
                   }}
