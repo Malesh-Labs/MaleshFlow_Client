@@ -12788,7 +12788,7 @@ function ConfiguredWorkspace({
                 ) : pageMeta.pageType === "multiPage" ? (
                   <div className="space-y-10">
                     <PageSection
-                      title="Included Pages"
+                      title="Included Pages/Nodes"
                       sectionNode={multiPageIncludedPagesSection}
                       ownerKey={ownerKey}
                       pageId={selectedPage._id}
@@ -12844,7 +12844,7 @@ function ConfiguredWorkspace({
                         </div>
                       ) : multiPageIncludedRenderItems.length === 0 ? (
                         <div className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-surface-muted)] px-4 py-3 text-sm text-[var(--workspace-text-subtle)]">
-                          Add page or node links under Included Pages to show content here.
+                          Add page or node links under Included Pages/Nodes to show content here.
                         </div>
                       ) : (
                         multiPageIncludedRenderItems.map((item) =>

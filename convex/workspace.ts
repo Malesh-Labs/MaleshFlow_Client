@@ -117,6 +117,7 @@ const UNRESOLVED_PAGE_LINK_SAMPLE_LIMIT = 4;
 const UNRESOLVED_PAGE_LINK_REPLACE_BATCH_SIZE = 50;
 const EMBEDDING_REBUILD_BATCH_SIZE = 200;
 const MULTI_PAGE_INCLUDED_PAGES_SLOT = "multiPageIncludedPages";
+const MULTI_PAGE_INCLUDED_PAGES_TITLE = "Included Pages/Nodes";
 const LATEST_JOURNAL_VIEW_TITLE = "Latest Journal";
 const LATEST_JOURNAL_ENTRY_LIMIT = 7;
 const MAX_WORKSPACE_ACTION_PARENT_CANDIDATES = 12;
@@ -664,6 +665,13 @@ async function ensureMultiPageSections(ctx: MutationCtx, page: Doc<"pages">) {
     null;
 
   if (existingSection) {
+    if (existingSection.text !== MULTI_PAGE_INCLUDED_PAGES_TITLE) {
+      await ctx.db.patch(existingSection._id, {
+        text: MULTI_PAGE_INCLUDED_PAGES_TITLE,
+        updatedAt: getTimestamp(),
+      });
+      await enqueuePageRootEmbeddingRefresh(ctx, page._id);
+    }
     return {
       includedPagesSectionId: existingSection._id,
     };
@@ -680,7 +688,7 @@ async function ensureMultiPageSections(ctx: MutationCtx, page: Doc<"pages">) {
     pageId: page._id,
     parentNodeId: null,
     position,
-    text: "Included Pages",
+    text: MULTI_PAGE_INCLUDED_PAGES_TITLE,
     kind: "note",
     taskStatus: null,
     priority: null,
@@ -2775,7 +2783,7 @@ export const getMultiPageView = query({
         includedNodes: [],
         includedItems: [],
         skippedRows: [],
-        loadWarning: "Add the Included Pages section to configure this view.",
+        loadWarning: `Add the ${MULTI_PAGE_INCLUDED_PAGES_TITLE} section to configure this view.`,
       };
     }
 
