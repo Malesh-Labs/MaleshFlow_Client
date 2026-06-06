@@ -427,6 +427,7 @@ type LinkSuggestion =
       title: string;
       subtitle: string;
       insertText: string;
+      parentTitle?: string | null;
     }
   | {
       key: string;
@@ -434,6 +435,7 @@ type LinkSuggestion =
       title: string;
       subtitle: string;
       insertText: string;
+      parentTitle?: string | null;
     }
   | {
       key: string;
@@ -441,6 +443,7 @@ type LinkSuggestion =
       title: string;
       subtitle: string;
       insertText: string;
+      parentTitle?: string | null;
     };
 type LinkPreviewTagBadge = {
   text: string;
@@ -1970,8 +1973,8 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
         subtitle: [
           "Node",
           entry.page?.title ?? "",
-          parentText ? `Parent: ${parentText}` : "",
         ].filter((value) => value.length > 0).join(" • "),
+        parentTitle: parentText || null,
         insertText: buildNodeLinkInsertText(entry.node),
       };
     });
@@ -14972,6 +14975,11 @@ function LinkAutocompleteMenu({
               <div className="text-xs text-[var(--workspace-text-subtle)]">
                 {suggestion.subtitle}
               </div>
+              {suggestion.parentTitle ? (
+                <div className="mt-0.5 line-clamp-1 text-[11px] text-[var(--workspace-text-faint)]">
+                  Parent: {suggestion.parentTitle}
+                </div>
+              ) : null}
             </button>
           ))}
         </div>
