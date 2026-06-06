@@ -1689,7 +1689,7 @@ function writeFocusedNodeToHistory(
 }
 
 function buildNodeLinkInsertText(node: Doc<"nodes">) {
-  return `[[${sanitizeLinkLabel(node.text)}|node:${node._id}]]`;
+  return `[[node:${node._id}]]`;
 }
 
 function isOptimisticNodeId(nodeId: string | null | undefined) {
@@ -1704,7 +1704,7 @@ function buildNodeClipboardLink(node: Pick<Doc<"nodes">, "_id" | "text">) {
 }
 
 function buildPageLinkInsertText(page: Pick<Doc<"pages">, "_id" | "title">) {
-  return `[[${sanitizeLinkLabel(page.title)}|page:${page._id}]]`;
+  return `[[page:${page._id}]]`;
 }
 
 function buildPageBacklinkSearchQuery(page: Pick<Doc<"pages">, "_id" | "title">) {
