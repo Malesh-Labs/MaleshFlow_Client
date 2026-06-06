@@ -1563,6 +1563,37 @@ function getDocumentTitle(pageTitle: string | null | undefined) {
   return trimmedTitle && trimmedTitle.length > 0 ? trimmedTitle : "Malesh Flow";
 }
 
+function getPaletteDocumentTitle(mode: PaletteMode) {
+  switch (mode) {
+    case "pages":
+      return "Search Pages";
+    case "find":
+      return "Find Text";
+    case "nodes":
+      return "Search Items";
+    case "actions":
+      return "Actions";
+    case "replace":
+      return "Find & Replace";
+    case "resolveLinks":
+      return "Resolve Links";
+    case "archive":
+      return "Search Archive";
+    case "importer":
+      return "Import From Text";
+    case "legacyUpload":
+      return "Upload Legacy";
+    case "legacySearch":
+      return "Search Legacy";
+    case "legacyViewer":
+      return "View Legacy";
+    case "taskSchedule":
+      return "Task Schedule";
+    case "noteDate":
+      return "Note Date";
+  }
+}
+
 function readPageIdFromLocation() {
   if (typeof window === "undefined") {
     return null;
@@ -6433,7 +6464,11 @@ function ConfiguredWorkspace({
       selectedPage?.title ??
       (selectedPageId ? pagesById.get(selectedPageId as string)?.title ?? null : null);
     const nextDocumentTitle = getDocumentTitle(
-      isWorkspaceChatOpen ? "AI Chat" : focusedNodeLabel || nextPageTitle,
+      paletteOpen
+        ? getPaletteDocumentTitle(paletteMode)
+        : isWorkspaceChatOpen
+          ? "AI Chat"
+          : focusedNodeLabel || nextPageTitle,
     );
 
     if (document.title !== nextDocumentTitle) {
@@ -6442,7 +6477,15 @@ function ConfiguredWorkspace({
 
     const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     window.history.replaceState(window.history.state, nextDocumentTitle, currentUrl);
-  }, [focusedNodeLabel, isWorkspaceChatOpen, pagesById, selectedPage?.title, selectedPageId]);
+  }, [
+    focusedNodeLabel,
+    isWorkspaceChatOpen,
+    pagesById,
+    paletteMode,
+    paletteOpen,
+    selectedPage?.title,
+    selectedPageId,
+  ]);
 
   useEffect(() => {
     if (!locationFocusedNodeId) {
