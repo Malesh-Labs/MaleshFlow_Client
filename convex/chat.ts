@@ -181,7 +181,18 @@ function buildHeuristicPlan(input: {
       operations: archiveableDoneTasks.slice(0, 12).map((node) => ({
         type: "archive_node" as const,
         description: `Archive task "${node.text}"`,
+        pageId: null,
         nodeId: node._id,
+        parentNodeId: null,
+        afterNodeId: null,
+        sourceNodeId: null,
+        targetNodeId: null,
+        title: null,
+        text: null,
+        kind: null,
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
         archived: true,
       })),
     };
@@ -238,7 +249,7 @@ export const runChatPlanner = action({
       workspace: workspace as PlannerWorkspace,
     });
     const systemPrompt =
-      "You are planning safe workspace edits for a personal outliner. Only propose operations using real pageId and nodeId values present in the provided context. Never invent ids. If the request is ambiguous, return zero operations and explain why. All edits require later human approval.";
+      "You are planning safe workspace edits for a personal outliner. Only propose operations using real pageId and nodeId values present in the provided context. Never invent ids. Every operation object must include every schema field; use null for fields that do not apply. If the request is ambiguous, return zero operations and explain why. All edits require later human approval.";
     const userPrompt = [
       `Prompt: ${args.prompt}`,
       "",
@@ -368,7 +379,7 @@ export const runPlannerChat = action({
 
     let plan = fallbackPlan;
     const systemPrompt =
-      "You plan safe edits for a personal daily planner. Only return operations using real planner node ids that appear in the provided context. Prefer complete_planner_task when the user clearly finished a linked planner task. Use delete_planner_node only for planner-local items. If the request is ambiguous, return zero operations and explain why. All changes require later human approval.";
+      "You plan safe edits for a personal daily planner. Only return operations using real planner node ids that appear in the provided context. Prefer complete_planner_task when the user clearly finished a linked planner task. Use delete_planner_node only for planner-local items. Every operation object must include text, parentNodeId, and afterNodeId; use null for fields that do not apply. If the request is ambiguous, return zero operations and explain why. All changes require later human approval.";
     const userPrompt = [
       `Prompt: ${args.prompt}`,
       "",

@@ -27,9 +27,9 @@ export const plannerChatOperationSchema = z.object({
   type: z.enum(PLANNER_CHAT_OPERATION_TYPES),
   description: z.string(),
   nodeId: z.string(),
-  text: z.string().optional(),
-  parentNodeId: z.string().nullable().optional(),
-  afterNodeId: z.string().nullable().optional(),
+  text: z.string().nullable(),
+  parentNodeId: z.string().nullable(),
+  afterNodeId: z.string().nullable(),
 });
 
 export const plannerChatPlanSchema = z.object({

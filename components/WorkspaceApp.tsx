@@ -1781,20 +1781,34 @@ function readWorkspaceActionPlan(
           ? operationRecord.description
           : "",
       pageId:
-        typeof operationRecord.pageId === "string" ? operationRecord.pageId : undefined,
+        typeof operationRecord.pageId === "string" ? operationRecord.pageId : null,
+      nodeId: null,
       parentNodeId:
         typeof operationRecord.parentNodeId === "string"
           ? operationRecord.parentNodeId
           : null,
-      text: typeof operationRecord.text === "string" ? operationRecord.text : undefined,
+      afterNodeId:
+        typeof operationRecord.afterNodeId === "string" ? operationRecord.afterNodeId : null,
+      sourceNodeId: null,
+      targetNodeId: null,
+      title: null,
+      text: typeof operationRecord.text === "string" ? operationRecord.text : null,
       kind:
         operationRecord.kind === "task" || operationRecord.kind === "note"
           ? operationRecord.kind
-          : undefined,
+          : null,
       taskStatus:
         typeof operationRecord.taskStatus === "string"
           ? (operationRecord.taskStatus as ChatPlan["operations"][number]["taskStatus"])
           : null,
+      priority:
+        operationRecord.priority === "low" ||
+        operationRecord.priority === "medium" ||
+        operationRecord.priority === "high"
+          ? operationRecord.priority
+          : null,
+      dueAt: typeof operationRecord.dueAt === "number" ? operationRecord.dueAt : null,
+      archived: typeof operationRecord.archived === "boolean" ? operationRecord.archived : null,
     });
   }
 

@@ -363,11 +363,12 @@ async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
       return;
     }
     case "create_node": {
-      if (!operation.pageId || !operation.text) {
+      if (!operation.pageId || !operation.text?.trim()) {
         throw new Error("The proposed item is missing a destination or text.");
       }
 
       const pageId = operation.pageId as Id<"pages">;
+      const text = operation.text.trim();
       const page = await ctx.db.get(pageId);
       if (!page || page.archived) {
         throw new Error("The destination page is no longer available.");
@@ -417,7 +418,7 @@ async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
         pageId,
         parentNodeId,
         position,
-        text: operation.text,
+        text,
         kind: operation.kind ?? "note",
         taskStatus:
           operation.kind === "task" ? (operation.taskStatus ?? "todo") : null,

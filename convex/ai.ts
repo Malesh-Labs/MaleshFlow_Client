@@ -367,6 +367,29 @@ function buildWorkspaceActionSearchQuery(question: string) {
   return normalized;
 }
 
+function buildWorkspaceActionTextSearchQueries(question: string) {
+  const baseQuery = buildWorkspaceActionSearchQuery(question)
+    .replace(/[?!.].*$/, "")
+    .trim();
+  if (baseQuery.length === 0) {
+    return [];
+  }
+
+  const queries = [baseQuery];
+  const destinationMatch = baseQuery.match(
+    /\b(?:to|under|beneath|below|inside|into|in|on)\s+(?:the\s+)?(.+)$/i,
+  );
+  const destinationQuery = destinationMatch?.[1]
+    ?.replace(/\b(?:list|section|item|node|page)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (destinationQuery && destinationQuery.length > 0) {
+    queries.push(destinationQuery);
+  }
+
+  return [...new Set(queries)].slice(0, 3);
+}
+
 function buildWorkspaceActionNoopResponse(args: {
   answer: string;
   model: string;
@@ -409,11 +432,18 @@ function sanitizeWorkspaceChildActionPlan(
         operation.description?.trim() ||
         `Add "${text}" under "${parent.text || parent.rawText}"`,
       pageId: parent.pageId,
+      nodeId: null,
       parentNodeId: parent.nodeId,
+      afterNodeId: null,
+      sourceNodeId: null,
+      targetNodeId: null,
+      title: null,
       text,
       kind,
       taskStatus: kind === "task" ? (operation.taskStatus ?? "todo") : null,
       priority: operation.priority ?? null,
+      dueAt: operation.dueAt ?? null,
+      archived: null,
     });
     preview.push(`Add "${text}" under "${parent.text || parent.rawText}"`);
 
@@ -446,6 +476,7 @@ async function buildWorkspaceActionParentCandidates(
   },
 ) {
   const searchQuery = buildWorkspaceActionSearchQuery(args.question);
+  const textSearchQueries = buildWorkspaceActionTextSearchQueries(args.question);
   const semanticMatches =
     searchQuery.length > 0
       ? ((await runSemanticSearch(ctx, {
@@ -456,9 +487,23 @@ async function buildWorkspaceActionParentCandidates(
           page: Doc<"pages"> | null;
         }>)
       : [];
+  const textMatches = (
+    await Promise.all(
+      textSearchQueries.map((query) =>
+        ctx.runQuery(fallbackTextSearchRef, {
+          query,
+          limit: WORKSPACE_ACTION_PARENT_CANDIDATE_LIMIT,
+          includeArchived: false,
+        }),
+      ),
+    )
+  ).flat() as Array<{
+    node: Doc<"nodes">;
+    page: Doc<"pages"> | null;
+  }>;
 
   return (await ctx.runQuery(getWorkspaceActionParentCandidatesRef, {
-    nodeIds: semanticMatches.map((match) => match.node._id),
+    nodeIds: [...semanticMatches, ...textMatches].map((match) => match.node._id),
     linkedPageIds: args.linkedPageIds ?? [],
     linkedNodeIds: args.linkedNodeIds ?? [],
     limit: WORKSPACE_ACTION_PARENT_CANDIDATE_LIMIT,
@@ -508,7 +553,7 @@ async function maybePlanWorkspaceChildAction(
           .join("\n")
       : "";
   const systemPrompt =
-    `${buildTodayPromptLine()} You plan safe edits for a personal outliner. V1 only supports adding child items under an existing parent node. Return a plan with only create_node operations. Each operation must use a parentNodeId and pageId from the candidate list. Never invent ids. Do not propose updates, moves, deletes, archives, or new pages. Default new items to kind "note"; use kind "task" only when the user clearly asks for a todo, task, reminder, or checkbox. If there is not exactly one clearly best parent, return zero operations and explain what needs clarification. All edits require human approval later.`;
+    `${buildTodayPromptLine()} You plan safe edits for a personal outliner. V1 only supports adding child items under an existing parent node. Return a plan with only create_node operations. Each operation must use a parentNodeId and pageId from the candidate list. Never invent ids. Every operation object must include every schema field; use null for fields that do not apply. Do not propose updates, moves, deletes, archives, or new pages. Default new items to kind "note"; use kind "task" only when the user clearly asks for a todo, task, reminder, or checkbox. If there is not exactly one clearly best parent, return zero operations and explain what needs clarification. All edits require human approval later.`;
   const userPrompt = [
     conversationContext.length > 0 ? "Recent conversation:" : null,
     conversationContext.length > 0 ? conversationContext : null,
