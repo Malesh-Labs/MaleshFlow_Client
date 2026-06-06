@@ -161,6 +161,46 @@ export function formatDueDateRange(
   return `${formatDueDate(startTimestamp)} - ${formatDueDate(endTimestamp)}`;
 }
 
+export function formatCompactDueDate(timestamp: number | null | undefined, now = new Date()) {
+  if (!timestamp) {
+    return "";
+  }
+
+  const date = new Date(timestamp);
+  const month = `${date.getMonth() + 1}`.padStart(2, "0");
+  const day = `${date.getDate()}`.padStart(2, "0");
+  const compactDate = `${month}/${day}`;
+  if (date.getFullYear() === now.getFullYear()) {
+    return compactDate;
+  }
+
+  const year = `${date.getFullYear()}`.slice(-2).padStart(2, "0");
+  return `${compactDate}/${year}`;
+}
+
+export function formatCompactDueDateRange(
+  startTimestamp: number | null | undefined,
+  endTimestamp: number | null | undefined,
+  now = new Date(),
+) {
+  if (!startTimestamp && !endTimestamp) {
+    return "";
+  }
+
+  if (!startTimestamp) {
+    return formatCompactDueDate(endTimestamp, now);
+  }
+
+  if (!endTimestamp || endTimestamp <= startTimestamp) {
+    return formatCompactDueDate(startTimestamp, now);
+  }
+
+  return `${formatCompactDueDate(startTimestamp, now)}-${formatCompactDueDate(
+    endTimestamp,
+    now,
+  )}`;
+}
+
 export function isOverdueDueDate(timestamp: number | null | undefined, now = new Date()) {
   if (!timestamp) {
     return false;
@@ -205,6 +245,32 @@ export function getRecurrenceLabel(frequency: RecurrenceFrequency) {
     default:
       return "";
   }
+}
+
+export function getCompactRecurrenceLabel(frequency: RecurrenceFrequency) {
+  if (!frequency) {
+    return "";
+  }
+
+  const parsedFrequency = isRecurrencePreset(frequency)
+    ? {
+        daily: { interval: 1, unit: "day" as const },
+        weekly: { interval: 1, unit: "week" as const },
+        monthly: { interval: 1, unit: "month" as const },
+        yearly: { interval: 1, unit: "year" as const },
+      }[frequency]
+    : frequency;
+
+  const unitLabel =
+    parsedFrequency.unit === "day"
+      ? "d"
+      : parsedFrequency.unit === "week"
+        ? "w"
+        : parsedFrequency.unit === "month"
+          ? "mo"
+          : "y";
+
+  return `${parsedFrequency.interval}${unitLabel}`;
 }
 
 export function advanceRecurringDueDate(args: {

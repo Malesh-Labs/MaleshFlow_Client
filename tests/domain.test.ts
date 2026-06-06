@@ -52,7 +52,9 @@ import {
   advanceRecurringDueDateRange,
   areRecurrenceFrequenciesEqual,
   dateInputValueToTimestamp,
+  formatCompactDueDateRange,
   getRecurrenceLabel,
+  getCompactRecurrenceLabel,
   isOverdueDueDate,
   isOverdueDueDateRange,
   parseRecurrenceFrequency,
@@ -1380,6 +1382,42 @@ test("custom recurrence labels and parsing work for widened cadence values", () 
     ),
     true,
   );
+});
+
+test("compact date and recurrence labels fit small badges", () => {
+  assert.equal(
+    formatCompactDueDateRange(
+      dateInputValueToTimestamp("2026-04-08"),
+      null,
+      new Date(2026, 0, 1, 12, 0, 0, 0),
+    ),
+    "04/08",
+  );
+
+  assert.equal(
+    formatCompactDueDateRange(
+      dateInputValueToTimestamp("2027-04-08"),
+      null,
+      new Date(2026, 0, 1, 12, 0, 0, 0),
+    ),
+    "04/08/27",
+  );
+
+  assert.equal(
+    formatCompactDueDateRange(
+      dateInputValueToTimestamp("2026-04-08"),
+      dateInputValueToTimestamp("2026-04-21"),
+      new Date(2026, 0, 1, 12, 0, 0, 0),
+    ),
+    "04/08-04/21",
+  );
+
+  assert.equal(getCompactRecurrenceLabel("daily"), "1d");
+  assert.equal(getCompactRecurrenceLabel("weekly"), "1w");
+  assert.equal(getCompactRecurrenceLabel({ interval: 2, unit: "day" }), "2d");
+  assert.equal(getCompactRecurrenceLabel({ interval: 2, unit: "week" }), "2w");
+  assert.equal(getCompactRecurrenceLabel({ interval: 3, unit: "month" }), "3mo");
+  assert.equal(getCompactRecurrenceLabel({ interval: 4, unit: "year" }), "4y");
 });
 
 test("due dates round-trip through date input helpers and overdue checks", () => {

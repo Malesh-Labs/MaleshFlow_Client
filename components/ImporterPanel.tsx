@@ -10,7 +10,10 @@ import {
   type ImportedOutlineNode,
 } from "@/lib/domain/importer";
 import { filterPagesForCommandPalette } from "@/lib/domain/workspaceUi";
-import { formatDueDateRange, getRecurrenceLabel } from "@/lib/domain/recurrence";
+import {
+  formatCompactDueDateRange,
+  getCompactRecurrenceLabel,
+} from "@/lib/domain/recurrence";
 
 const SKIP = "skip" as const;
 
@@ -64,12 +67,12 @@ function ImportPreview({
                 <div className="mt-1 flex flex-wrap gap-2">
                   {node.dueAt ? (
                     <span className="rounded-full border border-[var(--workspace-border)] px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-[var(--workspace-text-faint)]">
-                      {formatDueDateRange(node.dueAt, node.dueEndAt)}
+                      {formatCompactDueDateRange(node.dueAt, node.dueEndAt)}
                     </span>
                   ) : null}
                   {node.recurrenceFrequency ? (
                     <span className="rounded-full border border-[var(--workspace-border)] px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-[var(--workspace-text-faint)]">
-                      {getRecurrenceLabel(node.recurrenceFrequency)}
+                      {getCompactRecurrenceLabel(node.recurrenceFrequency)}
                     </span>
                   ) : null}
                 </div>

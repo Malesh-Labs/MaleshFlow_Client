@@ -59,7 +59,9 @@ import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
 import {
   advanceRecurringDueDateRange,
   areRecurrenceFrequenciesEqual,
+  formatCompactDueDateRange,
   formatDueDateRange,
+  getCompactRecurrenceLabel,
   getRecurrenceLabel,
   isOverdueDueDateRange,
   parseRecurrenceFrequency,
@@ -16112,14 +16114,28 @@ function OutlineNodeEditor({
     () => getEffectiveTaskDueDateRange(node, nodeMap),
     [node, nodeMap],
   );
-  const dueDateLabel =
+  const dueDateFullLabel =
     node.kind === "task"
       ? formatDueDateRange(effectiveDueRange.dueAt, effectiveDueRange.dueEndAt ?? null)
       : "";
-  const noteDateLabel =
+  const dueDateLabel =
+    node.kind === "task"
+      ? formatCompactDueDateRange(effectiveDueRange.dueAt, effectiveDueRange.dueEndAt ?? null)
+      : "";
+  const noteDateFullLabel =
     node.kind === "note" && node.dueAt
       ? formatDueDateRange(node.dueAt, node.dueEndAt ?? null)
       : "";
+  const noteDateLabel =
+    node.kind === "note" && node.dueAt
+      ? formatCompactDueDateRange(node.dueAt, node.dueEndAt ?? null)
+      : "";
+  const recurrenceFullLabel = recurrenceFrequency
+    ? getRecurrenceLabel(recurrenceFrequency)
+    : "";
+  const recurrenceLabel = recurrenceFrequency
+    ? getCompactRecurrenceLabel(recurrenceFrequency)
+    : "";
   const isOverdueTask =
     node.kind === "task" &&
     !isCompleted &&
@@ -18210,9 +18226,9 @@ function OutlineNodeEditor({
                         : "border-[var(--workspace-border)]",
                       isCompleted ? "opacity-70" : "",
                     )}
-                    title={isOverdueTask ? `Overdue since ${dueDateLabel}` : `Due ${dueDateLabel}`}
+                    title={isOverdueTask ? `Overdue since ${dueDateFullLabel}` : `Due ${dueDateFullLabel}`}
                   >
-                    {isOverdueTask ? `${dueDateLabel} overdue` : dueDateLabel}
+                    {dueDateLabel}
                   </span>
                 ) : null}
                 {node.kind === "note" && node.dueAt ? (
@@ -18221,7 +18237,7 @@ function OutlineNodeEditor({
                       "rounded-full border border-[var(--workspace-border)] px-1.5 py-1 text-[var(--workspace-text-faint)] break-words",
                       isCompleted ? "opacity-70" : "",
                     )}
-                    title={`Dated ${noteDateLabel}`}
+                    title={`Dated ${noteDateFullLabel}`}
                   >
                     {noteDateLabel}
                   </span>
@@ -18232,9 +18248,9 @@ function OutlineNodeEditor({
                       "rounded-full border border-[var(--workspace-border)] px-1.5 py-1 text-[var(--workspace-text-faint)] break-words",
                       isCompleted ? "opacity-70" : "",
                     )}
-                    title={`Repeats ${getRecurrenceLabel(recurrenceFrequency).toLowerCase()}`}
+                    title={`Repeats ${recurrenceFullLabel.toLowerCase()}`}
                   >
-                    {getRecurrenceLabel(recurrenceFrequency)}
+                    {recurrenceLabel}
                   </span>
                 ) : null}
               </div>
