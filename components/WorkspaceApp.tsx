@@ -6807,6 +6807,7 @@ function ConfiguredWorkspace({
         title,
         sidebarSection: section,
         pageType,
+        ...(section === "Journal" ? { addToLatestJournalView: true } : {}),
       });
       setSelectedPageId(pageId);
       setLocationPageId(pageId);

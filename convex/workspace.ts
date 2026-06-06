@@ -117,6 +117,8 @@ const UNRESOLVED_PAGE_LINK_SAMPLE_LIMIT = 4;
 const UNRESOLVED_PAGE_LINK_REPLACE_BATCH_SIZE = 50;
 const EMBEDDING_REBUILD_BATCH_SIZE = 200;
 const MULTI_PAGE_INCLUDED_PAGES_SLOT = "multiPageIncludedPages";
+const LATEST_JOURNAL_VIEW_TITLE = "Latest Journal";
+const LATEST_JOURNAL_ENTRY_LIMIT = 7;
 const MAX_WORKSPACE_ACTION_PARENT_CANDIDATES = 12;
 const MAX_WORKSPACE_ACTION_LINK_BACKLINKS = 40;
 const MAX_WORKSPACE_ACTION_CHILD_PREVIEW = 5;
@@ -804,6 +806,156 @@ function getMultiPageIncludedPageSkipReason(page: Doc<"pages"> | null) {
   }
 
   return null;
+}
+
+function normalizeSystemPageTitle(title: string) {
+  return title.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function isLatestJournalViewPage(page: Doc<"pages">) {
+  return (
+    !page.archived &&
+    !isPagePendingDeletion(page) &&
+    isMultiPageViewPage(page) &&
+    normalizeSystemPageTitle(page.title) === normalizeSystemPageTitle(LATEST_JOURNAL_VIEW_TITLE)
+  );
+}
+
+function isLatestJournalIgnoredPage(page: Doc<"pages">) {
+  return normalizeSystemPageTitle(page.title) === "key journal entries";
+}
+
+function isLatestJournalEntryPage(page: Doc<"pages">) {
+  return getPageSourceMeta(page).pageType === "journal" && !isLatestJournalIgnoredPage(page);
+}
+
+function buildIncludedPageLinkText(page: Doc<"pages">) {
+  const label = page.title
+    .replace(/[\[\]\n\r|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim() || "Untitled";
+  return `[[${label}|page:${page._id}]]`;
+}
+
+async function refreshLatestJournalView(
+  ctx: MutationCtx,
+  journalPage: Doc<"pages">,
+) {
+  const latestJournalSlug =
+    slugify(LATEST_JOURNAL_VIEW_TITLE, { lower: true, strict: true }) || "latest-journal";
+  const latestJournalView =
+    (await getPageBySlug(ctx.db, latestJournalSlug)) ?? null;
+  if (!latestJournalView) {
+    return {
+      updated: false,
+      reason: "Latest Journal view not found.",
+    };
+  }
+  if (!isLatestJournalViewPage(latestJournalView)) {
+    return {
+      updated: false,
+      reason: "Latest Journal view is not active.",
+    };
+  }
+
+  const sectionResult = await ensureMultiPageSections(ctx, latestJournalView);
+  const includedPagesSectionId = sectionResult.includedPagesSectionId;
+  if (!includedPagesSectionId) {
+    return {
+      updated: false,
+      reason: "Latest Journal view section not found.",
+    };
+  }
+
+  const nodes = await listPageNodes(ctx.db, latestJournalView._id);
+  const includeRows = nodes
+    .filter((node) => node.parentNodeId === includedPagesSectionId && !node.archived)
+    .sort((left, right) => left.position - right.position);
+  const journalRows: Array<{
+    row: Doc<"nodes">;
+    page: Doc<"pages">;
+  }> = [];
+
+  for (const row of includeRows) {
+    const resolved = await resolveMultiPageIncludedPage(ctx.db, row);
+    if (resolved.page && isLatestJournalEntryPage(resolved.page)) {
+      journalRows.push({
+        row,
+        page: resolved.page,
+      });
+    }
+  }
+
+  const now = getTimestamp();
+  const firstJournalRow = journalRows[0]?.row ?? null;
+  const firstJournalRowIndex = firstJournalRow
+    ? includeRows.findIndex((row) => row._id === firstJournalRow._id)
+    : -1;
+  const afterNodeId =
+    firstJournalRowIndex > 0
+      ? includeRows[firstJournalRowIndex - 1]!._id
+      : null;
+  const insertedPosition = await computeNodePosition(
+    ctx.db,
+    latestJournalView._id,
+    includedPagesSectionId,
+    afterNodeId,
+  );
+  const insertedNodeId = await ctx.db.insert("nodes", {
+    pageId: latestJournalView._id,
+    parentNodeId: includedPagesSectionId,
+    position: insertedPosition,
+    text: buildIncludedPageLinkText(journalPage),
+    kind: "note",
+    taskStatus: null,
+    priority: null,
+    dueAt: null,
+    dueEndAt: null,
+    archived: false,
+    sourceMeta: {
+      sourceType: "system",
+      latestJournalEntry: true,
+    },
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  const insertedNode = await ctx.db.get(insertedNodeId);
+  if (insertedNode) {
+    await syncLinksForNode(ctx.db, insertedNode);
+    await enqueueNodeAiWork(ctx, insertedNode._id);
+  }
+
+  const existingRowsForNewJournal = journalRows.filter(
+    (entry) => entry.page._id === journalPage._id,
+  );
+  const rowsToArchive = [
+    ...existingRowsForNewJournal.map((entry) => entry.row),
+    ...journalRows
+      .filter((entry) => entry.page._id !== journalPage._id)
+      .slice(Math.max(0, LATEST_JOURNAL_ENTRY_LIMIT - 1))
+      .map((entry) => entry.row),
+  ];
+
+  const archivedRowIds = new Set<string>();
+  for (const row of rowsToArchive) {
+    if (archivedRowIds.has(row._id as string)) {
+      continue;
+    }
+    archivedRowIds.add(row._id as string);
+    await ctx.db.patch(row._id, {
+      archived: true,
+      updatedAt: now,
+    });
+  }
+
+  await enqueuePageRootEmbeddingRefresh(ctx, latestJournalView._id);
+  return {
+    updated: true,
+    viewPageId: latestJournalView._id,
+    insertedNodeId,
+    archivedCount: archivedRowIds.size,
+  };
 }
 
 function getMultiPageIncludedNodeSkipReason(
@@ -3894,6 +4046,7 @@ export const createPage = mutation({
         v.literal("multiPage"),
       ),
     ),
+    addToLatestJournalView: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
@@ -4008,6 +4161,9 @@ export const createPage = mutation({
       const journalPage = await ctx.db.get(pageId);
       if (journalPage) {
         await ensureJournalSections(ctx, journalPage);
+        if (args.addToLatestJournalView === true) {
+          await refreshLatestJournalView(ctx, journalPage);
+        }
       }
     }
 
