@@ -6924,6 +6924,26 @@ function ConfiguredWorkspace({
     setPageDataDumpExcluded,
   ]);
 
+  const handleSelectNoPage = useCallback(() => {
+    setIsWorkspaceChatOpen(false);
+    setPendingPalettePageAction(null);
+    setActionContextNodeId(null);
+    setActionContextSelectedNodeIds([]);
+    setSelectedPageId(null);
+    setLocationPageId(null);
+    setLocationFocusedNodeId(null);
+    setFocusedNodeId(null);
+    writePageIdToHistory(null, "push", null);
+    setPendingRevealNodeId(null);
+    setPaletteOpen(false);
+    setPaletteQuery("");
+    setPaletteHighlightIndex(0);
+    setPaletteMode("pages");
+    setTextSearchResults([]);
+    setNodeSearchResults([]);
+    clearNodeSelection();
+  }, [clearNodeSelection]);
+
   const actionResults = useMemo(() => {
     const favoriteContextPage = favoriteTargetPage;
     const favoriteContextNode = favoriteTargetNode;
@@ -6969,6 +6989,15 @@ function ConfiguredWorkspace({
         actionLabel: isCreatingPlannerPage ? "Creating…" : "Create",
         disabled: isCreatingPlannerPage,
         onSelect: () => void handleCreatePlannerPage(),
+      },
+      {
+        key: "select-no-page",
+        title: "Select No Page",
+        subtitle: "Clear the current page and show the blank workspace state.",
+        keywords: ["select", "no page", "blank", "clear", "home", "new tab", "page"],
+        actionLabel: "Select",
+        disabled: selectedPageId === null && focusedNodeId === null && !isWorkspaceChatOpen,
+        onSelect: handleSelectNoPage,
       },
       {
         key: "export-data-dump",
@@ -7410,11 +7439,13 @@ function ConfiguredWorkspace({
     handleExportDataDump,
     handleRebuildEmbeddings,
     handleResetLocalState,
+    handleSelectNoPage,
     handleToggleSelectedPageDataDumpExcluded,
     favoriteTargetNode,
     favoriteTargetPage,
     favoritedNodeIds,
     favoritedPageIds,
+    focusedNodeId,
     getActionContextRootNodeIds,
     isCreatingPage,
     isCreatingPlannerPage,
@@ -7422,6 +7453,7 @@ function ConfiguredWorkspace({
     isPreparingTaskCalendarFeed,
     isRebuildingEmbeddings,
     isSelectedPageExcludedFromDataDump,
+    isWorkspaceChatOpen,
     noteDateSummary,
     noteDateTargetNode,
     ownerKey,
@@ -7436,6 +7468,7 @@ function ConfiguredWorkspace({
     taskScheduleSummary,
     taskScheduleTargetNode,
     selectedPage,
+    selectedPageId,
     workspaceNodeMap,
   ]);
 
