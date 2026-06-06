@@ -6809,11 +6809,27 @@ function ConfiguredWorkspace({
         pageType,
         ...(section === "Journal" ? { addToLatestJournalView: true } : {}),
       });
-      setSelectedPageId(pageId);
-      setLocationPageId(pageId);
-      setLocationFocusedNodeId(null);
-      setFocusedNodeId(null);
-      writePageIdToHistory(pageId, "push", title);
+      const latestJournalPage =
+        section === "Journal"
+          ? (pagesByTitle.get(normalizePageTitleKey("Latest Journal")) ?? null)
+          : null;
+      const latestJournalView =
+        latestJournalPage && getPageMeta(latestJournalPage).pageType === "multiPage"
+          ? latestJournalPage
+          : null;
+      const targetPageId = latestJournalView
+        ? (latestJournalView._id as Id<"pages">)
+        : pageId;
+      const targetPageTitle = latestJournalView ? latestJournalView.title : title;
+      const isAlreadyOnTargetPage =
+        section === "Journal" && selectedPageId === targetPageId;
+      if (!isAlreadyOnTargetPage) {
+        setSelectedPageId(targetPageId);
+        setLocationPageId(targetPageId);
+        setLocationFocusedNodeId(null);
+        setFocusedNodeId(null);
+        writePageIdToHistory(targetPageId, "push", targetPageTitle);
+      }
       setPendingRevealNodeId(null);
       setPaletteOpen(false);
       setPaletteQuery("");
@@ -6825,7 +6841,7 @@ function ConfiguredWorkspace({
     } finally {
       setIsCreatingPage(null);
     }
-  }, [clearNodeSelection, createPage, ownerKey]);
+  }, [clearNodeSelection, createPage, ownerKey, pagesByTitle, selectedPageId]);
 
   const handleCreatePlannerPage = useCallback(async () => {
     setIsCreatingPlannerPage(true);
