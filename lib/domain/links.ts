@@ -472,12 +472,15 @@ function sanitizeWikiLinkReplacementLabel(value: string) {
     .trim();
 }
 
-export function rewritePlainPageWikiLinksToNode(
+export function rewritePlainPageWikiLinksToTarget(
   text: string,
   shouldRewrite: (
     link: Extract<ExtractedLink, { kind: "page" }>,
   ) => boolean,
-  targetNodeRef: string,
+  target: {
+    kind: "node" | "page";
+    ref: string;
+  },
 ) {
   const matches = extractLinkMatches(text);
   if (matches.length === 0) {
@@ -503,8 +506,8 @@ export function rewritePlainPageWikiLinksToNode(
         sanitizeWikiLinkReplacementLabel(
           getExplicitWikiLinkPreviewText(match.link.label) ||
             match.link.targetPageTitle,
-        ) || "Linked node";
-      nextText += `[[${label}|node:${targetNodeRef}]]`;
+        ) || (target.kind === "node" ? "Linked node" : "Linked page");
+      nextText += `[[${label}|${target.kind}:${target.ref}]]`;
       occurrenceCount += 1;
     } else {
       nextText += text.slice(match.start, match.end);
@@ -525,6 +528,19 @@ export function rewritePlainPageWikiLinksToNode(
     value: nextText,
     occurrenceCount,
   };
+}
+
+export function rewritePlainPageWikiLinksToNode(
+  text: string,
+  shouldRewrite: (
+    link: Extract<ExtractedLink, { kind: "page" }>,
+  ) => boolean,
+  targetNodeRef: string,
+) {
+  return rewritePlainPageWikiLinksToTarget(text, shouldRewrite, {
+    kind: "node",
+    ref: targetNodeRef,
+  });
 }
 
 export function applySelectedLinkShortcut(

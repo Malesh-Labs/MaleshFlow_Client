@@ -7184,12 +7184,13 @@ function ConfiguredWorkspace({
       {
         key: "resolve-empty-links",
         title: "Resolve Empty Links",
-        subtitle: "Step through unresolved [[wiki links]], choose a node target, and replace all matching uses.",
+        subtitle: "Step through unresolved [[wiki links]], choose a page or item target, and replace all matching uses.",
         keywords: [
           "links",
           "resolve",
           "empty",
           "wiki",
+          "page",
           "node",
           "find",
           "replace",
@@ -13142,7 +13143,7 @@ function ConfiguredWorkspace({
                   {paletteMode === "replace"
                     ? "Preview and replace exact text in the current page or across the active workspace."
                     : paletteMode === "resolveLinks"
-                      ? "Step through unresolved wiki links, choose node targets, and replace all matching uses."
+                      ? "Step through unresolved wiki links, choose page or item targets, and replace all matching uses."
                     : paletteMode === "archive"
                       ? "Search archived pages and nodes without mixing them into active workspace results."
                       : paletteMode === "importer"

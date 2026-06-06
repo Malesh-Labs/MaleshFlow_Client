@@ -67,7 +67,7 @@ import {
   getExplicitWikiLinkPreviewText,
   replaceLinkMarkupWithLabels,
   rewriteMatchingPageWikiLinks,
-  rewritePlainPageWikiLinksToNode,
+  rewritePlainPageWikiLinksToTarget,
 } from "../lib/domain/links";
 import { extractTagMatches } from "../lib/domain/tags";
 import {
@@ -3277,6 +3277,169 @@ export const listUnresolvedPageLinkGroups = query({
   },
 });
 
+type UnresolvedPageLinkReplacementTarget =
+  | {
+      kind: "node";
+      nodeId: Id<"nodes">;
+    }
+  | {
+      kind: "page";
+      pageId: Id<"pages">;
+    };
+
+async function replaceUnresolvedPageLinksWithTargetBatch(
+  ctx: MutationCtx,
+  args: {
+    normalizedTitle: string;
+    target: UnresolvedPageLinkReplacementTarget;
+    batchSize?: number;
+  },
+) {
+  let targetNode: Doc<"nodes"> | null = null;
+  let targetPage: Doc<"pages"> | null = null;
+
+  if (args.target.kind === "node") {
+    targetNode = await ctx.db.get(args.target.nodeId);
+    if (!targetNode || targetNode.archived) {
+      throw new Error("Target item not found.");
+    }
+    targetPage = await ctx.db.get(targetNode.pageId);
+  } else {
+    targetPage = await ctx.db.get(args.target.pageId);
+    if (!targetPage) {
+      throw new Error("Target page not found.");
+    }
+  }
+
+  if (
+    !targetPage ||
+    targetPage.archived ||
+    isSidebarSpecialPage(targetPage) ||
+    isPagePendingDeletion(targetPage)
+  ) {
+    throw new Error(
+      args.target.kind === "node"
+        ? "Target item must be on an active workspace page."
+        : "Target page must be an active workspace page.",
+    );
+  }
+
+  const normalizedTitle = args.normalizedTitle.trim();
+  if (normalizedTitle.length === 0) {
+    throw new Error("Choose an unresolved link to resolve.");
+  }
+
+  const batchSize = Math.max(
+    1,
+    Math.min(
+      args.batchSize ?? UNRESOLVED_PAGE_LINK_REPLACE_BATCH_SIZE,
+      UNRESOLVED_PAGE_LINK_REPLACE_BATCH_SIZE,
+    ),
+  );
+  const pageResult = await listActiveWorkspacePagesForLinkMaintenance(ctx.db);
+  const activePageSlugs = new Set(pageResult.pages.map((page) => page.slug));
+  const nodeResult = await listActiveWorkspaceNodesForLinkMaintenance(
+    ctx.db,
+    pageResult.pages,
+    UNRESOLVED_PAGE_LINK_SCAN_NODE_LIMIT,
+  );
+  const replacements: Array<{
+    nodeId: Id<"nodes">;
+    pageId: Id<"pages">;
+    text: string;
+    occurrenceCount: number;
+  }> = [];
+
+  for (const node of nodeResult.nodes) {
+    const replacement = rewritePlainPageWikiLinksToTarget(
+      node.text,
+      (link) =>
+        isPlainUnresolvedPageWikiLink(link, activePageSlugs) &&
+        normalizePlainPageWikiLinkTitle(link.targetPageTitle ?? "") === normalizedTitle,
+      args.target.kind === "node"
+        ? {
+            kind: "node",
+            ref: targetNode!._id as string,
+          }
+        : {
+            kind: "page",
+            ref: targetPage._id as string,
+          },
+    );
+
+    if (!replacement) {
+      continue;
+    }
+
+    replacements.push({
+      nodeId: node._id,
+      pageId: node.pageId,
+      text: replacement.value,
+      occurrenceCount: replacement.occurrenceCount,
+    });
+    if (replacements.length >= batchSize) {
+      break;
+    }
+  }
+
+  let replacedOccurrenceCount = 0;
+  const touchedPageIds = new Set<Id<"pages">>();
+  const now = getTimestamp();
+
+  for (const replacement of replacements) {
+    await ctx.db.patch(replacement.nodeId, {
+      text: replacement.text,
+      updatedAt: now,
+    });
+    const refreshedNode = await ctx.db.get(replacement.nodeId);
+    if (!refreshedNode) {
+      continue;
+    }
+
+    replacedOccurrenceCount += replacement.occurrenceCount;
+    touchedPageIds.add(replacement.pageId);
+    await syncLinksForNode(ctx.db, refreshedNode);
+    await enqueueNodeAiWork(ctx, refreshedNode._id);
+  }
+
+  for (const pageId of touchedPageIds) {
+    await enqueuePageRootEmbeddingRefresh(ctx, pageId);
+  }
+
+  const scanTruncated = pageResult.truncated || nodeResult.truncated;
+  return {
+    replacedNodeCount: replacements.length,
+    replacedOccurrenceCount,
+    hasMore: replacements.length >= batchSize || (scanTruncated && replacements.length > 0),
+    scanTruncated,
+    targetKind: args.target.kind,
+    targetNodeId: targetNode?._id ?? null,
+    targetPageId: targetPage._id,
+  };
+}
+
+export const replaceUnresolvedPageLinksWithTarget = mutation({
+  args: {
+    ownerKey: v.string(),
+    normalizedTitle: v.string(),
+    target: v.union(
+      v.object({
+        kind: v.literal("node"),
+        nodeId: v.id("nodes"),
+      }),
+      v.object({
+        kind: v.literal("page"),
+        pageId: v.id("pages"),
+      }),
+    ),
+    batchSize: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    return await replaceUnresolvedPageLinksWithTargetBatch(ctx, args);
+  },
+});
+
 export const replaceUnresolvedPageLinksWithNode = mutation({
   args: {
     ownerKey: v.string(),
@@ -3286,105 +3449,14 @@ export const replaceUnresolvedPageLinksWithNode = mutation({
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
-
-    const targetNode = await ctx.db.get(args.targetNodeId);
-    if (!targetNode || targetNode.archived) {
-      throw new Error("Target item not found.");
-    }
-
-    const targetPage = await ctx.db.get(targetNode.pageId);
-    if (
-      !targetPage ||
-      targetPage.archived ||
-      isSidebarSpecialPage(targetPage) ||
-      isPagePendingDeletion(targetPage)
-    ) {
-      throw new Error("Target item must be on an active workspace page.");
-    }
-
-    const normalizedTitle = args.normalizedTitle.trim();
-    if (normalizedTitle.length === 0) {
-      throw new Error("Choose an unresolved link to resolve.");
-    }
-
-    const batchSize = Math.max(
-      1,
-      Math.min(
-        args.batchSize ?? UNRESOLVED_PAGE_LINK_REPLACE_BATCH_SIZE,
-        UNRESOLVED_PAGE_LINK_REPLACE_BATCH_SIZE,
-      ),
-    );
-    const pageResult = await listActiveWorkspacePagesForLinkMaintenance(ctx.db);
-    const activePageSlugs = new Set(pageResult.pages.map((page) => page.slug));
-    const nodeResult = await listActiveWorkspaceNodesForLinkMaintenance(
-      ctx.db,
-      pageResult.pages,
-      UNRESOLVED_PAGE_LINK_SCAN_NODE_LIMIT,
-    );
-    const replacements: Array<{
-      nodeId: Id<"nodes">;
-      pageId: Id<"pages">;
-      text: string;
-      occurrenceCount: number;
-    }> = [];
-
-    for (const node of nodeResult.nodes) {
-      const replacement = rewritePlainPageWikiLinksToNode(
-        node.text,
-        (link) =>
-          isPlainUnresolvedPageWikiLink(link, activePageSlugs) &&
-          normalizePlainPageWikiLinkTitle(link.targetPageTitle ?? "") === normalizedTitle,
-        targetNode._id as string,
-      );
-
-      if (!replacement) {
-        continue;
-      }
-
-      replacements.push({
-        nodeId: node._id,
-        pageId: node.pageId,
-        text: replacement.value,
-        occurrenceCount: replacement.occurrenceCount,
-      });
-      if (replacements.length >= batchSize) {
-        break;
-      }
-    }
-
-    let replacedOccurrenceCount = 0;
-    const touchedPageIds = new Set<Id<"pages">>();
-    const now = getTimestamp();
-
-    for (const replacement of replacements) {
-      await ctx.db.patch(replacement.nodeId, {
-        text: replacement.text,
-        updatedAt: now,
-      });
-      const refreshedNode = await ctx.db.get(replacement.nodeId);
-      if (!refreshedNode) {
-        continue;
-      }
-
-      replacedOccurrenceCount += replacement.occurrenceCount;
-      touchedPageIds.add(replacement.pageId);
-      await syncLinksForNode(ctx.db, refreshedNode);
-      await enqueueNodeAiWork(ctx, refreshedNode._id);
-    }
-
-    for (const pageId of touchedPageIds) {
-      await enqueuePageRootEmbeddingRefresh(ctx, pageId);
-    }
-
-    const scanTruncated = pageResult.truncated || nodeResult.truncated;
-    return {
-      replacedNodeCount: replacements.length,
-      replacedOccurrenceCount,
-      hasMore: replacements.length >= batchSize || (scanTruncated && replacements.length > 0),
-      scanTruncated,
-      targetNodeId: targetNode._id,
-      targetPageId: targetPage._id,
-    };
+    return await replaceUnresolvedPageLinksWithTargetBatch(ctx, {
+      normalizedTitle: args.normalizedTitle,
+      target: {
+        kind: "node",
+        nodeId: args.targetNodeId,
+      },
+      batchSize: args.batchSize,
+    });
   },
 });
 

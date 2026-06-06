@@ -9,6 +9,7 @@ import {
   replaceLinkMarkupWithLabels,
   rewriteMatchingPageWikiLinks,
   rewritePlainPageWikiLinksToNode,
+  rewritePlainPageWikiLinksToTarget,
   sanitizeGeneratedWikiLinkLabel,
 } from "../lib/domain/links";
 import {
@@ -528,6 +529,26 @@ test("rewritePlainPageWikiLinksToNode converts only matching plain page wiki lin
   assert.deepEqual(rewritten, {
     value:
       "See [[test|node:node_456]], [[Test|node:node_456]], [[Other]], [[Test|page:page_123]], [[Label|node:node_123]], and [[pipe|label]].",
+    occurrenceCount: 2,
+  });
+});
+
+test("rewritePlainPageWikiLinksToTarget can resolve empty links to page refs", () => {
+  const text =
+    "See [[test]], [[Test]], [[Other]], [[Test|page:page_123]], and [[Label|node:node_123]].";
+
+  const rewritten = rewritePlainPageWikiLinksToTarget(
+    text,
+    (link) => link.targetPageTitle?.toLowerCase() === "test",
+    {
+      kind: "page",
+      ref: "page_456",
+    },
+  );
+
+  assert.deepEqual(rewritten, {
+    value:
+      "See [[test|page:page_456]], [[Test|page:page_456]], [[Other]], [[Test|page:page_123]], and [[Label|node:node_123]].",
     occurrenceCount: 2,
   });
 });
