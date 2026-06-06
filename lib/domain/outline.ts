@@ -62,6 +62,67 @@ export function flattenOutlineTree<T extends OutlineNodeLike>(
   return flattened;
 }
 
+function findOutlineNodePath<T extends OutlineNodeLike>(
+  nodes: Array<OutlineTreeNode<T>>,
+  targetNodeId: string,
+): Array<OutlineTreeNode<T>> | null {
+  for (const node of nodes) {
+    if (node._id === targetNodeId) {
+      return [node];
+    }
+
+    const childPath = findOutlineNodePath(node.children, targetNodeId);
+    if (childPath) {
+      return [node, ...childPath];
+    }
+  }
+
+  return null;
+}
+
+export function buildFocusedOutlineContext<T extends OutlineNodeLike>(
+  roots: Array<OutlineTreeNode<T>>,
+  focusedNodeId: string,
+) {
+  const path = findOutlineNodePath(roots, focusedNodeId);
+  if (!path || path.length === 0) {
+    return {
+      roots: [] as Array<OutlineTreeNode<T>>,
+      focusedNode: null as OutlineTreeNode<T> | null,
+      parentNode: null as OutlineTreeNode<T> | null,
+      rootParentNodeId: null as string | null,
+    };
+  }
+
+  const focusedNode = path[path.length - 1]!;
+  const parentNode = path.length > 1 ? path[path.length - 2]! : null;
+  const focusedNodeClone = {
+    ...focusedNode,
+    children: [...focusedNode.children],
+  };
+
+  if (!parentNode) {
+    return {
+      roots: [focusedNodeClone],
+      focusedNode,
+      parentNode,
+      rootParentNodeId: null,
+    };
+  }
+
+  const parentNodeClone = {
+    ...parentNode,
+    children: [focusedNodeClone],
+  };
+
+  return {
+    roots: [parentNodeClone],
+    focusedNode,
+    parentNode,
+    rootParentNodeId: parentNode.parentNodeId,
+  };
+}
+
 export function getAncestorChain<T extends OutlineNodeLike>(
   nodes: T[],
   nodeId: string,

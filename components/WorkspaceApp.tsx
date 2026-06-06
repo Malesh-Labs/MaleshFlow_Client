@@ -55,7 +55,11 @@ import {
   stripInlineFormattingMarkers,
   splitTextForInlineFormatting,
 } from "@/lib/domain/inlineFormatting";
-import { buildOutlineTree, type OutlineTreeNode } from "@/lib/domain/outline";
+import {
+  buildFocusedOutlineContext,
+  buildOutlineTree,
+  type OutlineTreeNode,
+} from "@/lib/domain/outline";
 import {
   advanceRecurringDueDateRange,
   areRecurrenceFrequenciesEqual,
@@ -4542,15 +4546,29 @@ function ConfiguredWorkspace({
   const multiPageVisibleRoots = [multiPageIncludedPagesSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
-  const focusedTreeNode = useMemo(
-    () => (focusedNodeId ? findTreeNodeById(tree, focusedNodeId) : null),
+  const focusedOutlineContext = useMemo(
+    () =>
+      focusedNodeId
+        ? buildFocusedOutlineContext(tree, focusedNodeId)
+        : {
+            roots: [] as TreeNode[],
+            focusedNode: null as TreeNode | null,
+            parentNode: null as TreeNode | null,
+            rootParentNodeId: null as string | null,
+          },
     [focusedNodeId, tree],
   );
+  const focusedTreeNode = focusedOutlineContext.focusedNode;
+  const focusedParentTreeNode = focusedOutlineContext.parentNode;
+  const focusedContextRoots = focusedOutlineContext.roots;
   const focusedNodeLabel = focusedTreeNode
     ? normalizeNodeLinkPreviewDisplay(focusedTreeNode.text).text || "Focused item"
     : "";
-  const focusedNodeParentId =
-    (focusedTreeNode?.parentNodeId as Id<"nodes"> | null | undefined) ?? null;
+  const focusedParentLabel = focusedParentTreeNode
+    ? normalizeNodeLinkPreviewDisplay(focusedParentTreeNode.text).text || "Parent item"
+    : "";
+  const focusedContextParentId =
+    (focusedOutlineContext.rootParentNodeId as Id<"nodes"> | null | undefined) ?? null;
   const preHydrationCollapsedNodeIds = useMemo(
     () =>
       new Set([
@@ -4566,7 +4584,7 @@ function ConfiguredWorkspace({
     : preHydrationCollapsedNodeIds;
   const pageVisibleRows =
     focusedTreeNode
-      ? flattenTreeNodes([focusedTreeNode], effectiveCollapsedNodeIds)
+      ? flattenTreeNodes(focusedContextRoots, effectiveCollapsedNodeIds)
       : pageMeta.pageType === "task"
       ? flattenTreeNodes(genericRoots, effectiveCollapsedNodeIds)
       : pageMeta.pageType === "planner"
@@ -6414,13 +6432,19 @@ function ConfiguredWorkspace({
     if (focusedNodeId !== locationFocusedNodeId) {
       setFocusedNodeId(locationFocusedNodeId);
     }
+    const focusedPathNodeIds = [
+      locationFocusedNodeId,
+      (matchingNode.parentNodeId as string | null) ?? null,
+    ].filter((nodeId): nodeId is string => nodeId !== null);
     updateCollapsedNodeIds((current) => {
-      if (!current.has(locationFocusedNodeId)) {
+      if (!focusedPathNodeIds.some((nodeId) => current.has(nodeId))) {
         return current;
       }
 
       const next = new Set(current);
-      next.delete(locationFocusedNodeId);
+      for (const nodeId of focusedPathNodeIds) {
+        next.delete(nodeId);
+      }
       return next;
     });
   }, [
@@ -9929,6 +9953,46 @@ function ConfiguredWorkspace({
       return;
     }
 
+    const currentFocusedNode = focusedNodeId
+      ? findTreeNodeById(tree, focusedNodeId)
+      : null;
+    const parentNodeId =
+      (currentFocusedNode?.parentNodeId as Id<"nodes"> | null | undefined) ?? null;
+    const parentNode = parentNodeId ? findTreeNodeById(tree, parentNodeId) : null;
+    if (parentNodeId && parentNode) {
+      const parentNodeTitle =
+        normalizeNodeLinkPreviewDisplay(parentNode.text).text ||
+        selectedPage?.title ||
+        pagesById.get(selectedPageId as string)?.title ||
+        null;
+
+      setLocationFocusedNodeId(parentNodeId as string);
+      setFocusedNodeId(parentNodeId as string);
+      updateCollapsedNodeIds((current) => {
+        const idsToOpen = [
+          parentNodeId as string,
+          (parentNode.parentNodeId as string | null) ?? null,
+        ].filter((nodeId): nodeId is string => nodeId !== null);
+        if (!idsToOpen.some((nodeId) => current.has(nodeId))) {
+          return current;
+        }
+
+        const next = new Set(current);
+        for (const nodeId of idsToOpen) {
+          next.delete(nodeId);
+        }
+        return next;
+      });
+      writeFocusedNodeToHistory(
+        selectedPageId,
+        parentNodeId,
+        "replace",
+        parentNodeTitle,
+      );
+      clearNodeSelection();
+      return;
+    }
+
     setLocationFocusedNodeId(null);
     setFocusedNodeId(null);
     writePageIdToHistory(
@@ -9937,7 +10001,15 @@ function ConfiguredWorkspace({
       selectedPage?.title ?? pagesById.get(selectedPageId as string)?.title ?? null,
     );
     clearNodeSelection();
-  }, [clearNodeSelection, pagesById, selectedPage?.title, selectedPageId]);
+  }, [
+    clearNodeSelection,
+    focusedNodeId,
+    pagesById,
+    selectedPage?.title,
+    selectedPageId,
+    tree,
+    updateCollapsedNodeIds,
+  ]);
 
   useEffect(() => {
     if (!focusedNodeId || paletteOpen || isWorkspaceChatOpen || isInboxOpen || isRandomBoxOpen) {
@@ -11646,6 +11718,7 @@ function ConfiguredWorkspace({
                         </p>
                         <p className="mt-1 truncate text-sm text-[var(--workspace-text-subtle)]">
                           {focusedNodeLabel}
+                          {focusedParentLabel ? ` inside ${focusedParentLabel}` : ""}
                         </p>
                       </div>
                       <button
@@ -11657,10 +11730,10 @@ function ConfiguredWorkspace({
                       </button>
                     </div>
                     <OutlineNodeList
-                      nodes={[focusedTreeNode]}
+                      nodes={focusedContextRoots}
                       ownerKey={ownerKey}
                       pageId={selectedPage._id}
-                      parentNodeId={focusedNodeParentId}
+                      parentNodeId={focusedContextParentId}
                       nodeBacklinkCounts={pageNodeBacklinkCounts}
                       nodeMap={nodeMap}
                       createNodesBatch={createNodesBatch}

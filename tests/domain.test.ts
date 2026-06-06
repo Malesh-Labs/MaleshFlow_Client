@@ -48,6 +48,10 @@ import {
   replaceLiteralOccurrences,
 } from "../lib/domain/findReplace";
 import {
+  buildFocusedOutlineContext,
+  buildOutlineTree,
+} from "../lib/domain/outline";
+import {
   advanceRecurringDueDate,
   advanceRecurringDueDateRange,
   areRecurrenceFrequenciesEqual,
@@ -1542,6 +1546,99 @@ test("serializePageToMarkdown emits readable markdown with tasks", () => {
   assert.match(markdown, /# Inbox/);
   assert.match(markdown, /- Capture loose thoughts/);
   assert.match(markdown, /- \[x\] Turn this into a task/);
+});
+
+test("buildFocusedOutlineContext shows immediate parent and focused branch only", () => {
+  const tree = buildOutlineTree([
+    {
+      _id: "root",
+      pageId: "page",
+      parentNodeId: null,
+      position: 1,
+      text: "Root",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      archived: false,
+    },
+    {
+      _id: "child",
+      pageId: "page",
+      parentNodeId: "root",
+      position: 1,
+      text: "Child",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      archived: false,
+    },
+    {
+      _id: "sibling",
+      pageId: "page",
+      parentNodeId: "root",
+      position: 2,
+      text: "Sibling",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      archived: false,
+    },
+    {
+      _id: "grandchild",
+      pageId: "page",
+      parentNodeId: "child",
+      position: 1,
+      text: "Grandchild",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      archived: false,
+    },
+  ]);
+
+  const context = buildFocusedOutlineContext(tree, "child");
+
+  assert.equal(context.focusedNode?._id, "child");
+  assert.equal(context.parentNode?._id, "root");
+  assert.equal(context.rootParentNodeId, null);
+  assert.deepEqual(
+    context.roots.map((node) => ({
+      id: node._id,
+      children: node.children.map((child) => child._id),
+    })),
+    [{ id: "root", children: ["child"] }],
+  );
+  assert.deepEqual(
+    context.roots[0]?.children[0]?.children.map((child) => child._id),
+    ["grandchild"],
+  );
+});
+
+test("buildFocusedOutlineContext returns the focused root when it has no parent", () => {
+  const tree = buildOutlineTree([
+    {
+      _id: "root",
+      pageId: "page",
+      parentNodeId: null,
+      position: 1,
+      text: "Root",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      archived: false,
+    },
+  ]);
+
+  const context = buildFocusedOutlineContext(tree, "root");
+
+  assert.equal(context.focusedNode?._id, "root");
+  assert.equal(context.parentNode, null);
+  assert.equal(context.roots[0]?._id, "root");
 });
 
 test("buildDeterministicEmbedding is stable and uses contextual input", () => {
