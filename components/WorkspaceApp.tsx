@@ -176,6 +176,7 @@ const WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY = "maleshflow-workspace-ai-chat-open";
 const WORKSPACE_INBOX_TEXTAREA_ID = "workspace-inbox-textarea";
 const WORKSPACE_RANDOM_BOX_TEXTAREA_ID = "workspace-random-box-textarea";
 const MIN_WORKSPACE_TEXT_BOX_COUNT = 2;
+const NODE_MARKER_FOCUS_HOLD_MS = 500;
 const OUTLINE_MOBILE_INDENT_STEP = 6;
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
 const ALL_PAGE_TYPE_GROUP_ORDER = [
@@ -9604,7 +9605,9 @@ function ConfiguredWorkspace({
         }
 
         if (selectedNodeIds.size > 0) {
+          event.preventDefault();
           setSelectedNodeIds(new Set());
+          setSelectionAnchorNodeId(null);
           setDragSelection(null);
         }
         return;
@@ -16161,8 +16164,6 @@ function OutlineNodeEditor({
   const draftRef = useRef(draft);
   const markerHoldTimeoutRef = useRef<number | null>(null);
   const markerLongPressTriggeredRef = useRef(false);
-  const collapseZoomHoldTimeoutRef = useRef<number | null>(null);
-  const collapseZoomTriggeredRef = useRef(false);
   const childrenAnimationFrameRef = useRef<number | null>(null);
 
   const nodeMeta = getNodeMeta(node);
@@ -16416,9 +16417,6 @@ function OutlineNodeEditor({
       if (markerHoldTimeoutRef.current !== null) {
         window.clearTimeout(markerHoldTimeoutRef.current);
       }
-      if (collapseZoomHoldTimeoutRef.current !== null) {
-        window.clearTimeout(collapseZoomHoldTimeoutRef.current);
-      }
     };
   }, []);
 
@@ -16599,71 +16597,17 @@ function OutlineNodeEditor({
     onToggleNodeCollapsed(node._id);
   };
 
-  const clearCollapseZoomHold = () => {
-    if (collapseZoomHoldTimeoutRef.current !== null) {
-      window.clearTimeout(collapseZoomHoldTimeoutRef.current);
-      collapseZoomHoldTimeoutRef.current = null;
-    }
-  };
-
   const zoomIntoCurrentNode = () => {
-    if (!hasChildren) {
-      return;
-    }
-
     onZoomIntoNode(node._id);
   };
 
-  const handleCollapsePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (!hasChildren) {
-      return;
-    }
-
-    if (event.pointerType === "mouse" && event.button !== 0) {
-      return;
-    }
-
-    collapseZoomTriggeredRef.current = false;
-    clearCollapseZoomHold();
-    collapseZoomHoldTimeoutRef.current = window.setTimeout(() => {
-      collapseZoomHoldTimeoutRef.current = null;
-      collapseZoomTriggeredRef.current = true;
-      zoomIntoCurrentNode();
-    }, 500);
-  };
-
-  const handleCollapsePointerEnd = () => {
-    clearCollapseZoomHold();
-  };
-
-  const consumeCollapseZoomGesture = () => {
-    if (!collapseZoomTriggeredRef.current) {
-      return false;
-    }
-
-    collapseZoomTriggeredRef.current = false;
-    return true;
-  };
-
   const handleCollapseClick = (event: ReactMouseEvent<HTMLButtonElement>) => {
-    if (consumeCollapseZoomGesture() || event.detail > 1) {
+    if (event.detail > 1) {
       event.preventDefault();
       return;
     }
 
     handleToggleCollapsed();
-  };
-
-  const handleCollapseDoubleClick = (event: ReactMouseEvent<HTMLButtonElement>) => {
-    if (!hasChildren) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    clearCollapseZoomHold();
-    collapseZoomTriggeredRef.current = false;
-    zoomIntoCurrentNode();
   };
 
   const setCollapsedState = (nextCollapsed: boolean) => {
@@ -16775,8 +16719,8 @@ function OutlineNodeEditor({
     markerHoldTimeoutRef.current = window.setTimeout(() => {
       markerHoldTimeoutRef.current = null;
       markerLongPressTriggeredRef.current = true;
-      onSelectSingleNode(node._id);
-    }, 180);
+      zoomIntoCurrentNode();
+    }, NODE_MARKER_FOCUS_HOLD_MS);
   };
 
   const handleMarkerPointerEnd = () => {
@@ -18247,7 +18191,7 @@ function OutlineNodeEditor({
                   onSetActiveDraggedNodePayload(null);
                 }}
                 disabled={isDisabled}
-                title="Click to toggle task status. Hold a modifier key to convert to a note."
+                title="Click to toggle task status. Hold a modifier key to convert to a note. Long-press to focus this item."
                 className={clsx(
                   "flex h-4 w-4 flex-none cursor-grab items-center justify-center border text-[10px] transition active:cursor-grabbing",
                   node.taskStatus === "done"
@@ -18278,7 +18222,7 @@ function OutlineNodeEditor({
                   onSetActiveDraggedNodePayload(null);
                 }}
                 disabled={isDisabled}
-                title="Convert this note into a task."
+                title="Click to convert this note into a task. Long-press to focus this item."
                 className={clsx(
                   "flex h-4 w-4 flex-none cursor-grab items-center justify-center transition hover:text-[var(--workspace-brand)] active:cursor-grabbing",
                   shouldHideNoteMarker ? "opacity-0" : "",
@@ -18509,14 +18453,9 @@ function OutlineNodeEditor({
             <button
               type="button"
               onMouseDown={(event) => event.preventDefault()}
-              onPointerDown={handleCollapsePointerDown}
-              onPointerUp={handleCollapsePointerEnd}
-              onPointerLeave={handleCollapsePointerEnd}
-              onPointerCancel={handleCollapsePointerEnd}
               onClick={handleCollapseClick}
-              onDoubleClick={handleCollapseDoubleClick}
               disabled={!hasChildren}
-              title={hasChildren ? "Click to collapse. Double-click or long-press to focus this item." : undefined}
+              title={hasChildren ? (isCollapsed ? "Expand nested items" : "Collapse nested items") : undefined}
               aria-label={isCollapsed ? "Expand nested items" : "Collapse nested items"}
               className={clsx(
                 "flex flex-none items-center justify-center leading-none transition",
