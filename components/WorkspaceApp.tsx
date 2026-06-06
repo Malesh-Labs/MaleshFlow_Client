@@ -361,6 +361,7 @@ const PALETTE_MODE_ORDER: PaletteMode[] = [
 type NodeSearchResult = {
   node: Doc<"nodes">;
   page: PageDoc | null;
+  parentNode?: Doc<"nodes"> | null;
   score?: number;
   content?: string;
   resultKey?: string;
@@ -406,6 +407,7 @@ type LinkTargetSearchResults = {
   nodes: Array<{
     node: Doc<"nodes">;
     page: PageDoc | null;
+    parentNode?: Doc<"nodes"> | null;
   }>;
 };
 type NodeLinkTargetResolution = {
@@ -1502,6 +1504,7 @@ function normalizeNodeSearchResults(results: unknown[]): NodeSearchResult[] {
     const record = result as {
       node?: Doc<"nodes">;
       page?: PageDoc | null;
+      parentNode?: Doc<"nodes"> | null;
       score?: number;
       content?: string;
     };
@@ -1513,6 +1516,7 @@ function normalizeNodeSearchResults(results: unknown[]): NodeSearchResult[] {
     return {
       node: record.node,
       page: record.page ?? null,
+      parentNode: record.parentNode ?? null,
       score: record.score,
       content: record.content,
     };
@@ -1528,6 +1532,22 @@ function withFindResultKeys(results: NodeSearchResult[], querySegment: string, s
     ...result,
     resultKey: `${segmentIndex}:${resultIndex}:${querySegment}:${result.node._id}`,
   }));
+}
+
+function getNodeSearchResultSubtitle(result: NodeSearchResult) {
+  const parts = [
+    result.page?.title ?? "Unknown page",
+    result.page ? getPageTypeDisplayLabel(result.page) : "",
+  ];
+  const parentText = result.parentNode
+    ? normalizeNodeLinkPreviewDisplay(result.parentNode.text).text ||
+      result.parentNode.text.trim()
+    : "";
+  if (parentText.length > 0) {
+    parts.push(`Parent: ${parentText}`);
+  }
+
+  return parts.filter((part) => part.trim().length > 0).join(" • ");
 }
 
 function sanitizeLinkLabel(value: string) {
@@ -1907,13 +1927,23 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
 
   const nodeSuggestions: LinkSuggestion[] = results.nodes
     .filter((entry) => entry.page !== null)
-    .map((entry) => ({
-      key: `node:${entry.node._id}`,
-      kind: "node" as const,
-      title: sanitizeLinkLabel(entry.node.text),
-      subtitle: entry.page ? `Node • ${entry.page.title}` : "Node",
-      insertText: buildNodeLinkInsertText(entry.node),
-    }));
+    .map((entry) => {
+      const parentText = entry.parentNode
+        ? normalizeNodeLinkPreviewDisplay(entry.parentNode.text).text ||
+          entry.parentNode.text.trim()
+        : "";
+      return {
+        key: `node:${entry.node._id}`,
+        kind: "node" as const,
+        title: sanitizeLinkLabel(entry.node.text),
+        subtitle: [
+          "Node",
+          entry.page?.title ?? "",
+          parentText ? `Parent: ${parentText}` : "",
+        ].filter((value) => value.length > 0).join(" • "),
+        insertText: buildNodeLinkInsertText(entry.node),
+      };
+    });
 
   return [...pageSuggestions, ...nodeSuggestions].sort((left, right) => {
     const lengthDelta = left.title.trim().length - right.title.trim().length;
@@ -13313,8 +13343,7 @@ function ConfiguredWorkspace({
                           {result.node.text || "(empty line)"}
                         </span>
                         <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                          {result.page?.title ?? "Unknown page"}
-                          {result.page ? ` • ${getPageTypeDisplayLabel(result.page)}` : ""}
+                          {getNodeSearchResultSubtitle(result)}
                         </span>
                       </span>
                       <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
@@ -13352,8 +13381,7 @@ function ConfiguredWorkspace({
                           {result.node.text || "(empty line)"}
                         </span>
                         <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                          {result.page?.title ?? "Unknown page"}
-                          {result.page ? ` • ${getPageTypeDisplayLabel(result.page)}` : ""}
+                          {getNodeSearchResultSubtitle(result)}
                         </span>
                       </span>
                       <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">

@@ -3529,6 +3529,9 @@ export const searchLinkTargets = query({
       .map((node) => ({
         node,
         page: pageMap.get(node.pageId) ?? null,
+        parentNode: node.parentNodeId
+          ? activeNodeMap.get(node.parentNodeId as string) ?? null
+          : null,
       }))
       .filter((entry) => entry.page !== null);
 

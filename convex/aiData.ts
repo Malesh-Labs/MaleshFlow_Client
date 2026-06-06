@@ -1,8 +1,38 @@
 import { v } from "convex/values";
-import { internalMutation, internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { priorityValidator, taskStatusValidator } from "./lib/validators";
 import { isSeparatorLineText } from "../lib/domain/displaySyntax";
+
+async function hydrateSearchResultParentNodes<T extends { node: Doc<"nodes"> }>(
+  db: QueryCtx["db"],
+  results: T[],
+  includeArchived: boolean,
+) {
+  const parentNodeIds = [
+    ...new Set(
+      results
+        .map((result) => result.node.parentNodeId)
+        .filter((nodeId): nodeId is Doc<"nodes">["_id"] => nodeId !== null),
+    ),
+  ];
+  const parentNodes = await Promise.all(parentNodeIds.map((nodeId) => db.get(nodeId)));
+  const parentNodeMap = new Map(
+    parentNodes
+      .filter(
+        (node): node is Doc<"nodes"> =>
+          Boolean(node) && (includeArchived || !node!.archived),
+      )
+      .map((node) => [node._id, node]),
+  );
+
+  return results.map((result) => ({
+    ...result,
+    parentNode: result.node.parentNodeId
+      ? parentNodeMap.get(result.node.parentNodeId) ?? null
+      : null,
+  }));
+}
 
 function buildEmbeddingJobReplacement(
   job: Doc<"embeddingJobs">,
@@ -99,7 +129,7 @@ export const fallbackTextSearch = internalQuery({
     const nodes = rawNodes.filter((node) => pageMap.has(node.pageId));
     const terms = args.query.toLowerCase().split(/\s+/).filter(Boolean);
 
-    return nodes
+    const results = nodes
       .map((node: Doc<"nodes">) => {
         const haystack = node.text.toLowerCase();
         const score = terms.reduce((total, term) => {
@@ -122,6 +152,12 @@ export const fallbackTextSearch = internalQuery({
           right.score - left.score,
       )
       .slice(0, args.limit);
+
+    return await hydrateSearchResultParentNodes(
+      ctx.db,
+      results,
+      args.includeArchived === true,
+    );
   },
 });
 
@@ -156,7 +192,7 @@ export const hydrateEmbeddingMatches = internalQuery({
         .map((page) => [page._id, page]),
     );
 
-    return hydrated
+    const results = hydrated
       .filter(
         (entry): entry is { embedding: NonNullable<(typeof hydrated)[number]["embedding"]>; node: Doc<"nodes"> } =>
           Boolean(entry.node) &&
@@ -168,6 +204,12 @@ export const hydrateEmbeddingMatches = internalQuery({
         content: entry.embedding.content,
       }))
       .filter((entry) => entry.page !== null);
+
+    return await hydrateSearchResultParentNodes(
+      ctx.db,
+      results,
+      args.includeArchived === true,
+    );
   },
 });
 

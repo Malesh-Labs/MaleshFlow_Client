@@ -5,6 +5,8 @@ import { useMutation, useQuery } from "convex/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
+import { stripNodeDisplaySyntaxMarkers } from "@/lib/domain/displaySyntax";
+import { stripInlineFormattingMarkers } from "@/lib/domain/inlineFormatting";
 import { replaceLinkMarkupWithLabels } from "@/lib/domain/links";
 
 const SKIP = "skip" as const;
@@ -36,6 +38,7 @@ type LinkTargetSearchResults = {
   nodes: Array<{
     node: Doc<"nodes">;
     page: Doc<"pages"> | null;
+    parentNode?: Doc<"nodes"> | null;
   }>;
 };
 
@@ -48,6 +51,7 @@ type SelectedLinkTarget =
       kind: "node";
       node: Doc<"nodes">;
       page: Doc<"pages"> | null;
+      parentNode: Doc<"nodes"> | null;
     };
 
 type ApplyProgress = {
@@ -68,6 +72,13 @@ function getNodeDisplayText(node: Pick<Doc<"nodes">, "text">) {
   return replaceLinkMarkupWithLabels(node.text).trim() || node.text.trim() || "(empty item)";
 }
 
+function getNodeContextText(node: Pick<Doc<"nodes">, "text">) {
+  const plainText = stripNodeDisplaySyntaxMarkers(
+    stripInlineFormattingMarkers(replaceLinkMarkupWithLabels(node.text)),
+  ).trim();
+  return plainText || node.text.trim();
+}
+
 function getPageDisplayText(page: Pick<Doc<"pages">, "title">) {
   return page.title.trim() || "Untitled page";
 }
@@ -83,9 +94,15 @@ function getTargetDisplayText(target: SelectedLinkTarget) {
 }
 
 function getTargetSubtitle(target: SelectedLinkTarget) {
-  return target.kind === "page"
-    ? "Page"
-    : `${target.node.kind === "task" ? "Task" : "Note"} · ${target.page?.title ?? "Unknown page"}`;
+  if (target.kind === "page") {
+    return "Page";
+  }
+
+  return [
+    target.node.kind === "task" ? "Task" : "Note",
+    target.page?.title ?? "Unknown page",
+    target.parentNode ? `Parent: ${getNodeContextText(target.parentNode)}` : "",
+  ].filter((value) => value.length > 0).join(" · ");
 }
 
 function sanitizeReplacementLabel(value: string) {
@@ -190,6 +207,7 @@ export function UnresolvedLinksPanel({
             kind: "node",
             node: entry.node,
             page: entry.page,
+            parentNode: entry.parentNode ?? null,
           }),
         ),
     ],
