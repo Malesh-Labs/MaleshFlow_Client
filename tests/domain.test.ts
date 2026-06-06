@@ -73,6 +73,7 @@ import {
 import { parseImportedTextToOutlineNodes } from "../lib/domain/importer";
 import { getEffectiveTaskDueDateRange } from "../lib/domain/planner";
 import {
+  findExistingPlannerDayForSidebarSourceTask,
   listEligiblePlannerSidebarSourceTasksFromNodes,
   shouldSyncPlannerLinkedRecurringSourceTaskCompletion,
 } from "../convex/lib/planner";
@@ -927,6 +928,125 @@ test("planner sidebar dated tasks are eligible for matching planner days", () =>
       plannerDate,
     }).map((node) => node._id),
     ["dated-task"],
+  );
+});
+
+test("planner sidebar recurring task can target an existing planned day once", () => {
+  const currentDate = dateInputValueToTimestamp("2026-05-14");
+  const nextDate = dateInputValueToTimestamp("2026-05-15");
+  const laterDate = dateInputValueToTimestamp("2026-05-16");
+  assert.ok(currentDate);
+  assert.ok(nextDate);
+  assert.ok(laterDate);
+
+  const sourceTask = {
+    _id: "recurring-sidebar-task",
+    pageId: "planner",
+    parentNodeId: "sidebar",
+    position: 1024,
+    text: "Recurring sidebar task",
+    kind: "task",
+    taskStatus: "todo",
+    priority: null,
+    dueAt: nextDate,
+    dueEndAt: null,
+    archived: false,
+    sourceMeta: { sourceType: "manual", recurrenceFrequency: "daily" },
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const nodes = [
+    {
+      _id: "sidebar",
+      pageId: "planner",
+      parentNodeId: null,
+      position: 1024,
+      text: "Sidebar",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      dueEndAt: null,
+      archived: false,
+      sourceMeta: { sectionSlot: "plannerSidebar" },
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    sourceTask,
+    {
+      _id: "current-day",
+      pageId: "planner",
+      parentNodeId: null,
+      position: 2048,
+      text: "Thursday",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      dueEndAt: null,
+      archived: false,
+      sourceMeta: { plannerKind: "plannerDay", plannerDate: currentDate },
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    {
+      _id: "next-day",
+      pageId: "planner",
+      parentNodeId: null,
+      position: 3072,
+      text: "Friday",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      dueEndAt: null,
+      archived: false,
+      sourceMeta: { plannerKind: "plannerDay", plannerDate: nextDate },
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  ];
+
+  assert.equal(
+    findExistingPlannerDayForSidebarSourceTask(nodes as never, sourceTask as never)?._id,
+    "next-day",
+  );
+
+  assert.equal(
+    findExistingPlannerDayForSidebarSourceTask(
+      [
+        ...nodes,
+        {
+          _id: "existing-link",
+          pageId: "planner",
+          parentNodeId: "next-day",
+          position: 1024,
+          text: "[[node:recurring-sidebar-task]]",
+          kind: "task",
+          taskStatus: "todo",
+          priority: null,
+          dueAt: null,
+          dueEndAt: null,
+          archived: false,
+          sourceMeta: {
+            plannerKind: "plannerLinkedTask",
+            sourceTaskNodeId: "recurring-sidebar-task",
+          },
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ] as never,
+      sourceTask as never,
+    ),
+    null,
+  );
+
+  assert.equal(
+    findExistingPlannerDayForSidebarSourceTask(
+      nodes as never,
+      { ...sourceTask, dueAt: laterDate } as never,
+    ),
+    null,
   );
 });
 

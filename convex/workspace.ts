@@ -37,6 +37,7 @@ import {
   PLANNER_FOCUS_SLOT,
   PLANNER_SIDEBAR_SLOT,
   PLANNER_TEMPLATE_SLOT,
+  appendPlannerSidebarSourceTaskToMatchingDay,
   buildPlannerChatPromptContext,
   clonePlannerSubtree,
   ensurePlannerSections,
@@ -371,6 +372,28 @@ function isTaskPageDoneArchiveEnabled(
   page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined,
 ) {
   return getPageSourceMeta(page).archiveCompletedRootTasksToDone === true;
+}
+
+function shouldAppendRecurringPlannerSidebarTaskOccurrence(
+  beforeNode: Doc<"nodes">,
+  afterNode: Doc<"nodes">,
+) {
+  if (
+    beforeNode.kind !== "task" ||
+    afterNode.kind !== "task" ||
+    afterNode.archived ||
+    afterNode.taskStatus === "done" ||
+    afterNode.taskStatus === "cancelled" ||
+    !beforeNode.dueAt ||
+    !afterNode.dueAt ||
+    beforeNode.dueAt === afterNode.dueAt
+  ) {
+    return false;
+  }
+
+  return parseRecurrenceFrequency(
+    getNodeSourceMeta(afterNode).recurrenceFrequency,
+  ) !== null;
 }
 
 function buildTaskArchiveChildrenByParent(nodes: Doc<"nodes">[]) {
@@ -4893,6 +4916,12 @@ export const updateNode = mutation({
     if (refreshed) {
       await syncLinksForNode(ctx.db, refreshed);
       await enqueueNodeAiWork(ctx, refreshed._id);
+      if (shouldAppendRecurringPlannerSidebarTaskOccurrence(node, refreshed)) {
+        await appendPlannerSidebarSourceTaskToMatchingDay(ctx, {
+          ...refreshed,
+          dueEndAt: refreshed.dueEndAt ?? null,
+        });
+      }
       await enqueuePageRootEmbeddingRefresh(ctx, refreshed.pageId);
     }
   },
@@ -5015,6 +5044,12 @@ export const updateNodesBatch = mutation({
       if (refreshed) {
         await syncLinksForNode(ctx.db, refreshed);
         await enqueueNodeAiWork(ctx, refreshed._id);
+        if (shouldAppendRecurringPlannerSidebarTaskOccurrence(node, refreshed)) {
+          await appendPlannerSidebarSourceTaskToMatchingDay(ctx, {
+            ...refreshed,
+            dueEndAt: refreshed.dueEndAt ?? null,
+          });
+        }
         touchedPageIds.add(refreshed.pageId);
       }
     }

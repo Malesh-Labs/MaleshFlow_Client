@@ -369,6 +369,12 @@ async function syncPlannerLinkedSourceTaskCompletion(
         dueEndAt: nextRange.dueEndAt,
         updatedAt: now,
       });
+      await appendPlannerSidebarSourceTaskToMatchingDay(ctx, {
+        ...sourceTask,
+        taskStatus: "todo",
+        dueAt: nextRange.dueAt,
+        dueEndAt: nextRange.dueEndAt,
+      });
     } else {
       await ctx.db.patch(sourceTask._id, {
         taskStatus: "done",
@@ -984,6 +990,87 @@ export function listEligiblePlannerSidebarSourceTasksFromNodes(
 
     return [effectiveTask];
   });
+}
+
+export function findExistingPlannerDayForSidebarSourceTask(
+  nodes: Doc<"nodes">[],
+  sourceTask: PlannerSourceTask,
+) {
+  if (
+    sourceTask.archived ||
+    sourceTask.kind !== "task" ||
+    sourceTask.taskStatus === "done" ||
+    sourceTask.taskStatus === "cancelled" ||
+    !sourceTask.dueAt ||
+    isPlannerPlaceholderTaskText(sourceTask.text) ||
+    isPlannerDerivedSourceTask(sourceTask)
+  ) {
+    return null;
+  }
+
+  const sidebarSection = findPlannerSectionNode(nodes, PLANNER_SIDEBAR_SLOT);
+  if (!sidebarSection) {
+    return null;
+  }
+
+  const nodeMap = buildNodeMap(nodes);
+  if (!isNodeWithinRootSubtree(sourceTask, sidebarSection._id, nodeMap)) {
+    return null;
+  }
+
+  const matchingDay =
+    getPlannerDayRoots(nodes).find((dayNode) =>
+      plannerDayMatchesDueDateRange({
+        dayTimestamp: getPlannerDayTimestamp(dayNode) ?? 0,
+        dueAt: sourceTask.dueAt,
+        dueEndAt: sourceTask.dueEndAt ?? null,
+      }),
+    ) ?? null;
+  if (!matchingDay) {
+    return null;
+  }
+
+  const alreadyLinkedOnDay = nodes.some(
+    (node) =>
+      !node.archived &&
+      node._id !== matchingDay._id &&
+      getPlannerLinkedSourceTaskId(node) === sourceTask._id &&
+      isNodeWithinRootSubtree(node, matchingDay._id, nodeMap),
+  );
+
+  return alreadyLinkedOnDay ? null : matchingDay;
+}
+
+export async function appendPlannerSidebarSourceTaskToMatchingDay(
+  ctx: MutationCtx,
+  sourceTask: PlannerSourceTask,
+) {
+  const page = await ctx.db.get(sourceTask.pageId);
+  if (!page || page.archived || !isPlannerPage(page)) {
+    return null as Id<"nodes"> | null;
+  }
+
+  const nodes = await listPageNodes(ctx.db, page._id);
+  const matchingDay = findExistingPlannerDayForSidebarSourceTask(nodes, sourceTask);
+  const plannerDate = getPlannerDayTimestamp(matchingDay);
+  if (!matchingDay || !plannerDate) {
+    return null as Id<"nodes"> | null;
+  }
+
+  const dayChildren = nodes
+    .filter((node) => node.parentNodeId === matchingDay._id && !node.archived)
+    .sort((left, right) => left.position - right.position);
+  const afterNodeId = dayChildren[dayChildren.length - 1]?._id ?? null;
+  const plannerNodeId = await appendPlannerLinkedTaskCopy(ctx, {
+    plannerPageId: page._id,
+    parentNodeId: matchingDay._id,
+    plannerDate,
+    sourceTask,
+    afterNodeId,
+  });
+
+  await enqueuePageRootEmbeddingRefresh(ctx, page._id);
+  return plannerNodeId;
 }
 
 export async function completePlannerLinkedTask(
