@@ -428,6 +428,7 @@ type LinkSuggestion =
       title: string;
       subtitle: string;
       insertText: string;
+      parentInsertText?: string | null;
       parentTitle?: string | null;
     }
   | {
@@ -436,6 +437,7 @@ type LinkSuggestion =
       title: string;
       subtitle: string;
       insertText: string;
+      parentInsertText?: string | null;
       parentTitle?: string | null;
     }
   | {
@@ -444,6 +446,7 @@ type LinkSuggestion =
       title: string;
       subtitle: string;
       insertText: string;
+      parentInsertText?: string | null;
       parentTitle?: string | null;
     };
 type LinkPreviewTagBadge = {
@@ -1692,6 +1695,17 @@ function buildNodeLinkInsertText(node: Doc<"nodes">) {
   return `[[node:${node._id}]]`;
 }
 
+function getLinkSuggestionInsertText(
+  suggestion: LinkSuggestion,
+  options: { useParentTarget?: boolean } = {},
+) {
+  if (options.useParentTarget && suggestion.kind === "node" && suggestion.parentInsertText) {
+    return suggestion.parentInsertText;
+  }
+
+  return suggestion.insertText;
+}
+
 function isOptimisticNodeId(nodeId: string | null | undefined) {
   return typeof nodeId === "string" && nodeId.startsWith("optimistic-node:");
 }
@@ -1976,6 +1990,7 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
           entry.page?.title ?? "",
         ].filter((value) => value.length > 0).join(" • "),
         parentTitle: parentText || null,
+        parentInsertText: entry.parentNode ? buildNodeLinkInsertText(entry.parentNode) : null,
         insertText: buildNodeLinkInsertText(entry.node),
       };
     });
@@ -15701,16 +15716,20 @@ function WorkspaceAiChatPanel({
     };
   }, [error, isLoading, messages]);
 
-  const applyLinkSuggestion = (suggestion: LinkSuggestion) => {
+  const applyLinkSuggestion = (
+    suggestion: LinkSuggestion,
+    options: { useParentTarget?: boolean } = {},
+  ) => {
     if (!autocompleteToken) {
       return;
     }
 
+    const insertText = getLinkSuggestionInsertText(suggestion, options);
     const nextValue =
       draft.slice(0, autocompleteToken.startIndex) +
-      suggestion.insertText +
+      insertText +
       draft.slice(autocompleteToken.endIndex);
-    const nextCaretPosition = autocompleteToken.startIndex + suggestion.insertText.length;
+    const nextCaretPosition = autocompleteToken.startIndex + insertText.length;
 
     onDraftChange(nextValue);
     setCaretPosition(nextCaretPosition);
@@ -15736,11 +15755,13 @@ function WorkspaceAiChatPanel({
         return;
       }
 
-      if (event.key === "Enter" && !event.shiftKey) {
+      if (event.key === "Enter" && (!event.shiftKey || activeLinkToken)) {
         event.preventDefault();
         const highlighted = autocompleteSuggestions[activeLinkHighlightIndex];
         if (highlighted) {
-          applyLinkSuggestion(highlighted);
+          applyLinkSuggestion(highlighted, {
+            useParentTarget: event.shiftKey && Boolean(activeLinkToken),
+          });
         }
         return;
       }
@@ -16480,16 +16501,20 @@ function OutlineNodeEditor({
     };
   }, [hasChildren, isChildrenExpanded, isCollapsed, shouldRenderChildren]);
 
-  const applyLinkSuggestion = (suggestion: LinkSuggestion) => {
+  const applyLinkSuggestion = (
+    suggestion: LinkSuggestion,
+    options: { useParentTarget?: boolean } = {},
+  ) => {
     if (!autocompleteToken) {
       return;
     }
 
+    const insertText = getLinkSuggestionInsertText(suggestion, options);
     const nextValue =
       draft.slice(0, autocompleteToken.startIndex) +
-      suggestion.insertText +
+      insertText +
       draft.slice(autocompleteToken.endIndex);
-    const nextCaretPosition = autocompleteToken.startIndex + suggestion.insertText.length;
+    const nextCaretPosition = autocompleteToken.startIndex + insertText.length;
 
     setDraft(nextValue);
     history.updateDraftValue(editorId, editorTarget, nextValue);
@@ -17509,7 +17534,9 @@ function OutlineNodeEditor({
         const suggestion =
           autocompleteSuggestions[activeLinkHighlightIndex] ?? autocompleteSuggestions[0];
         if (suggestion) {
-          applyLinkSuggestion(suggestion);
+          applyLinkSuggestion(suggestion, {
+            useParentTarget: event.key === "Enter" && event.shiftKey && Boolean(activeLinkToken),
+          });
         }
         return;
       }
@@ -18790,16 +18817,20 @@ function InlineComposer({
     });
   }, [autoFocusToken]);
 
-  const applyLinkSuggestion = (suggestion: LinkSuggestion) => {
+  const applyLinkSuggestion = (
+    suggestion: LinkSuggestion,
+    options: { useParentTarget?: boolean } = {},
+  ) => {
     if (!autocompleteToken) {
       return;
     }
 
+    const insertText = getLinkSuggestionInsertText(suggestion, options);
     const nextValue =
       draft.slice(0, autocompleteToken.startIndex) +
-      suggestion.insertText +
+      insertText +
       draft.slice(autocompleteToken.endIndex);
-    const nextCaretPosition = autocompleteToken.startIndex + suggestion.insertText.length;
+    const nextCaretPosition = autocompleteToken.startIndex + insertText.length;
 
     setDraft(nextValue);
     history.updateDraftValue(editorId, editorTarget, nextValue);
@@ -19078,7 +19109,9 @@ function InlineComposer({
         const suggestion =
           autocompleteSuggestions[activeLinkHighlightIndex] ?? autocompleteSuggestions[0];
         if (suggestion) {
-          applyLinkSuggestion(suggestion);
+          applyLinkSuggestion(suggestion, {
+            useParentTarget: event.key === "Enter" && event.shiftKey && Boolean(activeLinkToken),
+          });
         }
         return;
       }
