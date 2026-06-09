@@ -838,11 +838,7 @@ function isLatestJournalEntryPage(page: Doc<"pages">) {
 }
 
 function buildIncludedPageLinkText(page: Doc<"pages">) {
-  const label = page.title
-    .replace(/[\[\]\n\r|]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim() || "Untitled";
-  return `[[${label}|page:${page._id}]]`;
+  return `[[page:${page._id}]]`;
 }
 
 async function refreshLatestJournalView(
