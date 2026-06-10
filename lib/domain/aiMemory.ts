@@ -19,6 +19,14 @@ const COMPLETION_PATTERNS = [
   /\b(?:mark|move)\s+(.+?)\s+(?:as\s+)?(?:done|complete|completed|watched|finished)$/i,
 ];
 
+const RESTORE_PATTERNS = [
+  /\b(?:i\s+)?(?:haven(?:'|’)?t|have not|didn(?:'|’)?t|did not|never)\s+(.+)$/i,
+  /\b(?:no|actually|correction|oops|wait)[,\s]+(?:i\s+)?(?:haven(?:'|’)?t|have not|didn(?:'|’)?t|did not|never)\s+(.+)$/i,
+  /\b(?:not|isn(?:'|’)?t|is not|wasn(?:'|’)?t|was not)\s+(?:done|complete|completed)\s*(?:with)?\s+(.+)$/i,
+  /\b(?:move|mark|set)\s+(.+?)\s+(?:back\s+)?(?:to\s+)?(?:live|active|not done|incomplete|todo|undone)$/i,
+  /\b(?:undo|restore|reopen|uncomplete)\s+(.+)$/i,
+];
+
 const STORE_PATTERNS = [
   /\b(?:i\s+)?(?:wanna|want to|would like to)\s+make sure to\s+(.+)$/i,
   /\bmake sure to\s+(.+)$/i,
@@ -34,8 +42,10 @@ const TOKEN_STOP_WORDS = new Set([
   "an",
   "and",
   "as",
+  "actually",
   "complete",
   "completed",
+  "context",
   "did",
   "do",
   "done",
@@ -43,17 +53,26 @@ const TOKEN_STOP_WORDS = new Set([
   "finished",
   "go",
   "went",
+  "have",
+  "haven",
+  "havent",
+  "her",
   "i",
   "in",
   "item",
+  "items",
   "listen",
   "listened",
   "make",
   "me",
   "movie",
   "movies",
+  "no",
+  "not",
   "of",
   "on",
+  "or",
+  "previous",
   "read",
   "remember",
   "saw",
@@ -71,6 +90,7 @@ const TOKEN_STOP_WORDS = new Set([
   "watch",
   "watched",
   "with",
+  "yet",
 ]);
 
 const TOKEN_ALIASES: Record<string, string> = {
@@ -150,6 +170,15 @@ export type AiMemoryMatchResult =
       items: AiMemoryItem[];
     };
 
+export type AiMemoryMultiMatchResult =
+  | {
+      kind: "none";
+    }
+  | {
+      kind: "matches";
+      items: AiMemoryItem[];
+    };
+
 function normalizeInput(value: string) {
   let normalized = replaceLinkMarkupWithLabels(value)
     .replace(/\s+/g, " ")
@@ -169,6 +198,29 @@ function cleanExtractedText(value: string) {
     .replace(/^(?:to|that)\s+/i, "")
     .replace(/[?.!,;:]+$/g, "")
     .trim();
+}
+
+function cleanRestoreText(value: string) {
+  return cleanExtractedText(value)
+    .replace(/\s*,?\s*(?:see|check|look at)\s+.+$/i, "")
+    .replace(/\s+(?:yet|actually|after all)$/i, "")
+    .replace(/^(?:actually|no|wait|oops|correction)[,\s]+/i, "")
+    .trim();
+}
+
+function splitParentSuffix(value: string) {
+  const match = value.match(/^(.+?)\s+\(([^()]+)\)$/);
+  if (!match) {
+    return {
+      text: value,
+      parentText: null as string | null,
+    };
+  }
+
+  return {
+    text: match[1]?.trim() ?? value,
+    parentText: match[2]?.trim() || null,
+  };
 }
 
 export function extractAiMemoryStoreText(input: string) {
@@ -334,6 +386,7 @@ function parseAiMemoryTextSectionItems(
     hasCheckbox: boolean;
     noteCompleted: boolean;
     text: string;
+    parentText: string | null;
     hasChild: boolean;
   }> = [];
 
@@ -374,11 +427,17 @@ function parseAiMemoryTextSectionItems(
     if (!parsedLine) {
       continue;
     }
+    const parsedText =
+      section === "previous"
+        ? splitParentSuffix(parsedLine.text)
+        : { text: parsedLine.text, parentText: null };
 
     lineEntries.push({
       lineIndex,
       rawText: rawLine,
       ...parsedLine,
+      text: parsedText.text,
+      parentText: parsedText.parentText,
       hasChild: false,
     });
   }
@@ -404,7 +463,7 @@ function parseAiMemoryTextSectionItems(
 
     if (entry.hasCheckbox || !entry.hasChild) {
       const ancestorLabels = stack.map((ancestor) => ancestor.text);
-      const parentText = ancestorLabels[ancestorLabels.length - 1] ?? null;
+      const parentText = entry.parentText ?? ancestorLabels[ancestorLabels.length - 1] ?? null;
       lineItems.push({
         nodeId: `line:${entry.lineIndex}`,
         text: entry.text,
@@ -554,6 +613,94 @@ export function completeAiMemoryItemInText(
   };
 }
 
+function findLiveParentLineIndex(liveLines: string[], parentText: string) {
+  const normalizedParentText = normalizeComparableText(parentText);
+  if (normalizedParentText.length === 0) {
+    return -1;
+  }
+
+  return liveLines.findIndex((line) => {
+    const parsed = parseBulletMemoryLine(line);
+    return parsed && normalizeComparableText(parsed.text) === normalizedParentText;
+  });
+}
+
+function findLiveSubtreeEndIndex(liveLines: string[], parentLineIndex: number) {
+  const parentLine = liveLines[parentLineIndex] ?? "";
+  const parentIndent = parentLine.match(/^(\s*)/)?.[1]?.replace(/\t/g, "  ").length ?? 0;
+  let endIndex = parentLineIndex + 1;
+
+  while (endIndex < liveLines.length) {
+    const line = liveLines[endIndex] ?? "";
+    if (line.trim().length === 0) {
+      endIndex += 1;
+      continue;
+    }
+
+    const indent = line.match(/^(\s*)/)?.[1]?.replace(/\t/g, "  ").length ?? 0;
+    if (indent <= parentIndent) {
+      break;
+    }
+    endIndex += 1;
+  }
+
+  return endIndex;
+}
+
+export function restoreAiMemoryItemInText(
+  memoryText: string | null | undefined,
+  itemId: string,
+) {
+  const sections = splitAiWorkingMemoryText(memoryText);
+  const liveLines = trimBlankLines(sections.liveLines);
+  const previousLines = trimBlankLines(sections.previousLines);
+  const previousItems = parseAiMemoryTextSectionItems(previousLines, "previous");
+  const item = previousItems.find((entry) => entry.nodeId === itemId) ?? null;
+  if (!item) {
+    return null;
+  }
+
+  const nextPreviousLines = [...previousLines];
+  if (item.source.kind === "line") {
+    nextPreviousLines.splice(item.source.lineIndex, 1);
+  } else {
+    const sourceLine = nextPreviousLines[item.source.lineIndex] ?? "";
+    const outline = extractAiMemoryInlineChecklistOutline(sourceLine);
+    const inlineItem = outline?.items[item.source.itemIndex] ?? null;
+    if (!inlineItem) {
+      return null;
+    }
+    const nextLine = removeAiMemoryInlineChecklistItem(sourceLine, inlineItem);
+    const remainingOutline = extractAiMemoryInlineChecklistOutline(nextLine);
+    if (!remainingOutline || remainingOutline.items.length === 0) {
+      nextPreviousLines.splice(item.source.lineIndex, 1);
+    } else {
+      nextPreviousLines[item.source.lineIndex] = nextLine;
+    }
+  }
+
+  const nextLiveLines = [...liveLines];
+  if (item.parentText) {
+    const parentLineIndex = findLiveParentLineIndex(nextLiveLines, item.parentText);
+    if (parentLineIndex >= 0) {
+      nextLiveLines.splice(
+        findLiveSubtreeEndIndex(nextLiveLines, parentLineIndex),
+        0,
+        `  - [ ] ${item.text}`,
+      );
+    } else {
+      nextLiveLines.push(`- ${item.parentText}`, `  - [ ] ${item.text}`);
+    }
+  } else {
+    nextLiveLines.push(`- [ ] ${item.text}`);
+  }
+
+  return {
+    text: buildAiMemoryTextFromSections(nextLiveLines, nextPreviousLines),
+    restoredItem: item,
+  };
+}
+
 function parseMemoryChecklistLine(line: string): AiMemoryStoreOutlineItem | null {
   const checkboxMatch = line.match(/^\s*(?:[-*]\s*)?\[\s*([xX]?)\s*\]\s+(.+)$/);
   const bulletMatch = line.match(/^\s*[-*]\s+(.+)$/);
@@ -657,6 +804,7 @@ export function extractAiMemoryImplicitStoreText(input: string) {
   if (
     normalized.length === 0 ||
     QUESTION_LIKE_PATTERN.test(normalized) ||
+    extractAiMemoryRestoreText(normalized) ||
     extractAiMemoryCompletionText(normalized) ||
     extractAiMemoryStoreText(normalized)
   ) {
@@ -673,13 +821,30 @@ export function extractAiMemoryImplicitStoreText(input: string) {
 
 export function extractAiMemoryCompletionText(input: string) {
   const normalized = normalizeInput(input);
-  if (normalized.length === 0) {
+  if (normalized.length === 0 || extractAiMemoryRestoreText(normalized)) {
     return null;
   }
 
   for (const pattern of COMPLETION_PATTERNS) {
     const match = normalized.match(pattern);
     const text = cleanExtractedText(match?.[1] ?? "");
+    if (text.length > 0) {
+      return text;
+    }
+  }
+
+  return null;
+}
+
+export function extractAiMemoryRestoreText(input: string) {
+  const normalized = normalizeInput(input);
+  if (normalized.length === 0) {
+    return null;
+  }
+
+  for (const pattern of RESTORE_PATTERNS) {
+    const match = normalized.match(pattern);
+    const text = cleanRestoreText(match?.[1] ?? "");
     if (text.length > 0) {
       return text;
     }
@@ -700,6 +865,7 @@ function tokenizeComparableText(value: string) {
   return normalizeComparableText(value)
     .split(" ")
     .map((token) => TOKEN_ALIASES[token] ?? token)
+    .map((token) => token.replace(/([aeiou])\1+/g, "$1"))
     .map((token) => token.trim())
     .filter((token) => token.length > 0 && !TOKEN_STOP_WORDS.has(token));
 }
@@ -766,5 +932,35 @@ export function matchAiMemoryCompletion(
   return {
     kind: "single",
     item: best.item,
+  };
+}
+
+export function matchAiMemoryItems(
+  query: string,
+  items: AiMemoryItem[],
+  options: {
+    minimumScore?: number;
+  } = {},
+): AiMemoryMultiMatchResult {
+  const minimumScore = options.minimumScore ?? 50;
+  const scored = items
+    .map((item) => ({
+      item,
+      score: scoreMemoryMatch(query, item),
+    }))
+    .filter((entry) => entry.score >= minimumScore)
+    .sort((left, right) => right.score - left.score);
+  const best = scored[0] ?? null;
+  if (!best) {
+    return {
+      kind: "none",
+    };
+  }
+
+  return {
+    kind: "matches",
+    items: scored
+      .filter((entry) => best.score - entry.score < 20 || entry.score >= 70)
+      .map((entry) => entry.item),
   };
 }

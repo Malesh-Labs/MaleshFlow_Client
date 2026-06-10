@@ -30,9 +30,12 @@ import {
   completeAiMemoryItemInText,
   extractAiMemoryCompletionText,
   extractAiMemoryImplicitStoreText,
+  extractAiMemoryRestoreText,
   extractAiMemoryStoreOutline,
   extractAiMemoryStoreText,
   matchAiMemoryCompletion,
+  matchAiMemoryItems,
+  restoreAiMemoryItemInText,
 } from "../lib/domain/aiMemory";
 
 const taskMetadataSchema = z.object({
@@ -433,14 +436,15 @@ async function maybePlanAiWorkingMemoryAction(
   },
 ): Promise<WorkspaceChatResult | null> {
   const question = args.question.trim();
-  const completionText = extractAiMemoryCompletionText(question);
-  const storeOutline = completionText ? null : extractAiMemoryStoreOutline(question);
-  const storeText = completionText
+  const restoreText = extractAiMemoryRestoreText(question);
+  const completionText = restoreText ? null : extractAiMemoryCompletionText(question);
+  const storeOutline = completionText || restoreText ? null : extractAiMemoryStoreOutline(question);
+  const storeText = completionText || restoreText
     ? null
     : storeOutline
       ? null
       : (extractAiMemoryStoreText(question) ?? extractAiMemoryImplicitStoreText(question));
-  if (!completionText && !storeText && !storeOutline) {
+  if (!restoreText && !completionText && !storeText && !storeOutline) {
     return null;
   }
 
@@ -456,10 +460,118 @@ async function maybePlanAiWorkingMemoryAction(
         }`
       : null,
     storeText ? `Store text: ${storeText}` : null,
+    restoreText ? `Restore text: ${restoreText}` : null,
     completionText ? `Completion text: ${completionText}` : null,
   ]
     .filter((value): value is string => value !== null)
     .join("\n");
+
+  if (restoreText) {
+    const previousItems = memoryContext.previousItems;
+    const restoreMatch = matchAiMemoryItems(
+      restoreText,
+      previousItems.map((item) => ({
+        nodeId: item.nodeId,
+        text: [item.text || item.rawText, item.parentText ?? "", item.path]
+          .filter((value) => value.trim().length > 0)
+          .join(" "),
+      })),
+      { minimumScore: 45 },
+    );
+
+    if (restoreMatch.kind === "none") {
+      return await storeWorkspaceMemoryNoopResponse(ctx, {
+        threadId: args.threadId,
+        answer: `I couldn't find a completed ${AI_WORKING_MEMORY_PAGE_TITLE} item matching "${restoreText}".`,
+        model,
+        request: requestPreview,
+      });
+    }
+
+    if (restoreMatch.items.length > 4) {
+      const options = restoreMatch.items
+        .slice(0, 4)
+        .map((item) => {
+          const previousItem = previousItems.find((entry) => entry.nodeId === item.nodeId);
+          return `"${previousItem?.path || previousItem?.text || item.text}"`;
+        })
+        .join(", ");
+      return await storeWorkspaceMemoryNoopResponse(ctx, {
+        threadId: args.threadId,
+        answer: `I found several completed memory items that could match "${restoreText}": ${options}. Tell me which one(s) to move back to Live.`,
+        model,
+        request: requestPreview,
+      });
+    }
+
+    let nextText = memoryContext.text;
+    const restoredItems: typeof previousItems = [];
+    for (const matched of restoreMatch.items) {
+      const originalItem = previousItems.find((item) => item.nodeId === matched.nodeId) ?? null;
+      const currentContext = buildAiWorkingMemoryTextContext(nextText);
+      const currentItem =
+        currentContext.previousItems.find((item) => item.nodeId === matched.nodeId) ??
+        (originalItem
+          ? currentContext.previousItems.find(
+              (item) =>
+                item.text === originalItem.text &&
+                item.parentText === originalItem.parentText,
+            ) ?? null
+          : null);
+      if (!currentItem) {
+        continue;
+      }
+
+      const restored = restoreAiMemoryItemInText(nextText, currentItem.nodeId);
+      if (!restored) {
+        continue;
+      }
+
+      nextText = restored.text;
+      restoredItems.push(restored.restoredItem);
+    }
+
+    if (restoredItems.length === 0) {
+      return await storeWorkspaceMemoryNoopResponse(ctx, {
+        threadId: args.threadId,
+        answer: `I couldn't prepare that ${AI_WORKING_MEMORY_PAGE_TITLE} restore right now.`,
+        model,
+        request: requestPreview,
+      });
+    }
+
+    const updateOperation = {
+      ...buildEmptyChatOperation("set_ai_working_memory"),
+      description: `Move completed memory back to Live`,
+      text: nextText,
+    } satisfies ChatPlan["operations"][number];
+    const plan: ChatPlan = {
+      summary: "Restore memory item",
+      rationale: `I can move the matching completed memory item${restoredItems.length === 1 ? "" : "s"} back to Live in the plain text ${AI_WORKING_MEMORY_PAGE_TITLE}.`,
+      preview: restoredItems.map((item) =>
+        `Move "${item.text}" back to Live${item.parentText ? ` under "${item.parentText}"` : ""}`,
+      ),
+      operations: [updateOperation],
+    };
+    const messageId: Id<"chatMessages"> = await ctx.runMutation(storeAssistantPlanRef, {
+      threadId: args.threadId,
+      text: plan.rationale,
+      preview: plan.preview,
+      proposedPlan: plan,
+      metadata: {
+        kind: "workspace_memory_plan",
+        model,
+        request: requestPreview,
+      },
+    });
+
+    return {
+      kind: "plan",
+      threadId: args.threadId,
+      messageId,
+      plan,
+    };
+  }
 
   if (storeOutline) {
     const nextText = appendAiMemoryStoreOutlineToMemory(memoryContext.text, storeOutline);

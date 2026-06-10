@@ -77,10 +77,13 @@ import {
   extractAiMemoryCompletionText,
   extractAiMemoryImplicitStoreText,
   extractAiMemoryInlineChecklistOutline,
+  extractAiMemoryRestoreText,
   extractAiMemoryStoreOutline,
   extractAiMemoryStoreText,
   matchAiMemoryCompletion,
+  matchAiMemoryItems,
   removeAiMemoryInlineChecklistItem,
+  restoreAiMemoryItemInText,
 } from "../lib/domain/aiMemory";
 import { parseImportedTextToOutlineNodes } from "../lib/domain/importer";
 import { getEffectiveTaskDueDateRange } from "../lib/domain/planner";
@@ -310,6 +313,11 @@ test("AI memory helpers extract store and completion text", () => {
     ),
     "the beach with ava",
   );
+  assert.equal(extractAiMemoryCompletionText("no i haven't bought her a bike yet"), null);
+  assert.equal(
+    extractAiMemoryRestoreText("i haven't bought ava a bike or bought her biikinis yet, see the previous items for context!!"),
+    "bought ava a bike or bought her biikinis",
+  );
   assert.equal(extractAiMemoryCompletionText("what movies should i watch?"), null);
 });
 
@@ -383,6 +391,64 @@ test("plain text AI memory stores and completes grouped checklist items", () => 
     buildAiWorkingMemoryTextContext(completed.text).previousText,
     /go to the beach \(things i want to do with Ava\)/,
   );
+});
+
+test("plain text AI memory restores previous grouped items back to live", () => {
+  let memoryText = `# Live
+
+- things i want to do with Ava
+  - [ ] book boat day in waiks / sand bar
+  - [ ] get massages
+
+# Previous
+
+- [x] buy her bike (things i want to do with Ava)
+- [x] buy her bikinis (things i want to do with Ava)
+`;
+  const context = buildAiWorkingMemoryTextContext(memoryText);
+  const restoreText =
+    extractAiMemoryRestoreText(
+      "i haven't bought ava a bike or bought her biikinis yet, see the previous items for context!!",
+    ) ?? "";
+  const matches = matchAiMemoryItems(
+    restoreText,
+    context.previousItems.map((item) => ({
+      nodeId: item.nodeId,
+      text: [item.text, item.parentText ?? "", item.path]
+        .filter((value) => value.length > 0)
+        .join(" "),
+    })),
+    { minimumScore: 45 },
+  );
+
+  assert.equal(matches.kind, "matches");
+  assert.deepEqual(
+    matches.kind === "matches"
+      ? matches.items.map((match) => {
+          const item = context.previousItems.find((entry) => entry.nodeId === match.nodeId);
+          return item?.text;
+        })
+      : [],
+    ["buy her bike", "buy her bikinis"],
+  );
+
+  for (const match of matches.kind === "matches" ? matches.items : []) {
+    const original = context.previousItems.find((item) => item.nodeId === match.nodeId);
+    const currentContext = buildAiWorkingMemoryTextContext(memoryText);
+    const currentItem = currentContext.previousItems.find(
+      (item) => item.text === original?.text && item.parentText === original?.parentText,
+    );
+    assert.ok(currentItem);
+    const restored = restoreAiMemoryItemInText(memoryText, currentItem.nodeId);
+    assert.ok(restored);
+    memoryText = restored.text;
+  }
+
+  const restoredContext = buildAiWorkingMemoryTextContext(memoryText);
+  assert.match(restoredContext.liveText, /\[ \] buy her bike/);
+  assert.match(restoredContext.liveText, /\[ \] buy her bikinis/);
+  assert.doesNotMatch(restoredContext.previousText, /buy her bike/);
+  assert.doesNotMatch(restoredContext.previousText, /buy her bikinis/);
 });
 
 test("AI memory completion matching finds one active item or ambiguity", () => {
