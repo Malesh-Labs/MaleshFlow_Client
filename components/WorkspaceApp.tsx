@@ -173,6 +173,7 @@ const OUTLINE_CLIPBOARD_MIME_TYPE = "application/x-maleshflow-outline";
 const OUTLINE_CUT_CLIPBOARD_MIME_TYPE = "application/x-maleshflow-outline-cut";
 const WORKSPACE_AI_CHAT_TEXTAREA_ID = "workspace-ai-chat-textarea";
 const WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY = "maleshflow-workspace-ai-chat-open";
+const WORKSPACE_AI_CHAT_PINNED_STORAGE_KEY = "maleshflow-workspace-ai-chat-pinned";
 const WORKSPACE_INBOX_TEXTAREA_ID = "workspace-inbox-textarea";
 const WORKSPACE_RANDOM_BOX_TEXTAREA_ID = "workspace-random-box-textarea";
 const MIN_WORKSPACE_TEXT_BOX_COUNT = 2;
@@ -3418,6 +3419,9 @@ function ConfiguredWorkspace({
   const [isPlannerResolvingNextTask, setIsPlannerResolvingNextTask] = useState(false);
   const [isWorkspaceChatOpen, setIsWorkspaceChatOpen] = useState(() =>
     readStoredBoolean(WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY, false),
+  );
+  const [isWorkspaceChatPinned, setIsWorkspaceChatPinned] = useState(() =>
+    readStoredBoolean(WORKSPACE_AI_CHAT_PINNED_STORAGE_KEY, false),
   );
   const [isInboxOpen, setIsInboxOpen] = useState(false);
   const [savedInboxDrafts, setSavedInboxDrafts] = useState<string[]>(["", ""]);
@@ -9172,7 +9176,7 @@ function ConfiguredWorkspace({
     }, 0);
 
     return () => window.clearTimeout(timeout);
-  }, [isWorkspaceChatOpen]);
+  }, [isWorkspaceChatOpen, isWorkspaceChatPinned]);
 
   useEffect(() => {
     if (!isInboxOpen) {
@@ -9230,6 +9234,17 @@ function ConfiguredWorkspace({
       isWorkspaceChatOpen ? "true" : "false",
     );
   }, [isWorkspaceChatOpen]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.sessionStorage.setItem(
+      WORKSPACE_AI_CHAT_PINNED_STORAGE_KEY,
+      isWorkspaceChatPinned ? "true" : "false",
+    );
+  }, [isWorkspaceChatPinned]);
 
   useEffect(() => {
     if (
@@ -11033,7 +11048,7 @@ function ConfiguredWorkspace({
           </div>
         ) : null}
       </div>
-      {isWorkspaceChatOpen ? (
+      {isWorkspaceChatOpen && !isWorkspaceChatPinned ? (
         <div className="mx-auto flex h-dvh max-h-dvh w-full max-w-6xl flex-col px-4 pb-[calc(env(safe-area-inset-bottom,0px)+7rem)] pt-24 sm:px-8 sm:pb-[calc(env(safe-area-inset-bottom,0px)+2rem)] sm:pt-28">
           <div className="min-h-0 flex-1 overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]">
             <WorkspaceAiChatPanel
@@ -11049,6 +11064,8 @@ function ConfiguredWorkspace({
               applyingPlanMessageIds={applyingWorkspaceChatPlanMessageIds}
               onApplyPlan={handleApplyWorkspaceChatPlan}
               onDismiss={() => setIsWorkspaceChatOpen(false)}
+              isPinned={isWorkspaceChatPinned}
+              onPinnedChange={setIsWorkspaceChatPinned}
               isMobileLayout={isMobileLayout}
             />
           </div>
@@ -11056,8 +11073,11 @@ function ConfiguredWorkspace({
       ) : null}
         <div
           className={clsx(
-            "mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 pb-36 transition-[grid-template-columns] duration-300 ease-out motion-reduce:transition-none md:pb-44",
-            isWorkspaceChatOpen ? "hidden" : "",
+            "mx-auto grid min-h-screen max-w-[1600px] grid-cols-1 transition-[grid-template-columns] duration-300 ease-out motion-reduce:transition-none",
+            isWorkspaceChatOpen && !isWorkspaceChatPinned ? "hidden" : "",
+            isWorkspaceChatOpen && isWorkspaceChatPinned
+              ? "pb-[calc(env(safe-area-inset-bottom,0px)+24rem)] md:pb-[calc(env(safe-area-inset-bottom,0px)+26rem)]"
+              : "pb-36 md:pb-44",
           )}
         style={
           isMobileLayout
@@ -13639,6 +13659,29 @@ function ConfiguredWorkspace({
           </div>
         </div>
       ) : null}
+      {isWorkspaceChatOpen && isWorkspaceChatPinned ? (
+        <div className="fixed inset-x-0 bottom-0 z-50 mx-auto flex h-[min(54dvh,28rem)] w-full max-w-6xl flex-col px-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] sm:h-[min(46dvh,26rem)] sm:px-6">
+          <div className="min-h-0 flex-1 overflow-hidden border border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface-muted)_96%,transparent)] shadow-[0_-24px_70px_-42px_rgba(0,0,0,0.65)] backdrop-blur-sm">
+            <WorkspaceAiChatPanel
+              ownerKey={ownerKey}
+              availableTags={sortedTags}
+              draft={workspaceChatDraft}
+              onDraftChange={setWorkspaceChatDraft}
+              onSubmit={() => void handleWorkspaceChatSubmit()}
+              messages={workspaceChatMessages}
+              isLoading={isWorkspaceChatLoading}
+              error={workspaceChatError}
+              onClearError={() => setWorkspaceChatError("")}
+              applyingPlanMessageIds={applyingWorkspaceChatPlanMessageIds}
+              onApplyPlan={handleApplyWorkspaceChatPlan}
+              onDismiss={() => setIsWorkspaceChatOpen(false)}
+              isPinned={isWorkspaceChatPinned}
+              onPinnedChange={setIsWorkspaceChatPinned}
+              isMobileLayout={isMobileLayout}
+            />
+          </div>
+        </div>
+      ) : null}
       {isInboxOpen ? (
         <div
           className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4"
@@ -15620,6 +15663,8 @@ function WorkspaceAiChatPanel({
   applyingPlanMessageIds,
   onApplyPlan,
   onDismiss,
+  isPinned,
+  onPinnedChange,
   isMobileLayout,
 }: {
   ownerKey: string;
@@ -15634,6 +15679,8 @@ function WorkspaceAiChatPanel({
   applyingPlanMessageIds: Set<string>;
   onApplyPlan: (messageId: Id<"chatMessages">) => void;
   onDismiss: () => void;
+  isPinned: boolean;
+  onPinnedChange: (nextValue: boolean) => void;
   isMobileLayout: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -15692,6 +15739,7 @@ function WorkspaceAiChatPanel({
     ? (isMobileLayout ? "Hide SRC" : "Hide Request Structure")
     : (isMobileLayout ? "SRC" : "Show Request Structure");
   const dismissButtonLabel = isMobileLayout ? "DSM" : "Dismiss";
+  const pinButtonLabel = isPinned ? "Unpin" : "Pin";
   const requestStructurePreview = useMemo(
     () =>
       [
@@ -15818,6 +15866,21 @@ function WorkspaceAiChatPanel({
           </p>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => onPinnedChange(!isPinned)}
+            title={isPinned ? "Unpin AI chat from the bottom" : "Pin AI chat to the bottom"}
+            aria-label={isPinned ? "Unpin AI chat from the bottom" : "Pin AI chat to the bottom"}
+            aria-pressed={isPinned}
+            className={clsx(
+              "border px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] transition",
+              isPinned
+                ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
+                : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+            )}
+          >
+            {pinButtonLabel}
+          </button>
           <button
             type="button"
             onClick={() => {
