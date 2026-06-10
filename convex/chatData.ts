@@ -16,6 +16,7 @@ import {
   type PlannerChatOperation,
 } from "../lib/domain/planner";
 import { completePlannerLinkedTask } from "./lib/planner";
+import { normalizeAiWorkingMemoryText } from "../lib/domain/aiMemory";
 
 const WORKSPACE_KNOWLEDGE_SCOPE = "workspaceKnowledge";
 
@@ -327,6 +328,57 @@ export const replaceSectionLines = internalMutation({
 
 type CreatedChatNodeIdsByClientId = Map<string, Id<"nodes">>;
 
+function getChatDataPageSourceMeta(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
+  return page && typeof page.sourceMeta === "object" && page.sourceMeta
+    ? (page.sourceMeta as Record<string, unknown>)
+    : {};
+}
+
+function isChatDataSidebarSpecialPage(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
+  return getChatDataPageSourceMeta(page).specialPage === "sidebar";
+}
+
+async function setAiWorkingMemoryText(ctx: MutationCtx, text: string) {
+  const normalizedText = normalizeAiWorkingMemoryText(text);
+  const pages = await ctx.db
+    .query("pages")
+    .withIndex("by_archived_position", (query) => query.eq("archived", false))
+    .take(500);
+  const sidebarPage = pages.find((page) => isChatDataSidebarSpecialPage(page)) ?? null;
+  const now = Date.now();
+
+  if (!sidebarPage) {
+    await ctx.db.insert("pages", {
+      title: "Sidebar",
+      slug: await buildUniquePageSlug(ctx.db, "Sidebar"),
+      icon: null,
+      archived: false,
+      position: -1024,
+      sourceMeta: {
+        sourceType: "system",
+        specialPage: "sidebar",
+        hidden: true,
+        pageType: "note",
+        sidebarSection: "Notes",
+        workspaceAiMemoryText: normalizedText,
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+    return;
+  }
+
+  await ctx.db.patch(sidebarPage._id, {
+    sourceMeta: {
+      ...getChatDataPageSourceMeta(sidebarPage),
+      workspaceAiMemoryText: normalizedText,
+      pageType: "note",
+      sidebarSection: "Notes",
+    },
+    updatedAt: now,
+  });
+}
+
 function getCreatedChatNodeId(
   createdNodeIdsByClientId: CreatedChatNodeIdsByClientId,
   clientId: string | null | undefined,
@@ -635,6 +687,14 @@ async function applyOperation(
       await deleteNodeTree(ctx.db, source._id);
       return;
     }
+    case "set_ai_working_memory": {
+      if (operation.text === null) {
+        throw new Error("The proposed memory update is missing text.");
+      }
+
+      await setAiWorkingMemoryText(ctx, operation.text);
+      return;
+    }
   }
 }
 
@@ -745,6 +805,12 @@ async function validateOperation(
         ) {
           throw new Error("The requested insertion position is no longer available.");
         }
+      }
+      return;
+    }
+    case "set_ai_working_memory": {
+      if (operation.text === null) {
+        throw new Error("The proposed memory update is missing text.");
       }
       return;
     }

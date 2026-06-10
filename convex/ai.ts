@@ -24,13 +24,15 @@ import { isSeparatorLineText } from "../lib/domain/displaySyntax";
 import { type ChatPlan } from "../lib/domain/chat";
 import {
   AI_WORKING_MEMORY_PAGE_TITLE,
+  appendAiMemoryStoreOutlineToMemory,
+  appendAiMemoryStoreTextToMemory,
+  buildAiWorkingMemoryTextContext,
+  completeAiMemoryItemInText,
   extractAiMemoryCompletionText,
   extractAiMemoryImplicitStoreText,
-  extractAiMemoryInlineChecklistOutline,
   extractAiMemoryStoreOutline,
   extractAiMemoryStoreText,
   matchAiMemoryCompletion,
-  removeAiMemoryInlineChecklistItem,
 } from "../lib/domain/aiMemory";
 
 const taskMetadataSchema = z.object({
@@ -71,8 +73,6 @@ const clearNodeEmbeddingRef = internal.aiData.clearNodeEmbedding as any;
 const applyTaskMetadataRef = internal.aiData.applyTaskMetadata as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const getLinkedKnowledgeContextRef = internal.workspace.getLinkedKnowledgeContext as any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const ensureAiWorkingMemoryScratchpadRef = internal.workspace.ensureAiWorkingMemoryScratchpad as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const getAiWorkingMemoryContextRef = internal.workspace.getAiWorkingMemoryContext as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -322,27 +322,24 @@ type WorkspaceKnowledgeArgs = {
 };
 
 type AiWorkingMemoryContext = {
-  pageId: Id<"pages">;
-  pageTitle: string;
-  liveSectionId: Id<"nodes"> | null;
-  previousSectionId: Id<"nodes"> | null;
+  text: string;
+  liveText: string;
+  previousText: string;
   liveItems: Array<{
-    nodeId: Id<"nodes">;
+    nodeId: string;
     text: string;
     rawText: string;
     parentText: string | null;
     path: string;
     noteCompleted: boolean;
-    kind: Doc<"nodes">["kind"];
   }>;
   previousItems: Array<{
-    nodeId: Id<"nodes">;
+    nodeId: string;
     text: string;
     rawText: string;
     parentText: string | null;
     path: string;
     noteCompleted: boolean;
-    kind: Doc<"nodes">["kind"];
   }>;
 } | null;
 
@@ -448,8 +445,11 @@ async function maybePlanAiWorkingMemoryAction(
   }
 
   const model = process.env.OPENAI_CHAT_MODEL ?? "gpt-5-mini";
+  const memoryContext = ((await ctx.runQuery(getAiWorkingMemoryContextRef, {
+    limit: 80,
+  })) ?? buildAiWorkingMemoryTextContext("")) as NonNullable<AiWorkingMemoryContext>;
   const requestPreview = [
-    `AI Working Memory action for: ${question}`,
+    `Plain text AI Working Memory action for: ${question}`,
     storeOutline
       ? `Store outline: ${storeOutline.items.length} item(s)${
           storeOutline.parentText ? ` under ${storeOutline.parentText}` : ""
@@ -460,68 +460,35 @@ async function maybePlanAiWorkingMemoryAction(
   ]
     .filter((value): value is string => value !== null)
     .join("\n");
-  const sections = (await ctx.runMutation(ensureAiWorkingMemoryScratchpadRef, {})) as {
-    pageId: Id<"pages">;
-    liveSectionId: Id<"nodes">;
-    previousSectionId: Id<"nodes">;
-  };
 
   if (storeOutline) {
-    const operationLimit = 12;
-    const hasParent = Boolean(storeOutline.parentText);
-    const items = storeOutline.items.slice(0, hasParent ? operationLimit - 1 : operationLimit);
-    const parentClientId = hasParent ? "memory_outline_parent" : null;
-    const operations: ChatPlan["operations"] = [];
-    const preview: string[] = [];
-    let afterClientId: string | null = null;
-
-    if (storeOutline.parentText && parentClientId) {
-      operations.push({
-        ...buildEmptyChatOperation("create_node"),
-        clientId: parentClientId,
-        description: `Remember "${storeOutline.parentText}" in ${AI_WORKING_MEMORY_PAGE_TITLE}`,
-        pageId: sections.pageId,
-        parentNodeId: sections.liveSectionId,
-        text: storeOutline.parentText,
-        kind: "note" as const,
-        noteCompleted: false,
-      });
-      preview.push(`Remember "${storeOutline.parentText}" in ${AI_WORKING_MEMORY_PAGE_TITLE}`);
+    const nextText = appendAiMemoryStoreOutlineToMemory(memoryContext.text, storeOutline);
+    const preview = [
+      ...(storeOutline.parentText
+        ? [`Remember grouped items under "${storeOutline.parentText}"`]
+        : []),
+      ...storeOutline.items
+        .slice(0, 10)
+        .map((item) =>
+          item.noteCompleted
+            ? `Move completed memory "${item.text}" to Previous`
+            : `Remember "${item.text}" in Live`,
+        ),
+    ];
+    if (storeOutline.items.length > 10) {
+      preview.push(`Plus ${storeOutline.items.length - 10} more item(s)`);
     }
-
-    items.forEach((item, index) => {
-      const clientId = `memory_outline_item_${index + 1}`;
-      operations.push({
-        ...buildEmptyChatOperation("create_node"),
-        clientId,
-        description: hasParent
-          ? `Remember "${item.text}" under "${storeOutline.parentText}"`
-          : `Remember "${item.text}" in ${AI_WORKING_MEMORY_PAGE_TITLE}`,
-        pageId: sections.pageId,
-        parentNodeId: hasParent ? null : sections.liveSectionId,
-        parentClientId,
-        afterClientId,
-        text: item.text,
-        kind: "note" as const,
-        noteCompleted: item.noteCompleted,
-      });
-      afterClientId = clientId;
-    });
-
-    preview.push(
-      ...items.slice(0, 8).map((item) => `Remember "${item.text}"`),
-    );
-    if (storeOutline.items.length > items.length) {
-      preview.push(`Skipped ${storeOutline.items.length - items.length} extra item(s) for this approval.`);
-    }
+    const updateOperation = {
+      ...buildEmptyChatOperation("set_ai_working_memory"),
+      description: `Update ${AI_WORKING_MEMORY_PAGE_TITLE}`,
+      text: nextText,
+    } satisfies ChatPlan["operations"][number];
 
     const plan: ChatPlan = {
-      summary: hasParent ? "Remember grouped items" : "Remember items",
-      rationale: hasParent
-        ? `I can save these as child items under "${storeOutline.parentText}" in ${AI_WORKING_MEMORY_PAGE_TITLE} > Live.`
-        : `I can save these as separate items in ${AI_WORKING_MEMORY_PAGE_TITLE} > Live.`,
+      summary: storeOutline.parentText ? "Remember grouped items" : "Remember items",
+      rationale: `I can update the plain text ${AI_WORKING_MEMORY_PAGE_TITLE}.`,
       preview,
-      operations,
+      operations: [updateOperation],
     };
     const messageId: Id<"chatMessages"> = await ctx.runMutation(storeAssistantPlanRef, {
       threadId: args.threadId,
@@ -544,20 +511,17 @@ async function maybePlanAiWorkingMemoryAction(
   }
 
   if (storeText) {
-    const createOperation = {
-      ...buildEmptyChatOperation("create_node"),
+    const nextText = appendAiMemoryStoreTextToMemory(memoryContext.text, storeText);
+    const updateOperation = {
+      ...buildEmptyChatOperation("set_ai_working_memory"),
       description: `Remember "${storeText}" in ${AI_WORKING_MEMORY_PAGE_TITLE}`,
-      pageId: sections.pageId,
-      parentNodeId: sections.liveSectionId,
-      text: storeText,
-      kind: "note" as const,
-      noteCompleted: false,
+      text: nextText,
     } satisfies ChatPlan["operations"][number];
     const plan: ChatPlan = {
       summary: "Remember item",
-      rationale: `I can save this under ${AI_WORKING_MEMORY_PAGE_TITLE} > Live.`,
+      rationale: `I can save this in the plain text ${AI_WORKING_MEMORY_PAGE_TITLE}.`,
       preview: [`Remember "${storeText}" in ${AI_WORKING_MEMORY_PAGE_TITLE}`],
-      operations: [createOperation],
+      operations: [updateOperation],
     };
     const messageId: Id<"chatMessages"> = await ctx.runMutation(storeAssistantPlanRef, {
       threadId: args.threadId,
@@ -579,106 +543,7 @@ async function maybePlanAiWorkingMemoryAction(
     };
   }
 
-  const memoryContext = (await ctx.runQuery(getAiWorkingMemoryContextRef, {
-    limit: 80,
-  })) as AiWorkingMemoryContext;
   const liveItems = (memoryContext?.liveItems ?? []).filter((item) => !item.noteCompleted);
-  const inlineChecklistCandidates = liveItems.flatMap((item) => {
-    const outline = extractAiMemoryInlineChecklistOutline(item.rawText);
-    if (!outline || outline.items.length < 2) {
-      return [];
-    }
-
-    return outline.items
-      .filter((outlineItem) => !outlineItem.noteCompleted)
-      .map((outlineItem, index) => ({
-        key: `${item.nodeId}:${index}`,
-        sourceItem: item,
-        outline,
-        outlineItem,
-        matchText: [
-          outlineItem.text,
-          outline.parentText ?? "",
-          item.parentText ?? "",
-          item.path,
-        ]
-          .filter((value) => value.trim().length > 0)
-          .join(" "),
-      }));
-  });
-  const inlineChecklistMatch = matchAiMemoryCompletion(
-    completionText ?? "",
-    inlineChecklistCandidates.map((candidate) => ({
-      nodeId: candidate.key,
-      text: candidate.matchText,
-    })),
-  );
-
-  if (inlineChecklistMatch.kind === "single") {
-    const matchedInlineItem =
-      inlineChecklistCandidates.find(
-        (candidate) => candidate.key === inlineChecklistMatch.item.nodeId,
-      ) ?? null;
-    if (matchedInlineItem && memoryContext?.previousSectionId) {
-      const nextSourceText = removeAiMemoryInlineChecklistItem(
-        matchedInlineItem.sourceItem.rawText,
-        matchedInlineItem.outlineItem,
-      );
-      const updateOperation = {
-        ...buildEmptyChatOperation("update_node"),
-        description: `Remove "${matchedInlineItem.outlineItem.text}" from active memory`,
-        nodeId: matchedInlineItem.sourceItem.nodeId,
-        text: nextSourceText,
-      } satisfies ChatPlan["operations"][number];
-      const createOperation = {
-        ...buildEmptyChatOperation("create_node"),
-        description: `Move "${matchedInlineItem.outlineItem.text}" to Previous`,
-        pageId: sections.pageId,
-        parentNodeId: memoryContext.previousSectionId,
-        text: matchedInlineItem.outlineItem.text,
-        kind: "note" as const,
-        noteCompleted: true,
-      } satisfies ChatPlan["operations"][number];
-      const plan: ChatPlan = {
-        summary: "Complete memory checklist item",
-        rationale: `I can remove that checklist item from the active memory line and move it to ${AI_WORKING_MEMORY_PAGE_TITLE} > Previous.`,
-        preview: [`Move "${matchedInlineItem.outlineItem.text}" to Previous`],
-        operations: [updateOperation, createOperation],
-      };
-      const messageId: Id<"chatMessages"> = await ctx.runMutation(storeAssistantPlanRef, {
-        threadId: args.threadId,
-        text: plan.rationale,
-        preview: plan.preview,
-        proposedPlan: plan,
-        metadata: {
-          kind: "workspace_memory_plan",
-          model,
-          request: requestPreview,
-        },
-      });
-
-      return {
-        kind: "plan",
-        threadId: args.threadId,
-        messageId,
-        plan,
-      };
-    }
-  }
-
-  if (inlineChecklistMatch.kind === "ambiguous") {
-    const options = inlineChecklistMatch.items
-      .slice(0, 4)
-      .map((item) => `"${item.text}"`)
-      .join(", ");
-    return await storeWorkspaceMemoryNoopResponse(ctx, {
-      threadId: args.threadId,
-      answer: `I found multiple active checklist items that could match "${completionText}": ${options}. Tell me which one to complete.`,
-      model,
-      request: requestPreview,
-    });
-  }
-
   const match = matchAiMemoryCompletion(
     completionText ?? "",
     liveItems.map((item) => ({
@@ -712,7 +577,7 @@ async function maybePlanAiWorkingMemoryAction(
   }
 
   const matchedItem = liveItems.find((item) => item.nodeId === match.item.nodeId) ?? null;
-  if (!matchedItem || !memoryContext?.previousSectionId) {
+  if (!matchedItem) {
     return await storeWorkspaceMemoryNoopResponse(ctx, {
       threadId: args.threadId,
       answer: `I couldn't prepare that ${AI_WORKING_MEMORY_PAGE_TITLE} update right now.`,
@@ -722,26 +587,26 @@ async function maybePlanAiWorkingMemoryAction(
   }
 
   const displayText = matchedItem.text || matchedItem.rawText;
+  const completion = completeAiMemoryItemInText(memoryContext.text, matchedItem.nodeId);
+  if (!completion) {
+    return await storeWorkspaceMemoryNoopResponse(ctx, {
+      threadId: args.threadId,
+      answer: `I couldn't prepare that ${AI_WORKING_MEMORY_PAGE_TITLE} update right now.`,
+      model,
+      request: requestPreview,
+    });
+  }
+
   const updateOperation = {
-    ...buildEmptyChatOperation("update_node"),
-    description: `Mark "${displayText}" complete`,
-    nodeId: matchedItem.nodeId,
-    kind: "note" as const,
-    noteCompleted: true,
-  } satisfies ChatPlan["operations"][number];
-  const moveOperation = {
-    ...buildEmptyChatOperation("move_node"),
-    description: `Move "${displayText}" to Previous`,
-    pageId: sections.pageId,
-    nodeId: matchedItem.nodeId,
-    parentNodeId: memoryContext.previousSectionId,
-    afterNodeId: null,
+    ...buildEmptyChatOperation("set_ai_working_memory"),
+    description: `Mark "${displayText}" complete in ${AI_WORKING_MEMORY_PAGE_TITLE}`,
+    text: completion.text,
   } satisfies ChatPlan["operations"][number];
   const plan: ChatPlan = {
     summary: "Complete memory item",
-    rationale: `I can mark this memory item complete and move it to ${AI_WORKING_MEMORY_PAGE_TITLE} > Previous.`,
+    rationale: `I can mark this memory item complete and move it to Previous in the plain text ${AI_WORKING_MEMORY_PAGE_TITLE}.`,
     preview: [`Mark "${displayText}" complete and move it to Previous`],
-    operations: [updateOperation, moveOperation],
+    operations: [updateOperation],
   };
   const messageId: Id<"chatMessages"> = await ctx.runMutation(storeAssistantPlanRef, {
     threadId: args.threadId,
@@ -768,17 +633,24 @@ function buildAiWorkingMemoryPromptContext(memoryContext: AiWorkingMemoryContext
     return `${AI_WORKING_MEMORY_PAGE_TITLE}: empty`;
   }
 
+  const activeMemoryItems = memoryContext.liveItems.filter((item) => !item.noteCompleted);
+  const completedMemoryItems = [
+    ...memoryContext.previousItems,
+    ...memoryContext.liveItems.filter((item) => item.noteCompleted),
+  ];
   const activeLines =
-    memoryContext.liveItems.length > 0
-      ? memoryContext.liveItems.map((item) => `- ${item.path || item.text || item.rawText}`)
+    activeMemoryItems.length > 0
+      ? activeMemoryItems.map((item) => `- ${item.path || item.text || item.rawText}`)
       : ["- none"];
   const previousLines =
-    memoryContext.previousItems.length > 0
-      ? memoryContext.previousItems.map((item) => `- ${item.path || item.text || item.rawText}`)
+    completedMemoryItems.length > 0
+      ? completedMemoryItems.map((item) => `- ${item.path || item.text || item.rawText}`)
       : ["- none"];
 
   return [
-    `${AI_WORKING_MEMORY_PAGE_TITLE}: ${memoryContext.pageTitle}`,
+    `${AI_WORKING_MEMORY_PAGE_TITLE} plain text note:`,
+    memoryContext.text.trim(),
+    "",
     "Active memory items:",
     ...activeLines,
     "",
@@ -788,8 +660,11 @@ function buildAiWorkingMemoryPromptContext(memoryContext: AiWorkingMemoryContext
 }
 
 function buildDeterministicAiMemoryAnswer(memoryContext: AiWorkingMemoryContext) {
-  const activeItems = memoryContext?.liveItems ?? [];
-  const previousItems = memoryContext?.previousItems ?? [];
+  const activeItems = (memoryContext?.liveItems ?? []).filter((item) => !item.noteCompleted);
+  const previousItems = [
+    ...(memoryContext?.previousItems ?? []),
+    ...(memoryContext?.liveItems ?? []).filter((item) => item.noteCompleted),
+  ];
 
   if (activeItems.length === 0 && previousItems.length === 0) {
     return `${AI_WORKING_MEMORY_PAGE_TITLE} is empty right now.`;
@@ -824,7 +699,6 @@ async function answerAiWorkingMemoryQuestionInternal(
     };
   }
 
-  await ctx.runMutation(ensureAiWorkingMemoryScratchpadRef, {});
   const memoryContext = (await ctx.runQuery(getAiWorkingMemoryContextRef, {
     limit: 80,
   })) as AiWorkingMemoryContext;
@@ -837,7 +711,7 @@ async function answerAiWorkingMemoryQuestionInternal(
       : "";
   const memoryPromptContext = buildAiWorkingMemoryPromptContext(memoryContext);
   const systemPrompt =
-    `${buildTodayPromptLine()} You are the AI Working Memory chat. Your only accessible workspace data is the AI Working Memory scratchpad below. Answer using only that memory. Treat Active memory items as current preferences, intentions, or things to remember. Treat Completed/history memory items as done and do not recommend them as active unless the user asks about completed memory. If the memory is insufficient, say so clearly. Keep the answer concise.`;
+    `${buildTodayPromptLine()} You are the AI Working Memory chat. Your only accessible workspace data is the AI Working Memory plain text note below. Answer using only that memory. Treat # Live items as current preferences, intentions, or things to remember. Treat # Previous items as done and do not recommend them as active unless the user asks about completed memory. If the memory is insufficient, say so clearly. Keep the answer concise.`;
   const userPrompt = [
     conversationContext.length > 0 ? "Recent conversation:" : null,
     conversationContext.length > 0 ? conversationContext : null,
@@ -1038,27 +912,38 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
     aiWorkingMemoryContext &&
     (aiWorkingMemoryContext.liveItems.length > 0 ||
       aiWorkingMemoryContext.previousItems.length > 0)
-      ? [
-          `AI Working Memory page: ${aiWorkingMemoryContext.pageTitle}`,
-          aiWorkingMemoryContext.liveItems.length > 0
-            ? [
-                "Active memory items:",
-                ...aiWorkingMemoryContext.liveItems.map(
-                  (item) => `- ${item.path || item.text || item.rawText}`,
-                ),
-              ].join("\n")
-            : "Active memory items: none",
-          aiWorkingMemoryContext.previousItems.length > 0
-            ? [
-                "Completed/history memory items (do not recommend as active unless the user asks about completed memory):",
-                ...aiWorkingMemoryContext.previousItems.map(
-                  (item) => `- ${item.path || item.text || item.rawText}`,
-                ),
-              ].join("\n")
-            : null,
-        ]
-          .filter((value): value is string => value !== null)
-          .join("\n")
+      ? (() => {
+          const activeMemoryItems = aiWorkingMemoryContext.liveItems.filter(
+            (item) => !item.noteCompleted,
+          );
+          const completedMemoryItems = [
+            ...aiWorkingMemoryContext.previousItems,
+            ...aiWorkingMemoryContext.liveItems.filter((item) => item.noteCompleted),
+          ];
+          return [
+            "AI Working Memory plain text note:",
+            aiWorkingMemoryContext.text.trim(),
+            "",
+            activeMemoryItems.length > 0
+              ? [
+                  "Active memory items:",
+                  ...activeMemoryItems.map(
+                    (item) => `- ${item.path || item.text || item.rawText}`,
+                  ),
+                ].join("\n")
+              : "Active memory items: none",
+            completedMemoryItems.length > 0
+              ? [
+                  "Completed/history memory items (do not recommend as active unless the user asks about completed memory):",
+                  ...completedMemoryItems.map(
+                    (item) => `- ${item.path || item.text || item.rawText}`,
+                  ),
+                ].join("\n")
+              : null,
+          ]
+            .filter((value): value is string => value !== null)
+            .join("\n");
+        })()
       : "";
 
   const explicitLinkedContext = [

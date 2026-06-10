@@ -75,7 +75,10 @@ import {
   isSeparatorLineText,
   stripNodeDisplaySyntaxMarkers,
 } from "../lib/domain/displaySyntax";
-import { AI_WORKING_MEMORY_PAGE_TITLE } from "../lib/domain/aiMemory";
+import {
+  buildAiWorkingMemoryTextContext,
+  normalizeAiWorkingMemoryText,
+} from "../lib/domain/aiMemory";
 
 function getTimestamp() {
   return Date.now();
@@ -355,6 +358,7 @@ function isHiddenByLinkAutocompleteAncestor(
 }
 
 const MIN_WORKSPACE_TEXT_BOX_COUNT = 2;
+const MAX_WORKSPACE_AI_MEMORY_TEXT_LENGTH = 200_000;
 
 function normalizeWorkspaceTextBoxes(
   sourceMeta: Record<string, unknown>,
@@ -370,6 +374,10 @@ function normalizeWorkspaceTextBoxes(
     nextTexts.push("");
   }
   return nextTexts;
+}
+
+function normalizeWorkspaceAiMemoryText(value: string | null | undefined) {
+  return normalizeAiWorkingMemoryText(value).slice(0, MAX_WORKSPACE_AI_MEMORY_TEXT_LENGTH);
 }
 
 function isTaskPageDoneArchiveEnabled(
@@ -928,186 +936,30 @@ function buildIncludedPageLinkText(page: Doc<"pages">) {
   return `[[page:${page._id}]]`;
 }
 
-async function findAiWorkingMemoryPage(db: DatabaseReader | DatabaseWriter) {
-  const slug =
-    slugify(AI_WORKING_MEMORY_PAGE_TITLE, { lower: true, strict: true }) ||
-    "ai-working-memory";
-  const slugPage = await getPageBySlug(db, slug);
-  if (
-    slugPage &&
-    !slugPage.archived &&
-    !isPagePendingDeletion(slugPage) &&
-    normalizeSystemPageTitle(slugPage.title) === normalizeSystemPageTitle(AI_WORKING_MEMORY_PAGE_TITLE)
-  ) {
-    return slugPage;
-  }
-
-  const activePages = await db
-    .query("pages")
-    .withIndex("by_archived_position", (query) => query.eq("archived", false))
-    .take(500);
-  return (
-    activePages.find(
-      (page) =>
-        !isPagePendingDeletion(page) &&
-        normalizeSystemPageTitle(page.title) === normalizeSystemPageTitle(AI_WORKING_MEMORY_PAGE_TITLE),
-    ) ?? null
-  );
-}
-
-function getAiWorkingMemoryPageSourceMeta(page: Doc<"pages"> | null) {
-  return {
-    ...getPageSourceMeta(page),
-    sourceType: getPageSourceMeta(page).sourceType ?? "system",
-    pageType: "scratchpad",
-    sidebarSection: "Scratchpads",
-    aiWorkingMemory: true,
-  };
-}
-
-export const ensureAiWorkingMemoryScratchpad = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    const now = getTimestamp();
-    let page = await findAiWorkingMemoryPage(ctx.db);
-
-    if (page) {
-      const nextSourceMeta = getAiWorkingMemoryPageSourceMeta(page);
-      const currentSourceMeta = getPageSourceMeta(page);
-      if (
-        currentSourceMeta.pageType !== "scratchpad" ||
-        currentSourceMeta.sidebarSection !== "Scratchpads" ||
-        currentSourceMeta.aiWorkingMemory !== true
-      ) {
-        await ctx.db.patch(page._id, {
-          sourceMeta: nextSourceMeta,
-          updatedAt: now,
-        });
-        page = await ctx.db.get(page._id);
-      }
-    }
-
-    if (!page) {
-      const activePages = await ctx.db
-        .query("pages")
-        .withIndex("by_archived_position", (query) => query.eq("archived", false))
-        .take(500);
-      const lastPage = [...activePages].sort((left, right) => left.position - right.position)[
-        activePages.length - 1
-      ] ?? null;
-      const pageId = await ctx.db.insert("pages", {
-        title: AI_WORKING_MEMORY_PAGE_TITLE,
-        slug: await buildUniquePageSlug(ctx.db, AI_WORKING_MEMORY_PAGE_TITLE),
-        icon: null,
-        archived: false,
-        position: (lastPage?.position ?? 0) + 1024,
-        sourceMeta: getAiWorkingMemoryPageSourceMeta(null),
-        createdAt: now,
-        updatedAt: now,
-      });
-      page = await ctx.db.get(pageId);
-    }
-
-    if (!page) {
-      throw new Error("Could not create AI Working Memory.");
-    }
-
-    const sections = await ensureScratchpadSections(ctx, page);
-    if (!sections.liveSectionId || !sections.previousSectionId) {
-      throw new Error("Could not create AI Working Memory sections.");
-    }
-
-    return {
-      pageId: page._id,
-      liveSectionId: sections.liveSectionId,
-      previousSectionId: sections.previousSectionId,
-    };
-  },
-});
-
 export const getAiWorkingMemoryContext = internalQuery({
   args: {
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const page = await findAiWorkingMemoryPage(ctx.db);
-    if (!page || page.archived || isPagePendingDeletion(page)) {
-      return null;
-    }
-
     const limit = Math.max(1, Math.min(args.limit ?? 40, 80));
-    const nodes = await listPageNodes(ctx.db, page._id);
-    const liveSection =
-      nodes.find((node) => getNodeSourceMeta(node).sectionSlot === "scratchpadLive") ?? null;
-    const previousSection =
-      nodes.find((node) => getNodeSourceMeta(node).sectionSlot === "scratchpadPrevious") ?? null;
-    if (!liveSection || !previousSection) {
-      return {
-        pageId: page._id,
-        pageTitle: page.title,
-        liveSectionId: liveSection?._id ?? null,
-        previousSectionId: previousSection?._id ?? null,
-        liveItems: [],
-        previousItems: [],
-      };
-    }
-
-    const sortedNodes = [...nodes].sort((left, right) => left.position - right.position);
-    const childrenByParent = groupNodesByParent(sortedNodes.filter((node) => !node.archived));
-    const nodeById = new Map(sortedNodes.map((node) => [node._id as string, node]));
-    const sectionIds = new Set([liveSection._id as string, previousSection._id as string]);
-    const getMemoryAncestorLabels = (node: Doc<"nodes">, sectionId: Id<"nodes">) => {
-      const labels: string[] = [];
-      let parentNodeId = node.parentNodeId;
-
-      while (parentNodeId && parentNodeId !== sectionId) {
-        const parent = nodeById.get(parentNodeId as string) ?? null;
-        if (!parent || sectionIds.has(parent._id as string)) {
-          break;
-        }
-
-        const label = normalizeWorkspaceActionCandidateText(parent.text) || parent.text.trim();
-        if (label.length > 0) {
-          labels.unshift(label);
-        }
-        parentNodeId = parent.parentNodeId;
-      }
-
-      return labels;
-    };
-    const toMemoryItem = (node: Doc<"nodes">, sectionId: Id<"nodes">) => {
-      const text = normalizeWorkspaceActionCandidateText(node.text) || node.text.trim();
-      const ancestors = getMemoryAncestorLabels(node, sectionId);
-      return {
-        nodeId: node._id,
-        text,
-        rawText: node.text,
-        parentText: ancestors[ancestors.length - 1] ?? null,
-        path: [...ancestors, text].filter((value) => value.length > 0).join(" > "),
-        noteCompleted: getNodeSourceMeta(node).noteCompleted === true,
-        kind: node.kind,
-      };
-    };
-    const collectMemorySectionItems = (sectionId: Id<"nodes">) => {
-      const items: ReturnType<typeof toMemoryItem>[] = [];
-      const queue = [...(childrenByParent.get(sectionId as string) ?? [])];
-
-      while (queue.length > 0 && items.length < limit) {
-        const node = queue.shift()!;
-        items.push(toMemoryItem(node, sectionId));
-        queue.unshift(...(childrenByParent.get(node._id as string) ?? []));
-      }
-
-      return items;
-    };
+    const pages = await ctx.db
+      .query("pages")
+      .withIndex("by_archived_position", (query) => query.eq("archived", false))
+      .take(500);
+    const sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
+    const sourceMeta = getPageSourceMeta(sidebarPage);
+    const context = buildAiWorkingMemoryTextContext(
+      typeof sourceMeta.workspaceAiMemoryText === "string"
+        ? sourceMeta.workspaceAiMemoryText
+        : "",
+    );
 
     return {
-      pageId: page._id,
-      pageTitle: page.title,
-      liveSectionId: liveSection._id,
-      previousSectionId: previousSection._id,
-      liveItems: collectMemorySectionItems(liveSection._id),
-      previousItems: collectMemorySectionItems(previousSection._id),
+      text: context.text,
+      liveText: context.liveText,
+      previousText: context.previousText,
+      liveItems: context.liveItems.slice(0, limit),
+      previousItems: context.previousItems.slice(0, limit),
     };
   },
 });
@@ -2266,7 +2118,10 @@ export const getSidebarTree = query({
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
 
-    const pages = await ctx.db.query("pages").collect();
+    const pages = await ctx.db
+      .query("pages")
+      .withIndex("by_archived_position", (query) => query.eq("archived", false))
+      .take(500);
     const sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
     if (!sidebarPage) {
       return null;
@@ -2320,7 +2175,10 @@ export const getWorkspaceInbox = query({
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
 
-    const pages = await ctx.db.query("pages").collect();
+    const pages = await ctx.db
+      .query("pages")
+      .withIndex("by_archived_position", (query) => query.eq("archived", false))
+      .take(500);
     const sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
     const sourceMeta = getPageSourceMeta(sidebarPage);
     const texts = normalizeWorkspaceTextBoxes(
@@ -2344,7 +2202,10 @@ export const getWorkspaceRandomBox = query({
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
 
-    const pages = await ctx.db.query("pages").collect();
+    const pages = await ctx.db
+      .query("pages")
+      .withIndex("by_archived_position", (query) => query.eq("archived", false))
+      .take(500);
     const sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
     const sourceMeta = getPageSourceMeta(sidebarPage);
     const texts = normalizeWorkspaceTextBoxes(
@@ -2357,6 +2218,91 @@ export const getWorkspaceRandomBox = query({
       text: texts[0] ?? "",
       texts,
       updatedAt: sidebarPage?.updatedAt ?? null,
+    };
+  },
+});
+
+export const getWorkspaceAiMemory = query({
+  args: {
+    ownerKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const pages = await ctx.db
+      .query("pages")
+      .withIndex("by_archived_position", (query) => query.eq("archived", false))
+      .take(500);
+    const sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
+    const sourceMeta = getPageSourceMeta(sidebarPage);
+    const text = normalizeWorkspaceAiMemoryText(
+      typeof sourceMeta.workspaceAiMemoryText === "string"
+        ? sourceMeta.workspaceAiMemoryText
+        : "",
+    );
+
+    return {
+      text,
+      updatedAt: sidebarPage?.updatedAt ?? null,
+    };
+  },
+});
+
+export const setWorkspaceAiMemory = mutation({
+  args: {
+    ownerKey: v.string(),
+    text: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+
+    const text = normalizeWorkspaceAiMemoryText(args.text);
+    const pages = await ctx.db
+      .query("pages")
+      .withIndex("by_archived_position", (query) => query.eq("archived", false))
+      .take(500);
+    const sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
+    const now = getTimestamp();
+
+    if (!sidebarPage) {
+      const slug = await buildUniquePageSlug(ctx.db, "Sidebar");
+      const sidebarPageId = await ctx.db.insert("pages", {
+        title: "Sidebar",
+        slug,
+        icon: null,
+        archived: false,
+        position: -1024,
+        sourceMeta: {
+          sourceType: "system",
+          specialPage: "sidebar",
+          hidden: true,
+          pageType: "note",
+          sidebarSection: "Notes",
+          workspaceAiMemoryText: text,
+        },
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      return {
+        pageId: sidebarPageId,
+        text,
+      };
+    }
+
+    await ctx.db.patch(sidebarPage._id, {
+      sourceMeta: {
+        ...getPageSourceMeta(sidebarPage),
+        workspaceAiMemoryText: text,
+        pageType: "note",
+        sidebarSection: "Notes",
+      },
+      updatedAt: now,
+    });
+
+    return {
+      pageId: sidebarPage._id,
+      text,
     };
   },
 });

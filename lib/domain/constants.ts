@@ -18,6 +18,7 @@ export const CHAT_OPERATION_TYPES = [
   "archive_node",
   "delete_node",
   "merge_node",
+  "set_ai_working_memory",
 ] as const;
 
 export const EMBEDDING_DIMENSIONS = 1536;

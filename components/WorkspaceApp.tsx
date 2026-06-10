@@ -87,6 +87,7 @@ import {
   filterPagesForCommandPalette,
   splitFindQuerySegments,
 } from "@/lib/domain/workspaceUi";
+import { DEFAULT_AI_WORKING_MEMORY_TEXT } from "@/lib/domain/aiMemory";
 import {
   getEffectiveTaskDueDateRange,
 } from "@/lib/domain/planner";
@@ -1851,6 +1852,7 @@ function readWorkspaceActionPlan(
         "archive_node",
         "delete_node",
         "merge_node",
+        "set_ai_working_memory",
       ].includes(operationType)
     ) {
       continue;
@@ -3457,6 +3459,15 @@ function ConfiguredWorkspace({
   const [applyingWorkspaceChatPlanMessageIds, setApplyingWorkspaceChatPlanMessageIds] = useState<
     Set<string>
   >(new Set());
+  const [workspaceAiMemoryDraft, setWorkspaceAiMemoryDraft] = useState(
+    DEFAULT_AI_WORKING_MEMORY_TEXT,
+  );
+  const [savedWorkspaceAiMemoryDraft, setSavedWorkspaceAiMemoryDraft] = useState(
+    DEFAULT_AI_WORKING_MEMORY_TEXT,
+  );
+  const [isWorkspaceAiMemoryDirty, setIsWorkspaceAiMemoryDirty] = useState(false);
+  const [isWorkspaceAiMemorySaving, setIsWorkspaceAiMemorySaving] = useState(false);
+  const [workspaceAiMemorySaveError, setWorkspaceAiMemorySaveError] = useState("");
   const [plannerRandomTaskExcludedSourceIds, setPlannerRandomTaskExcludedSourceIds] = useState<
     string[]
   >([]);
@@ -3529,6 +3540,7 @@ function ConfiguredWorkspace({
   const activeInboxBoxIndexRef = useRef(0);
   const randomBoxDraftsRef = useRef<string[]>(["", ""]);
   const activeRandomBoxIndexRef = useRef(0);
+  const workspaceAiMemoryDraftRef = useRef(DEFAULT_AI_WORKING_MEMORY_TEXT);
   const pendingCutClipboardRef = useRef<{
     nodeIds: Id<"nodes">[];
     payloadNodeIds: string[];
@@ -3569,6 +3581,10 @@ function ConfiguredWorkspace({
   );
   const workspaceKnowledgeThread = useQuery(
     api.chatData.getWorkspaceKnowledgeThread,
+    ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
+  );
+  const workspaceAiMemory = useQuery(
+    api.workspace.getWorkspaceAiMemory,
     ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
   );
   const workspaceInbox = useQuery(
@@ -3714,6 +3730,7 @@ function ConfiguredWorkspace({
   const setWorkspaceInbox = useMutation(api.workspace.setWorkspaceInbox);
   const clearWorkspaceInbox = useMutation(api.workspace.clearWorkspaceInbox);
   const setWorkspaceRandomBox = useMutation(api.workspace.setWorkspaceRandomBox);
+  const setWorkspaceAiMemory = useMutation(api.workspace.setWorkspaceAiMemory);
   const setSidebarFavoriteRaw = useMutation(api.workspace.setSidebarFavorite);
   const setNodeChildrenLinkAutocompleteHiddenRaw = useMutation(
     api.workspace.setNodeChildrenLinkAutocompleteHidden,
@@ -7684,6 +7701,10 @@ function ConfiguredWorkspace({
   }, [randomBoxDrafts]);
 
   useEffect(() => {
+    workspaceAiMemoryDraftRef.current = workspaceAiMemoryDraft;
+  }, [workspaceAiMemoryDraft]);
+
+  useEffect(() => {
     activeRandomBoxIndexRef.current = activeRandomBoxIndex;
   }, [activeRandomBoxIndex]);
 
@@ -7712,6 +7733,14 @@ function ConfiguredWorkspace({
     );
   }, [workspaceRandomBox?.updatedAt, normalizedWorkspaceRandomBoxTexts]);
 
+  const normalizedWorkspaceAiMemoryText = workspaceAiMemory?.text ?? DEFAULT_AI_WORKING_MEMORY_TEXT;
+
+  useEffect(() => {
+    setSavedWorkspaceAiMemoryDraft((current) =>
+      current === normalizedWorkspaceAiMemoryText ? current : normalizedWorkspaceAiMemoryText,
+    );
+  }, [workspaceAiMemory?.updatedAt, normalizedWorkspaceAiMemoryText]);
+
   useEffect(() => {
     const nextDirty = !areWorkspaceTextBoxesEqual(
       inboxDrafts,
@@ -7727,6 +7756,22 @@ function ConfiguredWorkspace({
     );
     setIsRandomBoxDirty((current) => (current === nextDirty ? current : nextDirty));
   }, [randomBoxDrafts, savedRandomBoxDrafts]);
+
+  useEffect(() => {
+    const nextDirty = workspaceAiMemoryDraft !== savedWorkspaceAiMemoryDraft;
+    setIsWorkspaceAiMemoryDirty((current) => (current === nextDirty ? current : nextDirty));
+  }, [savedWorkspaceAiMemoryDraft, workspaceAiMemoryDraft]);
+
+  useEffect(() => {
+    if (isWorkspaceAiMemoryDirty) {
+      return;
+    }
+
+    setWorkspaceAiMemoryDraft((current) =>
+      current === savedWorkspaceAiMemoryDraft ? current : savedWorkspaceAiMemoryDraft,
+    );
+    workspaceAiMemoryDraftRef.current = savedWorkspaceAiMemoryDraft;
+  }, [isWorkspaceAiMemoryDirty, savedWorkspaceAiMemoryDraft]);
 
   useEffect(() => {
     if (!isInboxOpen || !isInboxDirty) {
@@ -7959,6 +8004,40 @@ function ConfiguredWorkspace({
     setRandomBoxSelectedItem(selectedItem);
   }, []);
 
+  const saveWorkspaceAiMemoryDraft = useCallback(
+    async (text: string) => {
+      if (!ownerKey || !isOwnerKeyValid) {
+        return;
+      }
+
+      setIsWorkspaceAiMemorySaving(true);
+      setWorkspaceAiMemorySaveError("");
+      try {
+        const result = await setWorkspaceAiMemory({
+          ownerKey,
+          text,
+        });
+        setSavedWorkspaceAiMemoryDraft(result.text);
+        if (workspaceAiMemoryDraftRef.current === result.text) {
+          setIsWorkspaceAiMemoryDirty(false);
+        }
+      } catch (error) {
+        setWorkspaceAiMemorySaveError(
+          error instanceof Error ? error.message : "Could not save AI memory.",
+        );
+      } finally {
+        setIsWorkspaceAiMemorySaving(false);
+      }
+    },
+    [isOwnerKeyValid, ownerKey, setWorkspaceAiMemory],
+  );
+
+  const updateWorkspaceAiMemoryDraft = useCallback((value: string) => {
+    setWorkspaceAiMemoryDraft(value);
+    workspaceAiMemoryDraftRef.current = value;
+    setWorkspaceAiMemorySaveError("");
+  }, []);
+
   useEffect(() => {
     if (!isInboxOpen || !isInboxDirty || isInboxClearing) {
       return;
@@ -7986,6 +8065,25 @@ function ConfiguredWorkspace({
 
     return () => window.clearTimeout(timeoutId);
   }, [isRandomBoxDirty, isRandomBoxOpen, isRandomBoxSaving, saveRandomBoxDraft]);
+
+  useEffect(() => {
+    if (!isWorkspaceChatOpen || !isWorkspaceAiMemoryDirty) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      if (!isWorkspaceAiMemorySaving) {
+        void saveWorkspaceAiMemoryDraft(workspaceAiMemoryDraftRef.current);
+      }
+    }, 900);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    isWorkspaceAiMemoryDirty,
+    isWorkspaceAiMemorySaving,
+    isWorkspaceChatOpen,
+    saveWorkspaceAiMemoryDraft,
+  ]);
 
   useEffect(() => {
     setRandomBoxSelectedItem("");
@@ -10290,6 +10388,10 @@ function ConfiguredWorkspace({
     setIsWorkspaceChatLoading(true);
     setWorkspaceChatError("");
     try {
+      if (isWorkspaceAiMemoryDirty) {
+        await saveWorkspaceAiMemoryDraft(workspaceAiMemoryDraftRef.current);
+      }
+
       const explicitTargets = resolveExplicitKnowledgeLinkTargets(
         question,
         pagesByTitle,
@@ -10312,7 +10414,15 @@ function ConfiguredWorkspace({
     } finally {
       setIsWorkspaceChatLoading(false);
     }
-  }, [chatWithWorkspace, ownerKey, pagesById, pagesByTitle, workspaceChatDraft]);
+  }, [
+    chatWithWorkspace,
+    isWorkspaceAiMemoryDirty,
+    ownerKey,
+    pagesById,
+    pagesByTitle,
+    saveWorkspaceAiMemoryDraft,
+    workspaceChatDraft,
+  ]);
 
   const handleApplyWorkspaceChatPlan = useCallback(
     async (messageId: Id<"chatMessages">) => {
@@ -11061,9 +11171,20 @@ function ConfiguredWorkspace({
               isLoading={isWorkspaceChatLoading}
               error={workspaceChatError}
               onClearError={() => setWorkspaceChatError("")}
+              memoryDraft={workspaceAiMemoryDraft}
+              onMemoryDraftChange={updateWorkspaceAiMemoryDraft}
+              isMemoryDirty={isWorkspaceAiMemoryDirty}
+              isMemorySaving={isWorkspaceAiMemorySaving}
+              memorySaveError={workspaceAiMemorySaveError}
+              onSaveMemory={() => void saveWorkspaceAiMemoryDraft(workspaceAiMemoryDraftRef.current)}
               applyingPlanMessageIds={applyingWorkspaceChatPlanMessageIds}
               onApplyPlan={handleApplyWorkspaceChatPlan}
-              onDismiss={() => setIsWorkspaceChatOpen(false)}
+              onDismiss={() => {
+                if (isWorkspaceAiMemoryDirty) {
+                  void saveWorkspaceAiMemoryDraft(workspaceAiMemoryDraftRef.current);
+                }
+                setIsWorkspaceChatOpen(false);
+              }}
               isPinned={isWorkspaceChatPinned}
               onPinnedChange={setIsWorkspaceChatPinned}
               isMobileLayout={isMobileLayout}
@@ -13672,9 +13793,20 @@ function ConfiguredWorkspace({
               isLoading={isWorkspaceChatLoading}
               error={workspaceChatError}
               onClearError={() => setWorkspaceChatError("")}
+              memoryDraft={workspaceAiMemoryDraft}
+              onMemoryDraftChange={updateWorkspaceAiMemoryDraft}
+              isMemoryDirty={isWorkspaceAiMemoryDirty}
+              isMemorySaving={isWorkspaceAiMemorySaving}
+              memorySaveError={workspaceAiMemorySaveError}
+              onSaveMemory={() => void saveWorkspaceAiMemoryDraft(workspaceAiMemoryDraftRef.current)}
               applyingPlanMessageIds={applyingWorkspaceChatPlanMessageIds}
               onApplyPlan={handleApplyWorkspaceChatPlan}
-              onDismiss={() => setIsWorkspaceChatOpen(false)}
+              onDismiss={() => {
+                if (isWorkspaceAiMemoryDirty) {
+                  void saveWorkspaceAiMemoryDraft(workspaceAiMemoryDraftRef.current);
+                }
+                setIsWorkspaceChatOpen(false);
+              }}
               isPinned={isWorkspaceChatPinned}
               onPinnedChange={setIsWorkspaceChatPinned}
               isMobileLayout={isMobileLayout}
@@ -15660,6 +15792,12 @@ function WorkspaceAiChatPanel({
   isLoading,
   error,
   onClearError,
+  memoryDraft,
+  onMemoryDraftChange,
+  isMemoryDirty,
+  isMemorySaving,
+  memorySaveError,
+  onSaveMemory,
   applyingPlanMessageIds,
   onApplyPlan,
   onDismiss,
@@ -15676,6 +15814,12 @@ function WorkspaceAiChatPanel({
   isLoading: boolean;
   error: string;
   onClearError: () => void;
+  memoryDraft: string;
+  onMemoryDraftChange: (value: string) => void;
+  isMemoryDirty: boolean;
+  isMemorySaving: boolean;
+  memorySaveError: string;
+  onSaveMemory: () => void;
   applyingPlanMessageIds: Set<string>;
   onApplyPlan: (messageId: Id<"chatMessages">) => void;
   onDismiss: () => void;
@@ -15740,19 +15884,24 @@ function WorkspaceAiChatPanel({
     : (isMobileLayout ? "SRC" : "Show Request Structure");
   const dismissButtonLabel = isMobileLayout ? "DSM" : "Dismiss";
   const pinButtonLabel = isPinned ? "Unpin" : "Pin";
+  const memoryStatusLabel = isMemorySaving
+    ? "Saving..."
+    : isMemoryDirty
+      ? "Unsaved"
+      : "Saved";
   const requestStructurePreview = useMemo(
     () =>
       [
         "System prompt:",
         "Today is ___ ___, ____.",
-        "Answer using only AI Working Memory.",
+        "Answer using only the AI Working Memory plain text note.",
         "",
         "User prompt structure:",
         "Recent conversation",
         "User message: ...",
-        "AI Working Memory:",
-        "  Active memory items",
-        "  Completed/history memory items",
+        "AI Working Memory plain text:",
+        "# Live",
+        "# Previous",
       ].join("\n"),
     [],
   );
@@ -15929,6 +16078,45 @@ function WorkspaceAiChatPanel({
           </pre>
         </div>
       ) : null}
+      <div className="border-t border-[var(--workspace-border-subtle)] px-5 py-4">
+        <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+              Working Memory
+            </p>
+            <p className="mt-1 text-[11px] text-[var(--workspace-text-faint)]">
+              Plain text memory for this chat
+            </p>
+          </div>
+          <div className="flex items-center gap-3 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+            <span>{memoryStatusLabel}</span>
+            <button
+              type="button"
+              onClick={onSaveMemory}
+              disabled={isMemorySaving || !isMemoryDirty}
+              className="border border-[var(--workspace-border)] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+        <textarea
+          value={memoryDraft}
+          onChange={(event) => onMemoryDraftChange(event.target.value)}
+          onBlur={() => {
+            if (isMemoryDirty) {
+              onSaveMemory();
+            }
+          }}
+          spellCheck
+          className="max-h-52 min-h-28 w-full resize-y overflow-auto border border-[var(--workspace-border-subtle)] bg-[color-mix(in_srgb,var(--workspace-surface)_70%,black)] px-3 py-3 font-mono text-xs leading-5 text-[var(--workspace-text)] outline-none transition focus:border-[var(--workspace-accent)]"
+        />
+        {memorySaveError ? (
+          <p className="mt-2 text-xs leading-5 text-[var(--workspace-danger)]">
+            {memorySaveError}
+          </p>
+        ) : null}
+      </div>
       </div>
       {showHistoryPanel ? (
         <div

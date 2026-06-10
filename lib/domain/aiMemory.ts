@@ -3,6 +3,9 @@ import { stripInlineFormattingMarkers } from "./inlineFormatting";
 import { replaceLinkMarkupWithLabels } from "./links";
 
 export const AI_WORKING_MEMORY_PAGE_TITLE = "AI Working Memory";
+export const DEFAULT_AI_WORKING_MEMORY_TEXT = "# Live\n\n# Previous\n";
+
+type AiMemoryTextSectionName = "live" | "previous";
 
 const LEADING_CHAT_FILLER_PATTERN =
   /^(?:hey|hi|yo|ok|okay|so|hmm|uh|um|also|btw|by the way)[,\s]+/i;
@@ -86,6 +89,32 @@ const TOKEN_ALIASES: Record<string, string> = {
 export type AiMemoryItem = {
   nodeId: string;
   text: string;
+};
+
+export type AiMemoryTextItem = AiMemoryItem & {
+  rawText: string;
+  parentText: string | null;
+  path: string;
+  noteCompleted: boolean;
+  section: AiMemoryTextSectionName;
+  source:
+    | {
+        kind: "line";
+        lineIndex: number;
+      }
+    | {
+        kind: "inline";
+        lineIndex: number;
+        itemIndex: number;
+      };
+};
+
+export type AiMemoryTextContext = {
+  text: string;
+  liveText: string;
+  previousText: string;
+  liveItems: AiMemoryTextItem[];
+  previousItems: AiMemoryTextItem[];
 };
 
 export type AiMemoryStoreOutlineItem = {
@@ -173,6 +202,356 @@ function cleanChecklistItemText(value: string) {
     .replace(/^~~([\s\S]+)~~$/, "$1")
     .trim();
   return cleanExtractedText(withoutOuterStrike);
+}
+
+function cleanMemoryLineText(value: string) {
+  return cleanChecklistItemText(
+    value
+      .replace(/^\s*[-*]\s*/, "")
+      .replace(/^\[\s*[xX]?\s*\]\s*/, ""),
+  );
+}
+
+function normalizeAiMemoryLineEndings(value: string) {
+  return value.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
+function isAiMemoryLiveHeading(line: string) {
+  return /^#{1,6}\s*Live\s*$/i.test(line.trim());
+}
+
+function isAiMemoryPreviousHeading(line: string) {
+  return /^#{1,6}\s*Previous\s*$/i.test(line.trim());
+}
+
+function isAiMemorySectionHeading(line: string) {
+  return isAiMemoryLiveHeading(line) || isAiMemoryPreviousHeading(line);
+}
+
+function trimBlankLines(lines: string[]) {
+  const nextLines = [...lines];
+  while (nextLines.length > 0 && nextLines[0]?.trim().length === 0) {
+    nextLines.shift();
+  }
+  while (nextLines.length > 0 && nextLines[nextLines.length - 1]?.trim().length === 0) {
+    nextLines.pop();
+  }
+  return nextLines;
+}
+
+function buildAiMemoryTextFromSections(liveLines: string[], previousLines: string[]) {
+  const normalizedLiveLines = trimBlankLines(liveLines);
+  const normalizedPreviousLines = trimBlankLines(previousLines);
+
+  return [
+    "# Live",
+    ...(normalizedLiveLines.length > 0 ? ["", ...normalizedLiveLines] : []),
+    "",
+    "# Previous",
+    ...(normalizedPreviousLines.length > 0 ? ["", ...normalizedPreviousLines] : []),
+    "",
+  ].join("\n");
+}
+
+export function normalizeAiWorkingMemoryText(value: string | null | undefined) {
+  const normalized = normalizeAiMemoryLineEndings(value ?? "").trim();
+  if (normalized.length === 0) {
+    return DEFAULT_AI_WORKING_MEMORY_TEXT;
+  }
+
+  const lines = normalized.split("\n");
+  const hasLive = lines.some(isAiMemoryLiveHeading);
+  const hasPrevious = lines.some(isAiMemoryPreviousHeading);
+
+  if (hasLive && hasPrevious) {
+    return `${normalized}\n`;
+  }
+
+  if (!hasLive && !hasPrevious) {
+    return buildAiMemoryTextFromSections(lines, []);
+  }
+
+  if (!hasLive) {
+    return buildAiMemoryTextFromSections([], lines);
+  }
+
+  return `${normalized}\n\n# Previous\n`;
+}
+
+function splitAiWorkingMemoryText(value: string | null | undefined) {
+  const normalizedText = normalizeAiWorkingMemoryText(value);
+  const lines = normalizedText.replace(/\n$/g, "").split("\n");
+  const liveHeadingIndex = lines.findIndex(isAiMemoryLiveHeading);
+  const previousHeadingIndex = lines.findIndex(isAiMemoryPreviousHeading);
+
+  function getSectionLines(headingIndex: number) {
+    if (headingIndex < 0) {
+      return [];
+    }
+
+    const nextHeadingIndex = lines.findIndex(
+      (line, index) => index > headingIndex && isAiMemorySectionHeading(line),
+    );
+    const endIndex = nextHeadingIndex >= 0 ? nextHeadingIndex : lines.length;
+    return lines.slice(headingIndex + 1, endIndex);
+  }
+
+  return {
+    text: normalizedText,
+    liveLines: getSectionLines(liveHeadingIndex),
+    previousLines: getSectionLines(previousHeadingIndex),
+  };
+}
+
+function parseBulletMemoryLine(rawLine: string) {
+  const match = rawLine.match(/^(\s*)(?:[-*]\s*)?(?:\[\s*([xX]?)\s*\]\s*)?(.+?)\s*$/);
+  if (!match) {
+    return null;
+  }
+
+  const text = cleanMemoryLineText(match[3] ?? "");
+  if (text.length === 0) {
+    return null;
+  }
+
+  return {
+    indent: (match[1] ?? "").replace(/\t/g, "  ").length,
+    hasCheckbox: /\[\s*[xX]?\s*\]/.test(rawLine),
+    noteCompleted: Boolean(match[2]),
+    text,
+  };
+}
+
+function parseAiMemoryTextSectionItems(
+  lines: string[],
+  section: AiMemoryTextSectionName,
+) {
+  const inlineItems: AiMemoryTextItem[] = [];
+  const lineEntries: Array<{
+    lineIndex: number;
+    rawText: string;
+    indent: number;
+    hasCheckbox: boolean;
+    noteCompleted: boolean;
+    text: string;
+    hasChild: boolean;
+  }> = [];
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    const rawLine = lines[lineIndex] ?? "";
+    if (rawLine.trim().length === 0) {
+      continue;
+    }
+
+    const inlineOutline = extractAiMemoryInlineChecklistOutline(rawLine);
+    if (inlineOutline && inlineOutline.items.length > 1) {
+      inlineItems.push(
+        ...inlineOutline.items.map((item, itemIndex) => {
+          const parentText = inlineOutline.parentText;
+          const path = [parentText ?? "", item.text]
+            .filter((entry) => entry.trim().length > 0)
+            .join(" > ");
+          return {
+            nodeId: `inline:${lineIndex}:${itemIndex}`,
+            text: item.text,
+            rawText: rawLine,
+            parentText,
+            path,
+            noteCompleted: item.noteCompleted,
+            section,
+            source: {
+              kind: "inline" as const,
+              lineIndex,
+              itemIndex,
+            },
+          };
+        }),
+      );
+      continue;
+    }
+
+    const parsedLine = parseBulletMemoryLine(rawLine);
+    if (!parsedLine) {
+      continue;
+    }
+
+    lineEntries.push({
+      lineIndex,
+      rawText: rawLine,
+      ...parsedLine,
+      hasChild: false,
+    });
+  }
+
+  for (let index = 0; index < lineEntries.length; index += 1) {
+    const entry = lineEntries[index]!;
+    for (let nextIndex = index + 1; nextIndex < lineEntries.length; nextIndex += 1) {
+      const candidate = lineEntries[nextIndex]!;
+      if (candidate.indent <= entry.indent) {
+        break;
+      }
+      entry.hasChild = true;
+      break;
+    }
+  }
+
+  const stack: typeof lineEntries = [];
+  const lineItems: AiMemoryTextItem[] = [];
+  for (const entry of lineEntries) {
+    while (stack.length > 0 && stack[stack.length - 1]!.indent >= entry.indent) {
+      stack.pop();
+    }
+
+    if (entry.hasCheckbox || !entry.hasChild) {
+      const ancestorLabels = stack.map((ancestor) => ancestor.text);
+      const parentText = ancestorLabels[ancestorLabels.length - 1] ?? null;
+      lineItems.push({
+        nodeId: `line:${entry.lineIndex}`,
+        text: entry.text,
+        rawText: entry.rawText,
+        parentText,
+        path: [...ancestorLabels, entry.text]
+          .filter((value) => value.trim().length > 0)
+          .join(" > "),
+        noteCompleted: entry.noteCompleted,
+        section,
+        source: {
+          kind: "line",
+          lineIndex: entry.lineIndex,
+        },
+      });
+    }
+
+    stack.push(entry);
+  }
+
+  return [...lineItems, ...inlineItems].sort((left, right) => {
+    if (left.source.lineIndex !== right.source.lineIndex) {
+      return left.source.lineIndex - right.source.lineIndex;
+    }
+    if (left.source.kind === "inline" && right.source.kind === "inline") {
+      return left.source.itemIndex - right.source.itemIndex;
+    }
+    return left.source.kind === "line" ? -1 : 1;
+  });
+}
+
+export function buildAiWorkingMemoryTextContext(
+  value: string | null | undefined,
+): AiMemoryTextContext {
+  const sections = splitAiWorkingMemoryText(value);
+  const liveLines = trimBlankLines(sections.liveLines);
+  const previousLines = trimBlankLines(sections.previousLines);
+  const text = buildAiMemoryTextFromSections(liveLines, previousLines);
+
+  return {
+    text,
+    liveText: liveLines.join("\n"),
+    previousText: previousLines.join("\n"),
+    liveItems: parseAiMemoryTextSectionItems(liveLines, "live"),
+    previousItems: parseAiMemoryTextSectionItems(previousLines, "previous"),
+  };
+}
+
+function appendLinesToSection(lines: string[], appendedLines: string[]) {
+  const baseLines = trimBlankLines(lines);
+  const cleanAppendedLines = trimBlankLines(appendedLines);
+  if (cleanAppendedLines.length === 0) {
+    return baseLines;
+  }
+  return [...baseLines, ...(baseLines.length > 0 ? [""] : []), ...cleanAppendedLines];
+}
+
+export function appendAiMemoryStoreTextToMemory(
+  memoryText: string | null | undefined,
+  text: string,
+) {
+  const sections = splitAiWorkingMemoryText(memoryText);
+  const cleanText = cleanChecklistItemText(text);
+  if (cleanText.length === 0) {
+    return buildAiWorkingMemoryTextContext(sections.text).text;
+  }
+
+  return buildAiMemoryTextFromSections(
+    appendLinesToSection(sections.liveLines, [`- [ ] ${cleanText}`]),
+    sections.previousLines,
+  );
+}
+
+export function appendAiMemoryStoreOutlineToMemory(
+  memoryText: string | null | undefined,
+  outline: AiMemoryStoreOutline,
+) {
+  const sections = splitAiWorkingMemoryText(memoryText);
+  const activeItems = outline.items.filter((item) => !item.noteCompleted);
+  const completedItems = outline.items.filter((item) => item.noteCompleted);
+  const nextLiveLines =
+    activeItems.length === 0
+      ? trimBlankLines(sections.liveLines)
+      : appendLinesToSection(
+          sections.liveLines,
+          outline.parentText
+            ? [
+                `- ${outline.parentText}`,
+                ...activeItems.map((item) => `  - [ ] ${item.text}`),
+              ]
+            : activeItems.map((item) => `- [ ] ${item.text}`),
+        );
+  const nextPreviousLines =
+    completedItems.length === 0
+      ? trimBlankLines(sections.previousLines)
+      : appendLinesToSection(
+          sections.previousLines,
+          completedItems.map((item) =>
+            `- [x] ${item.text}${outline.parentText ? ` (${outline.parentText})` : ""}`,
+          ),
+        );
+
+  return buildAiMemoryTextFromSections(nextLiveLines, nextPreviousLines);
+}
+
+export function completeAiMemoryItemInText(
+  memoryText: string | null | undefined,
+  itemId: string,
+) {
+  const sections = splitAiWorkingMemoryText(memoryText);
+  const liveLines = trimBlankLines(sections.liveLines);
+  const previousLines = trimBlankLines(sections.previousLines);
+  const liveItems = parseAiMemoryTextSectionItems(liveLines, "live");
+  const item = liveItems.find((entry) => entry.nodeId === itemId) ?? null;
+  if (!item) {
+    return null;
+  }
+
+  const nextLiveLines = [...liveLines];
+  if (item.source.kind === "line") {
+    nextLiveLines.splice(item.source.lineIndex, 1);
+  } else {
+    const sourceLine = nextLiveLines[item.source.lineIndex] ?? "";
+    const outline = extractAiMemoryInlineChecklistOutline(sourceLine);
+    const inlineItem = outline?.items[item.source.itemIndex] ?? null;
+    if (!inlineItem) {
+      return null;
+    }
+    const nextLine = removeAiMemoryInlineChecklistItem(sourceLine, inlineItem);
+    const remainingOutline = extractAiMemoryInlineChecklistOutline(nextLine);
+    if (!remainingOutline || remainingOutline.items.length === 0) {
+      nextLiveLines.splice(item.source.lineIndex, 1);
+    } else {
+      nextLiveLines[item.source.lineIndex] = nextLine;
+    }
+  }
+
+  const completedLine = `- [x] ${item.text}${item.parentText ? ` (${item.parentText})` : ""}`;
+  const nextText = buildAiMemoryTextFromSections(
+    nextLiveLines,
+    appendLinesToSection(previousLines, [completedLine]),
+  );
+
+  return {
+    text: nextText,
+    completedItem: item,
+  };
 }
 
 function parseMemoryChecklistLine(line: string): AiMemoryStoreOutlineItem | null {

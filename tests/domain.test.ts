@@ -71,6 +71,9 @@ import {
   normalizeImportedOutlineText,
 } from "../lib/domain/migration";
 import {
+  appendAiMemoryStoreOutlineToMemory,
+  buildAiWorkingMemoryTextContext,
+  completeAiMemoryItemInText,
   extractAiMemoryCompletionText,
   extractAiMemoryImplicitStoreText,
   extractAiMemoryInlineChecklistOutline,
@@ -257,6 +260,40 @@ test("chat plans can carry note completion operations", () => {
   assert.equal(parsed.operations[0]?.noteCompleted, true);
 });
 
+test("chat plans can replace plain text AI working memory", () => {
+  const parsed = chatPlanSchema.parse({
+    summary: "Remember item.",
+    rationale: "The request updates AI Working Memory.",
+    preview: ['Remember "watch backrooms" in AI Working Memory'],
+    operations: [
+      {
+        type: "set_ai_working_memory",
+        description: "Update AI Working Memory",
+        clientId: null,
+        pageId: null,
+        nodeId: null,
+        parentNodeId: null,
+        parentClientId: null,
+        afterNodeId: null,
+        afterClientId: null,
+        sourceNodeId: null,
+        targetNodeId: null,
+        title: null,
+        text: "# Live\n\n- [ ] watch backrooms\n\n# Previous\n",
+        kind: null,
+        taskStatus: null,
+        noteCompleted: null,
+        priority: null,
+        dueAt: null,
+        archived: null,
+      },
+    ],
+  });
+
+  assert.equal(parsed.operations[0]?.type, "set_ai_working_memory");
+  assert.match(parsed.operations[0]?.text ?? "", /watch backrooms/);
+});
+
 test("AI memory helpers extract store and completion text", () => {
   assert.equal(
     extractAiMemoryStoreText("hey i wanna make sure to watch backrooms"),
@@ -314,6 +351,37 @@ test("AI memory helpers parse and remove flattened checklist items", () => {
       outline.items[1]!,
     ) : null,
     "things i want to do with Ava [ ] buy her bike",
+  );
+});
+
+test("plain text AI memory stores and completes grouped checklist items", () => {
+  const outline = extractAiMemoryStoreOutline(`please remember the following things i want to do with [[Ava|node:123]]
+
+[ ] ~~buy her bike~~
+[ ] go to the beach`);
+  assert.ok(outline);
+
+  const storedText = appendAiMemoryStoreOutlineToMemory("", outline);
+  const context = buildAiWorkingMemoryTextContext(storedText);
+  assert.match(context.liveText, /go to the beach/);
+  assert.match(context.previousText, /buy her bike/);
+
+  const match = matchAiMemoryCompletion("the beach with ava", context.liveItems);
+  assert.equal(match.kind, "single");
+  assert.equal(match.kind === "single" ? match.item.text : "", "go to the beach");
+
+  const completed =
+    match.kind === "single"
+      ? completeAiMemoryItemInText(storedText, match.item.nodeId)
+      : null;
+  assert.ok(completed);
+  assert.doesNotMatch(
+    buildAiWorkingMemoryTextContext(completed.text).liveText,
+    /go to the beach/,
+  );
+  assert.match(
+    buildAiWorkingMemoryTextContext(completed.text).previousText,
+    /go to the beach \(things i want to do with Ava\)/,
   );
 });
 
