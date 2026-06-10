@@ -70,6 +70,11 @@ import {
   buildDefaultMigrationLessonsDoc,
   normalizeImportedOutlineText,
 } from "../lib/domain/migration";
+import {
+  extractAiMemoryCompletionText,
+  extractAiMemoryStoreText,
+  matchAiMemoryCompletion,
+} from "../lib/domain/aiMemory";
 import { parseImportedTextToOutlineNodes } from "../lib/domain/importer";
 import { getEffectiveTaskDueDateRange } from "../lib/domain/planner";
 import {
@@ -144,6 +149,7 @@ test("chat plans can propose creating a child node under a parent", () => {
         text: "sunset picnic",
         kind: "note",
         taskStatus: null,
+        noteCompleted: null,
         priority: null,
         dueAt: null,
         archived: null,
@@ -154,6 +160,68 @@ test("chat plans can propose creating a child node under a parent", () => {
   assert.equal(parsed.operations[0]?.type, "create_node");
   assert.equal(parsed.operations[0]?.parentNodeId, "node_parent");
   assert.equal(parsed.operations[0]?.text, "sunset picnic");
+});
+
+test("chat plans can carry note completion operations", () => {
+  const parsed = chatPlanSchema.parse({
+    summary: "Complete memory.",
+    rationale: "The memory item matches the completion request.",
+    preview: ['Mark "watch backrooms" complete and move it to Previous'],
+    operations: [
+      {
+        type: "update_node",
+        description: "Mark watch backrooms complete",
+        pageId: null,
+        nodeId: "node_memory",
+        parentNodeId: null,
+        afterNodeId: null,
+        sourceNodeId: null,
+        targetNodeId: null,
+        title: null,
+        text: null,
+        kind: "note",
+        taskStatus: null,
+        noteCompleted: true,
+        priority: null,
+        dueAt: null,
+        archived: null,
+      },
+    ],
+  });
+
+  assert.equal(parsed.operations[0]?.type, "update_node");
+  assert.equal(parsed.operations[0]?.noteCompleted, true);
+});
+
+test("AI memory helpers extract store and completion text", () => {
+  assert.equal(
+    extractAiMemoryStoreText("hey i wanna make sure to watch backrooms"),
+    "watch backrooms",
+  );
+  assert.equal(extractAiMemoryStoreText("remember to watch Backrooms!"), "watch Backrooms");
+  assert.equal(extractAiMemoryCompletionText("i watched backrooms"), "backrooms");
+  assert.equal(extractAiMemoryCompletionText("what movies should i watch?"), null);
+});
+
+test("AI memory completion matching finds one active item or ambiguity", () => {
+  assert.deepEqual(
+    matchAiMemoryCompletion("backrooms", [
+      { nodeId: "node_1", text: "watch backrooms" },
+      { nodeId: "node_2", text: "read dune" },
+    ]),
+    {
+      kind: "single",
+      item: { nodeId: "node_1", text: "watch backrooms" },
+    },
+  );
+
+  assert.equal(
+    matchAiMemoryCompletion("backrooms", [
+      { nodeId: "node_1", text: "watch backrooms" },
+      { nodeId: "node_2", text: "watch backrooms trailer" },
+    ]).kind,
+    "ambiguous",
+  );
 });
 
 test("data dump exclusion flags are detected", () => {

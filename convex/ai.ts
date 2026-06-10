@@ -22,6 +22,12 @@ import {
 import { replaceLinkMarkupWithLabels, stripLinkMarkup } from "../lib/domain/links";
 import { isSeparatorLineText } from "../lib/domain/displaySyntax";
 import { chatPlanSchema, type ChatPlan } from "../lib/domain/chat";
+import {
+  AI_WORKING_MEMORY_PAGE_TITLE,
+  extractAiMemoryCompletionText,
+  extractAiMemoryStoreText,
+  matchAiMemoryCompletion,
+} from "../lib/domain/aiMemory";
 
 const taskMetadataSchema = z.object({
   kind: z.enum(["note", "task"]),
@@ -60,6 +66,10 @@ const getLinkedKnowledgeContextRef = internal.workspace.getLinkedKnowledgeContex
 const getWorkspaceActionParentCandidatesRef =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   internal.workspace.getWorkspaceActionParentCandidates as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const ensureAiWorkingMemoryScratchpadRef = internal.workspace.ensureAiWorkingMemoryScratchpad as any;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const getAiWorkingMemoryContextRef = internal.workspace.getAiWorkingMemoryContext as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const ensureWorkspaceKnowledgeThreadRef = api.chatData.ensureWorkspaceKnowledgeThread as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -320,6 +330,27 @@ type WorkspaceActionParentCandidate = {
   childPreview: string[];
 };
 
+type AiWorkingMemoryContext = {
+  pageId: Id<"pages">;
+  pageTitle: string;
+  liveSectionId: Id<"nodes"> | null;
+  previousSectionId: Id<"nodes"> | null;
+  liveItems: Array<{
+    nodeId: Id<"nodes">;
+    text: string;
+    rawText: string;
+    noteCompleted: boolean;
+    kind: Doc<"nodes">["kind"];
+  }>;
+  previousItems: Array<{
+    nodeId: Id<"nodes">;
+    text: string;
+    rawText: string;
+    noteCompleted: boolean;
+    kind: Doc<"nodes">["kind"];
+  }>;
+} | null;
+
 type WorkspaceChatResult =
   | {
       kind: "answer";
@@ -441,6 +472,7 @@ function sanitizeWorkspaceChildActionPlan(
       text,
       kind,
       taskStatus: kind === "task" ? (operation.taskStatus ?? "todo") : null,
+      noteCompleted: null,
       priority: operation.priority ?? null,
       dueAt: operation.dueAt ?? null,
       archived: null,
@@ -464,6 +496,207 @@ function sanitizeWorkspaceChildActionPlan(
     preview: preview.length > 0 ? preview : plan.preview.slice(0, 4),
     operations,
   } satisfies ChatPlan;
+}
+
+function buildEmptyChatOperation(type: ChatPlan["operations"][number]["type"]) {
+  return {
+    type,
+    description: "",
+    pageId: null,
+    nodeId: null,
+    parentNodeId: null,
+    afterNodeId: null,
+    sourceNodeId: null,
+    targetNodeId: null,
+    title: null,
+    text: null,
+    kind: null,
+    taskStatus: null,
+    noteCompleted: null,
+    priority: null,
+    dueAt: null,
+    archived: null,
+  } satisfies ChatPlan["operations"][number];
+}
+
+async function storeWorkspaceMemoryNoopResponse(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ctx: any,
+  args: {
+    threadId: Id<"chatThreads">;
+    answer: string;
+    model: string;
+    request: string;
+  },
+) {
+  await ctx.runMutation(storeAssistantMessageRef, {
+    threadId: args.threadId,
+    text: args.answer,
+    metadata: {
+      kind: "workspace_memory_response",
+      model: args.model,
+      request: args.request,
+    },
+  });
+  return {
+    kind: "answer" as const,
+    threadId: args.threadId,
+    response: buildWorkspaceActionNoopResponse({
+      answer: args.answer,
+      model: args.model,
+      request: args.request,
+    }),
+  };
+}
+
+async function maybePlanAiWorkingMemoryAction(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ctx: any,
+  args: WorkspaceKnowledgeArgs & {
+    threadId: Id<"chatThreads">;
+  },
+): Promise<WorkspaceChatResult | null> {
+  const question = args.question.trim();
+  const completionText = extractAiMemoryCompletionText(question);
+  const storeText = completionText ? null : extractAiMemoryStoreText(question);
+  if (!completionText && !storeText) {
+    return null;
+  }
+
+  const model = process.env.OPENAI_CHAT_MODEL ?? "gpt-5-mini";
+  const requestPreview = [
+    `AI Working Memory action for: ${question}`,
+    storeText ? `Store text: ${storeText}` : null,
+    completionText ? `Completion text: ${completionText}` : null,
+  ]
+    .filter((value): value is string => value !== null)
+    .join("\n");
+  const sections = (await ctx.runMutation(ensureAiWorkingMemoryScratchpadRef, {})) as {
+    pageId: Id<"pages">;
+    liveSectionId: Id<"nodes">;
+    previousSectionId: Id<"nodes">;
+  };
+
+  if (storeText) {
+    const createOperation = {
+      ...buildEmptyChatOperation("create_node"),
+      description: `Remember "${storeText}" in ${AI_WORKING_MEMORY_PAGE_TITLE}`,
+      pageId: sections.pageId,
+      parentNodeId: sections.liveSectionId,
+      text: storeText,
+      kind: "note" as const,
+      noteCompleted: false,
+    } satisfies ChatPlan["operations"][number];
+    const plan: ChatPlan = {
+      summary: "Remember item",
+      rationale: `I can save this under ${AI_WORKING_MEMORY_PAGE_TITLE} > Live.`,
+      preview: [`Remember "${storeText}" in ${AI_WORKING_MEMORY_PAGE_TITLE}`],
+      operations: [createOperation],
+    };
+    const messageId: Id<"chatMessages"> = await ctx.runMutation(storeAssistantPlanRef, {
+      threadId: args.threadId,
+      text: plan.rationale,
+      preview: plan.preview,
+      proposedPlan: plan,
+      metadata: {
+        kind: "workspace_memory_plan",
+        model,
+        request: requestPreview,
+      },
+    });
+
+    return {
+      kind: "plan",
+      threadId: args.threadId,
+      messageId,
+      plan,
+    };
+  }
+
+  const memoryContext = (await ctx.runQuery(getAiWorkingMemoryContextRef, {
+    limit: 80,
+  })) as AiWorkingMemoryContext;
+  const liveItems = (memoryContext?.liveItems ?? []).filter((item) => !item.noteCompleted);
+  const match = matchAiMemoryCompletion(
+    completionText ?? "",
+    liveItems.map((item) => ({
+      nodeId: item.nodeId,
+      text: item.text || item.rawText,
+    })),
+  );
+
+  if (match.kind === "none") {
+    return await storeWorkspaceMemoryNoopResponse(ctx, {
+      threadId: args.threadId,
+      answer: `I couldn't find an active ${AI_WORKING_MEMORY_PAGE_TITLE} item matching "${completionText}".`,
+      model,
+      request: requestPreview,
+    });
+  }
+
+  if (match.kind === "ambiguous") {
+    const options = match.items
+      .slice(0, 4)
+      .map((item) => `"${item.text}"`)
+      .join(", ");
+    return await storeWorkspaceMemoryNoopResponse(ctx, {
+      threadId: args.threadId,
+      answer: `I found multiple active memory items that could match "${completionText}": ${options}. Tell me which one to complete.`,
+      model,
+      request: requestPreview,
+    });
+  }
+
+  const matchedItem = liveItems.find((item) => item.nodeId === match.item.nodeId) ?? null;
+  if (!matchedItem || !memoryContext?.previousSectionId) {
+    return await storeWorkspaceMemoryNoopResponse(ctx, {
+      threadId: args.threadId,
+      answer: `I couldn't prepare that ${AI_WORKING_MEMORY_PAGE_TITLE} update right now.`,
+      model,
+      request: requestPreview,
+    });
+  }
+
+  const displayText = matchedItem.text || matchedItem.rawText;
+  const updateOperation = {
+    ...buildEmptyChatOperation("update_node"),
+    description: `Mark "${displayText}" complete`,
+    nodeId: matchedItem.nodeId,
+    kind: "note" as const,
+    noteCompleted: true,
+  } satisfies ChatPlan["operations"][number];
+  const moveOperation = {
+    ...buildEmptyChatOperation("move_node"),
+    description: `Move "${displayText}" to Previous`,
+    pageId: sections.pageId,
+    nodeId: matchedItem.nodeId,
+    parentNodeId: memoryContext.previousSectionId,
+    afterNodeId: null,
+  } satisfies ChatPlan["operations"][number];
+  const plan: ChatPlan = {
+    summary: "Complete memory item",
+    rationale: `I can mark this memory item complete and move it to ${AI_WORKING_MEMORY_PAGE_TITLE} > Previous.`,
+    preview: [`Mark "${displayText}" complete and move it to Previous`],
+    operations: [updateOperation, moveOperation],
+  };
+  const messageId: Id<"chatMessages"> = await ctx.runMutation(storeAssistantPlanRef, {
+    threadId: args.threadId,
+    text: plan.rationale,
+    preview: plan.preview,
+    proposedPlan: plan,
+    metadata: {
+      kind: "workspace_memory_plan",
+      model,
+      request: requestPreview,
+    },
+  });
+
+  return {
+    kind: "plan",
+    threadId: args.threadId,
+    messageId,
+    plan,
+  };
 }
 
 async function buildWorkspaceActionParentCandidates(
@@ -553,7 +786,7 @@ async function maybePlanWorkspaceChildAction(
           .join("\n")
       : "";
   const systemPrompt =
-    `${buildTodayPromptLine()} You plan safe edits for a personal outliner. V1 only supports adding child items under an existing parent node. Return a plan with only create_node operations. Each operation must use a parentNodeId and pageId from the candidate list. Never invent ids. Every operation object must include every schema field; use null for fields that do not apply. Do not propose updates, moves, deletes, archives, or new pages. Default new items to kind "note"; use kind "task" only when the user clearly asks for a todo, task, reminder, or checkbox. If there is not exactly one clearly best parent, return zero operations and explain what needs clarification. All edits require human approval later.`;
+    `${buildTodayPromptLine()} You plan safe edits for a personal outliner. V1 only supports adding child items under an existing parent node. Return a plan with only create_node operations. Each operation must use a parentNodeId and pageId from the candidate list. Never invent ids. Every operation object must include every schema field; use null for fields that do not apply, including noteCompleted unless the operation intentionally changes note completion. Do not propose updates, moves, deletes, archives, or new pages. Default new items to kind "note"; use kind "task" only when the user clearly asks for a todo, task, reminder, or checkbox. If there is not exactly one clearly best parent, return zero operations and explain what needs clarification. All edits require human approval later.`;
   const userPrompt = [
     conversationContext.length > 0 ? "Recent conversation:" : null,
     conversationContext.length > 0 ? conversationContext : null,
@@ -743,6 +976,9 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
       content: string;
     }>;
   };
+  const aiWorkingMemoryContext = (await ctx.runQuery(getAiWorkingMemoryContextRef, {
+    limit: 40,
+  })) as AiWorkingMemoryContext;
 
   const hasExplicitLinkedContext =
     linkedContext.pages.length > 0 || linkedContext.nodes.length > 0;
@@ -828,8 +1064,35 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
         entry.content,
       ].join("\n"),
     );
+  const aiWorkingMemoryPromptContext =
+    aiWorkingMemoryContext &&
+    (aiWorkingMemoryContext.liveItems.length > 0 ||
+      aiWorkingMemoryContext.previousItems.length > 0)
+      ? [
+          `AI Working Memory page: ${aiWorkingMemoryContext.pageTitle}`,
+          aiWorkingMemoryContext.liveItems.length > 0
+            ? [
+                "Active memory items:",
+                ...aiWorkingMemoryContext.liveItems.map(
+                  (item) => `- ${item.text || item.rawText}`,
+                ),
+              ].join("\n")
+            : "Active memory items: none",
+          aiWorkingMemoryContext.previousItems.length > 0
+            ? [
+                "Completed/history memory items (do not recommend as active unless the user asks about completed memory):",
+                ...aiWorkingMemoryContext.previousItems.map(
+                  (item) => `- ${item.text || item.rawText}`,
+                ),
+              ].join("\n")
+            : null,
+        ]
+          .filter((value): value is string => value !== null)
+          .join("\n")
+      : "";
 
   const explicitLinkedContext = [
+    aiWorkingMemoryPromptContext.trim().length > 0 ? aiWorkingMemoryPromptContext : null,
     ...plannerPageContext,
     ...(anytimePageContext.length > 0
       ? [["# Anytime", ...anytimePageContext].join("\n\n")]
@@ -844,7 +1107,9 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
         entry.content.trim().length > 0 ? entry.content : entry.node.text || "(empty line)",
       ].join("\n"),
     ),
-  ].join("\n\n");
+  ]
+    .filter((value): value is string => value !== null)
+    .join("\n\n");
 
   if (sources.length === 0 && explicitLinkedContext.trim().length === 0) {
     return {
@@ -888,7 +1153,7 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
       : "";
 
   const systemPrompt =
-    `${buildTodayPromptLine()} Answer the user's question using only the provided knowledge base snippets. If the snippets are insufficient, say so clearly. Keep the answer concise and grounded. Cite source numbers like [1] when helpful. If no explicit question text is provided, summarize the linked context and surface the most important takeaways.`;
+    `${buildTodayPromptLine()} Answer the user's question using only the provided knowledge base snippets. Treat AI Working Memory active items as current remembered preferences or intentions; treat completed/history memory as done unless the user asks about completed memory. If the snippets are insufficient, say so clearly. Keep the answer concise and grounded. Cite source numbers like [1] when helpful. If no explicit question text is provided, summarize the linked context and surface the most important takeaways.`;
   const userPrompt = [
     conversationContext.length > 0 ? "Recent conversation:" : null,
     conversationContext.length > 0 ? conversationContext : null,
@@ -1021,6 +1286,15 @@ export const chatWithWorkspace = action({
       role: string;
       text: string;
     }>;
+
+    const memoryActionResult = await maybePlanAiWorkingMemoryAction(ctx, {
+      ...args,
+      question,
+      threadId,
+    });
+    if (memoryActionResult) {
+      return memoryActionResult;
+    }
 
     const actionResult = await maybePlanWorkspaceChildAction(ctx, {
       ...args,

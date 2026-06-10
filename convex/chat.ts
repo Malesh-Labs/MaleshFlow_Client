@@ -191,6 +191,7 @@ function buildHeuristicPlan(input: {
         text: null,
         kind: null,
         taskStatus: null,
+        noteCompleted: null,
         priority: null,
         dueAt: null,
         archived: true,
@@ -249,7 +250,7 @@ export const runChatPlanner = action({
       workspace: workspace as PlannerWorkspace,
     });
     const systemPrompt =
-      "You are planning safe workspace edits for a personal outliner. Only propose operations using real pageId and nodeId values present in the provided context. Never invent ids. Every operation object must include every schema field; use null for fields that do not apply. If the request is ambiguous, return zero operations and explain why. All edits require later human approval.";
+      "You are planning safe workspace edits for a personal outliner. Only propose operations using real pageId and nodeId values present in the provided context. Never invent ids. Every operation object must include every schema field; use null for fields that do not apply, including noteCompleted unless the operation intentionally changes note completion. If the request is ambiguous, return zero operations and explain why. All edits require later human approval.";
     const userPrompt = [
       `Prompt: ${args.prompt}`,
       "",

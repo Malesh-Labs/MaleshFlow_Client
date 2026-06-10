@@ -75,6 +75,7 @@ import {
   isSeparatorLineText,
   stripNodeDisplaySyntaxMarkers,
 } from "../lib/domain/displaySyntax";
+import { AI_WORKING_MEMORY_PAGE_TITLE } from "../lib/domain/aiMemory";
 
 function getTimestamp() {
   return Date.now();
@@ -652,6 +653,92 @@ async function ensureJournalSections(ctx: MutationCtx, page: Doc<"pages">) {
   return sectionIds;
 }
 
+const SCRATCHPAD_SECTION_SPECS = [
+  {
+    slot: "scratchpadLive",
+    title: "Live",
+  },
+  {
+    slot: "scratchpadPrevious",
+    title: "Previous",
+  },
+] as const;
+
+async function ensureScratchpadSections(ctx: MutationCtx, page: Doc<"pages">) {
+  const nodes = await listPageNodes(ctx.db, page._id);
+  const rootNodes = nodes
+    .filter((node) => node.parentNodeId === null)
+    .sort((left, right) => left.position - right.position);
+  const nodesBySlot = new Map<string, Doc<"nodes">>();
+  for (const node of rootNodes) {
+    const sectionSlot = getNodeSourceMeta(node).sectionSlot;
+    if (typeof sectionSlot === "string" && !nodesBySlot.has(sectionSlot)) {
+      nodesBySlot.set(sectionSlot, node);
+    }
+  }
+
+  const now = getTimestamp();
+  const sectionIds: {
+    liveSectionId: Id<"nodes"> | null;
+    previousSectionId: Id<"nodes"> | null;
+  } = {
+    liveSectionId: null,
+    previousSectionId: null,
+  };
+  let afterNodeId: Id<"nodes"> | null = null;
+
+  for (const spec of SCRATCHPAD_SECTION_SPECS) {
+    const existingSection = nodesBySlot.get(spec.slot) ?? null;
+    if (existingSection) {
+      afterNodeId = existingSection._id;
+      if (existingSection.text !== spec.title) {
+        await ctx.db.patch(existingSection._id, {
+          text: spec.title,
+          updatedAt: now,
+        });
+      }
+
+      if (spec.slot === "scratchpadLive") {
+        sectionIds.liveSectionId = existingSection._id;
+      } else {
+        sectionIds.previousSectionId = existingSection._id;
+      }
+      continue;
+    }
+
+    const position = await computeNodePosition(ctx.db, page._id, null, afterNodeId);
+    const sectionId = await ctx.db.insert("nodes", {
+      pageId: page._id,
+      parentNodeId: null,
+      position,
+      text: spec.title,
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      dueEndAt: null,
+      archived: false,
+      sourceMeta: {
+        sourceType: "system",
+        sectionSlot: spec.slot,
+        locked: true,
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+    afterNodeId = sectionId;
+
+    if (spec.slot === "scratchpadLive") {
+      sectionIds.liveSectionId = sectionId;
+    } else {
+      sectionIds.previousSectionId = sectionId;
+    }
+  }
+
+  await enqueuePageRootEmbeddingRefresh(ctx, page._id);
+  return sectionIds;
+}
+
 function isMultiPageViewPage(page: Pick<Doc<"pages">, "sourceMeta"> | null | undefined) {
   return getPageSourceMeta(page).pageType === "multiPage";
 }
@@ -840,6 +927,156 @@ function isLatestJournalEntryPage(page: Doc<"pages">) {
 function buildIncludedPageLinkText(page: Doc<"pages">) {
   return `[[page:${page._id}]]`;
 }
+
+async function findAiWorkingMemoryPage(db: DatabaseReader | DatabaseWriter) {
+  const slug =
+    slugify(AI_WORKING_MEMORY_PAGE_TITLE, { lower: true, strict: true }) ||
+    "ai-working-memory";
+  const slugPage = await getPageBySlug(db, slug);
+  if (
+    slugPage &&
+    !slugPage.archived &&
+    !isPagePendingDeletion(slugPage) &&
+    normalizeSystemPageTitle(slugPage.title) === normalizeSystemPageTitle(AI_WORKING_MEMORY_PAGE_TITLE)
+  ) {
+    return slugPage;
+  }
+
+  const activePages = await db
+    .query("pages")
+    .withIndex("by_archived_position", (query) => query.eq("archived", false))
+    .take(500);
+  return (
+    activePages.find(
+      (page) =>
+        !isPagePendingDeletion(page) &&
+        normalizeSystemPageTitle(page.title) === normalizeSystemPageTitle(AI_WORKING_MEMORY_PAGE_TITLE),
+    ) ?? null
+  );
+}
+
+function getAiWorkingMemoryPageSourceMeta(page: Doc<"pages"> | null) {
+  return {
+    ...getPageSourceMeta(page),
+    sourceType: getPageSourceMeta(page).sourceType ?? "system",
+    pageType: "scratchpad",
+    sidebarSection: "Scratchpads",
+    aiWorkingMemory: true,
+  };
+}
+
+export const ensureAiWorkingMemoryScratchpad = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = getTimestamp();
+    let page = await findAiWorkingMemoryPage(ctx.db);
+
+    if (page) {
+      const nextSourceMeta = getAiWorkingMemoryPageSourceMeta(page);
+      const currentSourceMeta = getPageSourceMeta(page);
+      if (
+        currentSourceMeta.pageType !== "scratchpad" ||
+        currentSourceMeta.sidebarSection !== "Scratchpads" ||
+        currentSourceMeta.aiWorkingMemory !== true
+      ) {
+        await ctx.db.patch(page._id, {
+          sourceMeta: nextSourceMeta,
+          updatedAt: now,
+        });
+        page = await ctx.db.get(page._id);
+      }
+    }
+
+    if (!page) {
+      const activePages = await ctx.db
+        .query("pages")
+        .withIndex("by_archived_position", (query) => query.eq("archived", false))
+        .take(500);
+      const lastPage = [...activePages].sort((left, right) => left.position - right.position)[
+        activePages.length - 1
+      ] ?? null;
+      const pageId = await ctx.db.insert("pages", {
+        title: AI_WORKING_MEMORY_PAGE_TITLE,
+        slug: await buildUniquePageSlug(ctx.db, AI_WORKING_MEMORY_PAGE_TITLE),
+        icon: null,
+        archived: false,
+        position: (lastPage?.position ?? 0) + 1024,
+        sourceMeta: getAiWorkingMemoryPageSourceMeta(null),
+        createdAt: now,
+        updatedAt: now,
+      });
+      page = await ctx.db.get(pageId);
+    }
+
+    if (!page) {
+      throw new Error("Could not create AI Working Memory.");
+    }
+
+    const sections = await ensureScratchpadSections(ctx, page);
+    if (!sections.liveSectionId || !sections.previousSectionId) {
+      throw new Error("Could not create AI Working Memory sections.");
+    }
+
+    return {
+      pageId: page._id,
+      liveSectionId: sections.liveSectionId,
+      previousSectionId: sections.previousSectionId,
+    };
+  },
+});
+
+export const getAiWorkingMemoryContext = internalQuery({
+  args: {
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const page = await findAiWorkingMemoryPage(ctx.db);
+    if (!page || page.archived || isPagePendingDeletion(page)) {
+      return null;
+    }
+
+    const limit = Math.max(1, Math.min(args.limit ?? 40, 80));
+    const nodes = await listPageNodes(ctx.db, page._id);
+    const liveSection =
+      nodes.find((node) => getNodeSourceMeta(node).sectionSlot === "scratchpadLive") ?? null;
+    const previousSection =
+      nodes.find((node) => getNodeSourceMeta(node).sectionSlot === "scratchpadPrevious") ?? null;
+    if (!liveSection || !previousSection) {
+      return {
+        pageId: page._id,
+        pageTitle: page.title,
+        liveSectionId: liveSection?._id ?? null,
+        previousSectionId: previousSection?._id ?? null,
+        liveItems: [],
+        previousItems: [],
+      };
+    }
+
+    const sortedNodes = [...nodes].sort((left, right) => left.position - right.position);
+    const toMemoryItem = (node: Doc<"nodes">) => ({
+      nodeId: node._id,
+      text: normalizeWorkspaceActionCandidateText(node.text) || node.text.trim(),
+      rawText: node.text,
+      noteCompleted: getNodeSourceMeta(node).noteCompleted === true,
+      kind: node.kind,
+    });
+
+    return {
+      pageId: page._id,
+      pageTitle: page.title,
+      liveSectionId: liveSection._id,
+      previousSectionId: previousSection._id,
+      liveItems: sortedNodes
+        .filter((node) => node.parentNodeId === liveSection._id && !node.archived)
+        .slice(0, limit)
+        .map(toMemoryItem),
+      previousItems: sortedNodes
+        .filter((node) => node.parentNodeId === previousSection._id && !node.archived)
+        .slice(0, limit)
+        .map(toMemoryItem),
+    };
+  },
+});
 
 async function refreshLatestJournalView(
   ctx: MutationCtx,
@@ -4182,43 +4419,10 @@ export const createPage = mutation({
     }
 
     if (args.pageType === "scratchpad") {
-      await ctx.db.insert("nodes", {
-        pageId,
-        parentNodeId: null,
-        position: 1024,
-        text: "Live",
-        kind: "note",
-        taskStatus: null,
-        priority: null,
-        dueAt: null,
-        archived: false,
-        sourceMeta: {
-          sourceType: "system",
-          sectionSlot: "scratchpadLive",
-          locked: true,
-        },
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      await ctx.db.insert("nodes", {
-        pageId,
-        parentNodeId: null,
-        position: 2048,
-        text: "Previous",
-        kind: "note",
-        taskStatus: null,
-        priority: null,
-        dueAt: null,
-        archived: false,
-        sourceMeta: {
-          sourceType: "system",
-          sectionSlot: "scratchpadPrevious",
-          locked: true,
-        },
-        createdAt: now,
-        updatedAt: now,
-      });
+      const scratchpadPage = await ctx.db.get(pageId);
+      if (scratchpadPage) {
+        await ensureScratchpadSections(ctx, scratchpadPage);
+      }
     }
 
     if (args.pageType === "multiPage") {

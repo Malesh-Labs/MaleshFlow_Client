@@ -1839,19 +1839,31 @@ function readWorkspaceActionPlan(
     }
 
     const operationRecord = operation as Record<string, unknown>;
-    if (operationRecord.type !== "create_node") {
+    const operationType = typeof operationRecord.type === "string" ? operationRecord.type : "";
+    if (
+      ![
+        "create_page",
+        "rename_page",
+        "create_node",
+        "update_node",
+        "move_node",
+        "archive_node",
+        "delete_node",
+        "merge_node",
+      ].includes(operationType)
+    ) {
       continue;
     }
 
     operations.push({
-      type: "create_node",
+      type: operationType as ChatPlan["operations"][number]["type"],
       description:
         typeof operationRecord.description === "string"
           ? operationRecord.description
           : "",
       pageId:
         typeof operationRecord.pageId === "string" ? operationRecord.pageId : null,
-      nodeId: null,
+      nodeId: typeof operationRecord.nodeId === "string" ? operationRecord.nodeId : null,
       parentNodeId:
         typeof operationRecord.parentNodeId === "string"
           ? operationRecord.parentNodeId
@@ -1869,6 +1881,10 @@ function readWorkspaceActionPlan(
       taskStatus:
         typeof operationRecord.taskStatus === "string"
           ? (operationRecord.taskStatus as ChatPlan["operations"][number]["taskStatus"])
+          : null,
+      noteCompleted:
+        typeof operationRecord.noteCompleted === "boolean"
+          ? operationRecord.noteCompleted
           : null,
       priority:
         operationRecord.priority === "low" ||

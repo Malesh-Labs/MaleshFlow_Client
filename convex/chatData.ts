@@ -414,14 +414,14 @@ async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
         parentNodeId,
         afterNodeId,
       );
+      const kind = operation.kind ?? "note";
       const nodeId = await ctx.db.insert("nodes", {
         pageId,
         parentNodeId,
         position,
         text,
-        kind: operation.kind ?? "note",
-        taskStatus:
-          operation.kind === "task" ? (operation.taskStatus ?? "todo") : null,
+        kind,
+        taskStatus: kind === "task" ? (operation.taskStatus ?? "todo") : null,
         priority: operation.priority ?? null,
         dueAt: operation.dueAt ?? null,
         dueEndAt: null,
@@ -430,7 +430,7 @@ async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
           sourceType: "chat",
           generatedFrom: "workspace_ai_action",
           taskKindLocked: false,
-          noteCompleted: false,
+          noteCompleted: kind === "note" ? (operation.noteCompleted ?? false) : false,
           recurrenceFrequency: null,
         },
         createdAt: Date.now(),
@@ -450,7 +450,13 @@ async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
       }
 
       const nodeId = operation.nodeId as Id<"nodes">;
-      await ctx.db.patch(nodeId, {
+      const node = await ctx.db.get(nodeId);
+      if (!node) {
+        return;
+      }
+
+      const nextKind = operation.kind ?? node.kind;
+      const patch: Partial<Doc<"nodes">> = {
         text: operation.text ?? undefined,
         kind: operation.kind ?? undefined,
         taskStatus:
@@ -462,11 +468,24 @@ async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
         priority: operation.priority ?? undefined,
         dueAt: operation.dueAt ?? undefined,
         updatedAt: Date.now(),
-      });
+      };
+
+      if (operation.noteCompleted !== null || operation.kind !== null) {
+        const sourceMeta =
+          node.sourceMeta && typeof node.sourceMeta === "object"
+            ? { ...(node.sourceMeta as Record<string, unknown>) }
+            : {};
+        sourceMeta.noteCompleted =
+          nextKind === "note" ? (operation.noteCompleted ?? false) : false;
+        patch.sourceMeta = sourceMeta;
+      }
+
+      await ctx.db.patch(nodeId, patch);
       const updated = await ctx.db.get(nodeId);
       if (updated) {
         await syncLinksForNode(ctx.db, updated);
         await enqueueNodeAiWork(ctx, updated._id);
+        await enqueuePageRootEmbeddingRefresh(ctx, updated.pageId);
       }
       return;
     }
@@ -500,6 +519,10 @@ async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
         updatedAt: Date.now(),
       });
       await enqueueNodeAiWork(ctx, nodeId);
+      await enqueuePageRootEmbeddingRefresh(ctx, node.pageId);
+      if (nextPageId !== node.pageId) {
+        await enqueuePageRootEmbeddingRefresh(ctx, nextPageId);
+      }
       return;
     }
     case "archive_node": {
@@ -584,6 +607,65 @@ async function validateOperation(ctx: MutationCtx, operation: ChatOperation) {
       }
       return;
     }
+    case "update_node": {
+      if (!operation.nodeId) {
+        throw new Error("The proposed update is missing an item.");
+      }
+
+      const node = await ctx.db.get(operation.nodeId as Id<"nodes">);
+      if (!node || node.archived) {
+        throw new Error("The item to update is no longer available.");
+      }
+
+      const page = await ctx.db.get(node.pageId);
+      if (!page || page.archived) {
+        throw new Error("The item to update is on a page that is no longer available.");
+      }
+      return;
+    }
+    case "move_node": {
+      if (!operation.nodeId) {
+        throw new Error("The proposed move is missing an item.");
+      }
+
+      const node = await ctx.db.get(operation.nodeId as Id<"nodes">);
+      if (!node || node.archived) {
+        throw new Error("The item to move is no longer available.");
+      }
+
+      const nextPageId =
+        (operation.pageId as Id<"pages"> | null | undefined) ?? node.pageId;
+      const page = await ctx.db.get(nextPageId);
+      if (!page || page.archived) {
+        throw new Error("The destination page is no longer available.");
+      }
+
+      const nextParentId =
+        operation.parentNodeId === null
+          ? null
+          : (operation.parentNodeId as Id<"nodes"> | null | undefined) ?? node.parentNodeId;
+      if (nextParentId) {
+        const parent = await ctx.db.get(nextParentId);
+        if (!parent || parent.archived || parent.pageId !== nextPageId) {
+          throw new Error("The destination parent item is no longer available.");
+        }
+      }
+
+      const afterNodeId =
+        (operation.afterNodeId as Id<"nodes"> | null | undefined) ?? null;
+      if (afterNodeId) {
+        const afterNode = await ctx.db.get(afterNodeId);
+        if (
+          !afterNode ||
+          afterNode.archived ||
+          afterNode.pageId !== nextPageId ||
+          afterNode.parentNodeId !== nextParentId
+        ) {
+          throw new Error("The requested insertion position is no longer available.");
+        }
+      }
+      return;
+    }
     default:
       return;
   }
@@ -645,6 +727,30 @@ async function applyPlannerOperation(
   }
 }
 
+function normalizeStoredChatPlanForParsing(proposedPlan: unknown) {
+  if (!proposedPlan || typeof proposedPlan !== "object") {
+    return proposedPlan;
+  }
+
+  const record = proposedPlan as Record<string, unknown>;
+  const operations = Array.isArray(record.operations) ? record.operations : null;
+  if (!operations) {
+    return proposedPlan;
+  }
+
+  return {
+    ...record,
+    operations: operations.map((operation) =>
+      operation && typeof operation === "object" && !("noteCompleted" in operation)
+        ? {
+            ...(operation as Record<string, unknown>),
+            noteCompleted: null,
+          }
+        : operation,
+    ),
+  };
+}
+
 export const applyApprovedChatPlan = mutation({
   args: {
     ownerKey: v.string(),
@@ -657,7 +763,9 @@ export const applyApprovedChatPlan = mutation({
       throw new Error("No proposed plan found.");
     }
 
-    const parsedPlan = chatPlanSchema.safeParse(message.proposedPlan);
+    const parsedPlan = chatPlanSchema.safeParse(
+      normalizeStoredChatPlanForParsing(message.proposedPlan),
+    );
     if (!parsedPlan.success) {
       throw new Error("Stored plan is invalid.");
     }

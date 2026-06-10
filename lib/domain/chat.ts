@@ -14,6 +14,7 @@ export const chatOperationSchema = z.object({
   text: z.string().nullable(),
   kind: z.enum(NODE_KINDS).nullable(),
   taskStatus: z.enum(TASK_STATUSES).nullable(),
+  noteCompleted: z.boolean().nullable(),
   priority: z.enum(TASK_PRIORITIES).nullable(),
   dueAt: z.number().nullable(),
   archived: z.boolean().nullable(),
