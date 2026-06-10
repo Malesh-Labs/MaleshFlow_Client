@@ -26,6 +26,7 @@ import {
   AI_WORKING_MEMORY_PAGE_TITLE,
   extractAiMemoryCompletionText,
   extractAiMemoryImplicitStoreText,
+  extractAiMemoryStoreOutline,
   extractAiMemoryStoreText,
   matchAiMemoryCompletion,
 } from "../lib/domain/aiMemory";
@@ -327,6 +328,8 @@ type AiWorkingMemoryContext = {
     nodeId: Id<"nodes">;
     text: string;
     rawText: string;
+    parentText: string | null;
+    path: string;
     noteCompleted: boolean;
     kind: Doc<"nodes">["kind"];
   }>;
@@ -334,6 +337,8 @@ type AiWorkingMemoryContext = {
     nodeId: Id<"nodes">;
     text: string;
     rawText: string;
+    parentText: string | null;
+    path: string;
     noteCompleted: boolean;
     kind: Doc<"nodes">["kind"];
   }>;
@@ -371,10 +376,13 @@ function buildEmptyChatOperation(type: ChatPlan["operations"][number]["type"]) {
   return {
     type,
     description: "",
+    clientId: null,
     pageId: null,
     nodeId: null,
     parentNodeId: null,
+    parentClientId: null,
     afterNodeId: null,
+    afterClientId: null,
     sourceNodeId: null,
     targetNodeId: null,
     title: null,
@@ -427,16 +435,24 @@ async function maybePlanAiWorkingMemoryAction(
 ): Promise<WorkspaceChatResult | null> {
   const question = args.question.trim();
   const completionText = extractAiMemoryCompletionText(question);
+  const storeOutline = completionText ? null : extractAiMemoryStoreOutline(question);
   const storeText = completionText
     ? null
-    : (extractAiMemoryStoreText(question) ?? extractAiMemoryImplicitStoreText(question));
-  if (!completionText && !storeText) {
+    : storeOutline
+      ? null
+      : (extractAiMemoryStoreText(question) ?? extractAiMemoryImplicitStoreText(question));
+  if (!completionText && !storeText && !storeOutline) {
     return null;
   }
 
   const model = process.env.OPENAI_CHAT_MODEL ?? "gpt-5-mini";
   const requestPreview = [
     `AI Working Memory action for: ${question}`,
+    storeOutline
+      ? `Store outline: ${storeOutline.items.length} item(s)${
+          storeOutline.parentText ? ` under ${storeOutline.parentText}` : ""
+        }`
+      : null,
     storeText ? `Store text: ${storeText}` : null,
     completionText ? `Completion text: ${completionText}` : null,
   ]
@@ -447,6 +463,83 @@ async function maybePlanAiWorkingMemoryAction(
     liveSectionId: Id<"nodes">;
     previousSectionId: Id<"nodes">;
   };
+
+  if (storeOutline) {
+    const operationLimit = 12;
+    const hasParent = Boolean(storeOutline.parentText);
+    const items = storeOutline.items.slice(0, hasParent ? operationLimit - 1 : operationLimit);
+    const parentClientId = hasParent ? "memory_outline_parent" : null;
+    const operations: ChatPlan["operations"] = [];
+    const preview: string[] = [];
+    let afterClientId: string | null = null;
+
+    if (storeOutline.parentText && parentClientId) {
+      operations.push({
+        ...buildEmptyChatOperation("create_node"),
+        clientId: parentClientId,
+        description: `Remember "${storeOutline.parentText}" in ${AI_WORKING_MEMORY_PAGE_TITLE}`,
+        pageId: sections.pageId,
+        parentNodeId: sections.liveSectionId,
+        text: storeOutline.parentText,
+        kind: "note" as const,
+        noteCompleted: false,
+      });
+      preview.push(`Remember "${storeOutline.parentText}" in ${AI_WORKING_MEMORY_PAGE_TITLE}`);
+    }
+
+    items.forEach((item, index) => {
+      const clientId = `memory_outline_item_${index + 1}`;
+      operations.push({
+        ...buildEmptyChatOperation("create_node"),
+        clientId,
+        description: hasParent
+          ? `Remember "${item.text}" under "${storeOutline.parentText}"`
+          : `Remember "${item.text}" in ${AI_WORKING_MEMORY_PAGE_TITLE}`,
+        pageId: sections.pageId,
+        parentNodeId: hasParent ? null : sections.liveSectionId,
+        parentClientId,
+        afterClientId,
+        text: item.text,
+        kind: "note" as const,
+        noteCompleted: item.noteCompleted,
+      });
+      afterClientId = clientId;
+    });
+
+    preview.push(
+      ...items.slice(0, 8).map((item) => `Remember "${item.text}"`),
+    );
+    if (storeOutline.items.length > items.length) {
+      preview.push(`Skipped ${storeOutline.items.length - items.length} extra item(s) for this approval.`);
+    }
+
+    const plan: ChatPlan = {
+      summary: hasParent ? "Remember grouped items" : "Remember items",
+      rationale: hasParent
+        ? `I can save these as child items under "${storeOutline.parentText}" in ${AI_WORKING_MEMORY_PAGE_TITLE} > Live.`
+        : `I can save these as separate items in ${AI_WORKING_MEMORY_PAGE_TITLE} > Live.`,
+      preview,
+      operations,
+    };
+    const messageId: Id<"chatMessages"> = await ctx.runMutation(storeAssistantPlanRef, {
+      threadId: args.threadId,
+      text: plan.rationale,
+      preview: plan.preview,
+      proposedPlan: plan,
+      metadata: {
+        kind: "workspace_memory_plan",
+        model,
+        request: requestPreview,
+      },
+    });
+
+    return {
+      kind: "plan",
+      threadId: args.threadId,
+      messageId,
+      plan,
+    };
+  }
 
   if (storeText) {
     const createOperation = {
@@ -492,7 +585,9 @@ async function maybePlanAiWorkingMemoryAction(
     completionText ?? "",
     liveItems.map((item) => ({
       nodeId: item.nodeId,
-      text: item.text || item.rawText,
+      text: [item.text || item.rawText, item.parentText ?? "", item.path]
+        .filter((value) => value.trim().length > 0)
+        .join(" "),
     })),
   );
 
@@ -577,11 +672,11 @@ function buildAiWorkingMemoryPromptContext(memoryContext: AiWorkingMemoryContext
 
   const activeLines =
     memoryContext.liveItems.length > 0
-      ? memoryContext.liveItems.map((item) => `- ${item.text || item.rawText}`)
+      ? memoryContext.liveItems.map((item) => `- ${item.path || item.text || item.rawText}`)
       : ["- none"];
   const previousLines =
     memoryContext.previousItems.length > 0
-      ? memoryContext.previousItems.map((item) => `- ${item.text || item.rawText}`)
+      ? memoryContext.previousItems.map((item) => `- ${item.path || item.text || item.rawText}`)
       : ["- none"];
 
   return [
@@ -608,7 +703,7 @@ function buildDeterministicAiMemoryAnswer(memoryContext: AiWorkingMemoryContext)
 
   return [
     `Active ${AI_WORKING_MEMORY_PAGE_TITLE}:`,
-    ...activeItems.slice(0, 12).map((item) => `- ${item.text || item.rawText}`),
+    ...activeItems.slice(0, 12).map((item) => `- ${item.path || item.text || item.rawText}`),
   ].join("\n");
 }
 
@@ -851,7 +946,7 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
             ? [
                 "Active memory items:",
                 ...aiWorkingMemoryContext.liveItems.map(
-                  (item) => `- ${item.text || item.rawText}`,
+                  (item) => `- ${item.path || item.text || item.rawText}`,
                 ),
               ].join("\n")
             : "Active memory items: none",
@@ -859,7 +954,7 @@ async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledg
             ? [
                 "Completed/history memory items (do not recommend as active unless the user asks about completed memory):",
                 ...aiWorkingMemoryContext.previousItems.map(
-                  (item) => `- ${item.text || item.rawText}`,
+                  (item) => `- ${item.path || item.text || item.rawText}`,
                 ),
               ].join("\n")
             : null,

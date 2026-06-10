@@ -325,7 +325,49 @@ export const replaceSectionLines = internalMutation({
   },
 });
 
-async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
+type CreatedChatNodeIdsByClientId = Map<string, Id<"nodes">>;
+
+function getCreatedChatNodeId(
+  createdNodeIdsByClientId: CreatedChatNodeIdsByClientId,
+  clientId: string | null | undefined,
+) {
+  if (!clientId) {
+    return null;
+  }
+
+  const nodeId = createdNodeIdsByClientId.get(clientId) ?? null;
+  if (!nodeId) {
+    throw new Error("The proposed plan refers to an item that has not been created yet.");
+  }
+  return nodeId;
+}
+
+function resolveChatOperationParentNodeId(
+  operation: ChatOperation,
+  createdNodeIdsByClientId: CreatedChatNodeIdsByClientId,
+  fallbackParentNodeId: Id<"nodes"> | null = null,
+) {
+  return (
+    getCreatedChatNodeId(createdNodeIdsByClientId, operation.parentClientId) ??
+    ((operation.parentNodeId as Id<"nodes"> | null | undefined) ?? fallbackParentNodeId)
+  );
+}
+
+function resolveChatOperationAfterNodeId(
+  operation: ChatOperation,
+  createdNodeIdsByClientId: CreatedChatNodeIdsByClientId,
+) {
+  return (
+    getCreatedChatNodeId(createdNodeIdsByClientId, operation.afterClientId) ??
+    ((operation.afterNodeId as Id<"nodes"> | null | undefined) ?? null)
+  );
+}
+
+async function applyOperation(
+  ctx: MutationCtx,
+  operation: ChatOperation,
+  createdNodeIdsByClientId: CreatedChatNodeIdsByClientId,
+) {
   switch (operation.type) {
     case "create_page": {
       const title = operation.title?.trim();
@@ -374,8 +416,10 @@ async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
         throw new Error("The destination page is no longer available.");
       }
 
-      const parentNodeId =
-        (operation.parentNodeId as Id<"nodes"> | null | undefined) ?? null;
+      const parentNodeId = resolveChatOperationParentNodeId(
+        operation,
+        createdNodeIdsByClientId,
+      );
       if (parentNodeId) {
         const parent = await ctx.db.get(parentNodeId);
         if (!parent || parent.archived || parent.pageId !== pageId) {
@@ -383,8 +427,10 @@ async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
         }
       }
 
-      const explicitAfterNodeId =
-        (operation.afterNodeId as Id<"nodes"> | null | undefined) ?? null;
+      const explicitAfterNodeId = resolveChatOperationAfterNodeId(
+        operation,
+        createdNodeIdsByClientId,
+      );
       if (explicitAfterNodeId) {
         const afterNode = await ctx.db.get(explicitAfterNodeId);
         if (
@@ -440,6 +486,9 @@ async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
       if (node) {
         await syncLinksForNode(ctx.db, node);
         await enqueueNodeAiWork(ctx, nodeId);
+      }
+      if (operation.clientId) {
+        createdNodeIdsByClientId.set(operation.clientId, nodeId);
       }
       await enqueuePageRootEmbeddingRefresh(ctx, pageId);
       return;
@@ -503,14 +552,18 @@ async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
       const nextPageId =
         (operation.pageId as Id<"pages"> | undefined) ?? node.pageId;
       const nextParentId =
-        operation.parentNodeId === undefined
-          ? node.parentNodeId
-          : ((operation.parentNodeId as Id<"nodes"> | null) ?? null);
+        operation.parentClientId || operation.parentNodeId !== null
+          ? resolveChatOperationParentNodeId(
+              operation,
+              createdNodeIdsByClientId,
+              node.parentNodeId,
+            )
+          : null;
       const position = await computeNodePosition(
         ctx.db,
         nextPageId,
         nextParentId,
-        ((operation.afterNodeId as Id<"nodes"> | null | undefined) ?? null),
+        resolveChatOperationAfterNodeId(operation, createdNodeIdsByClientId),
       );
       await ctx.db.patch(nodeId, {
         pageId: nextPageId,
@@ -570,7 +623,11 @@ async function applyOperation(ctx: MutationCtx, operation: ChatOperation) {
   }
 }
 
-async function validateOperation(ctx: MutationCtx, operation: ChatOperation) {
+async function validateOperation(
+  ctx: MutationCtx,
+  operation: ChatOperation,
+  createdNodeIdsByClientId: CreatedChatNodeIdsByClientId,
+) {
   switch (operation.type) {
     case "create_node": {
       if (!operation.pageId || !operation.text?.trim()) {
@@ -583,8 +640,10 @@ async function validateOperation(ctx: MutationCtx, operation: ChatOperation) {
         throw new Error("The destination page is no longer available.");
       }
 
-      const parentNodeId =
-        (operation.parentNodeId as Id<"nodes"> | null | undefined) ?? null;
+      const parentNodeId = resolveChatOperationParentNodeId(
+        operation,
+        createdNodeIdsByClientId,
+      );
       if (parentNodeId) {
         const parent = await ctx.db.get(parentNodeId);
         if (!parent || parent.archived || parent.pageId !== pageId) {
@@ -592,8 +651,10 @@ async function validateOperation(ctx: MutationCtx, operation: ChatOperation) {
         }
       }
 
-      const afterNodeId =
-        (operation.afterNodeId as Id<"nodes"> | null | undefined) ?? null;
+      const afterNodeId = resolveChatOperationAfterNodeId(
+        operation,
+        createdNodeIdsByClientId,
+      );
       if (afterNodeId) {
         const afterNode = await ctx.db.get(afterNodeId);
         if (
@@ -641,9 +702,13 @@ async function validateOperation(ctx: MutationCtx, operation: ChatOperation) {
       }
 
       const nextParentId =
-        operation.parentNodeId === null
-          ? null
-          : (operation.parentNodeId as Id<"nodes"> | null | undefined) ?? node.parentNodeId;
+        operation.parentClientId || operation.parentNodeId !== null
+          ? resolveChatOperationParentNodeId(
+              operation,
+              createdNodeIdsByClientId,
+              node.parentNodeId,
+            )
+          : null;
       if (nextParentId) {
         const parent = await ctx.db.get(nextParentId);
         if (!parent || parent.archived || parent.pageId !== nextPageId) {
@@ -651,8 +716,10 @@ async function validateOperation(ctx: MutationCtx, operation: ChatOperation) {
         }
       }
 
-      const afterNodeId =
-        (operation.afterNodeId as Id<"nodes"> | null | undefined) ?? null;
+      const afterNodeId = resolveChatOperationAfterNodeId(
+        operation,
+        createdNodeIdsByClientId,
+      );
       if (afterNodeId) {
         const afterNode = await ctx.db.get(afterNodeId);
         if (
@@ -741,10 +808,13 @@ function normalizeStoredChatPlanForParsing(proposedPlan: unknown) {
   return {
     ...record,
     operations: operations.map((operation) =>
-      operation && typeof operation === "object" && !("noteCompleted" in operation)
+      operation && typeof operation === "object"
         ? {
-            ...(operation as Record<string, unknown>),
+            clientId: null,
+            parentClientId: null,
+            afterClientId: null,
             noteCompleted: null,
+            ...(operation as Record<string, unknown>),
           }
         : operation,
     ),
@@ -771,12 +841,10 @@ export const applyApprovedChatPlan = mutation({
     }
 
     try {
+      const createdNodeIdsByClientId: CreatedChatNodeIdsByClientId = new Map();
       for (const operation of parsedPlan.data.operations) {
-        await validateOperation(ctx, operation);
-      }
-
-      for (const operation of parsedPlan.data.operations) {
-        await applyOperation(ctx, operation);
+        await validateOperation(ctx, operation, createdNodeIdsByClientId);
+        await applyOperation(ctx, operation, createdNodeIdsByClientId);
       }
 
       await ctx.db.patch(args.messageId, {

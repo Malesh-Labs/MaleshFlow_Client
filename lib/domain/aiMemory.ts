@@ -10,6 +10,8 @@ const LEADING_CHAT_FILLER_PATTERN =
 const COMPLETION_PATTERNS = [
   /\b(?:i\s+)?(?:watched|finished|completed|did|read|saw)\s+(.+)$/i,
   /\b(?:i\s+)?(?:listened to)\s+(.+)$/i,
+  /\b(?:i\s+)?(?:went to|went back to|visited)\s+(.+)$/i,
+  /\b(?:i\s+)?(?:bought|booked|planned|tried|got)\s+(.+)$/i,
   /\b(?:i(?:'|’)?m|i am)?\s*done with\s+(.+)$/i,
   /\b(?:mark|move)\s+(.+?)\s+(?:as\s+)?(?:done|complete|completed|watched|finished)$/i,
 ];
@@ -36,6 +38,8 @@ const TOKEN_STOP_WORDS = new Set([
   "done",
   "for",
   "finished",
+  "go",
+  "went",
   "i",
   "in",
   "item",
@@ -66,9 +70,32 @@ const TOKEN_STOP_WORDS = new Set([
   "with",
 ]);
 
+const TOKEN_ALIASES: Record<string, string> = {
+  booked: "book",
+  bought: "buy",
+  gotten: "get",
+  got: "get",
+  planned: "plan",
+  saw: "see",
+  tried: "try",
+  visited: "visit",
+  watched: "watch",
+  went: "go",
+};
+
 export type AiMemoryItem = {
   nodeId: string;
   text: string;
+};
+
+export type AiMemoryStoreOutlineItem = {
+  text: string;
+  noteCompleted: boolean;
+};
+
+export type AiMemoryStoreOutline = {
+  parentText: string | null;
+  items: AiMemoryStoreOutlineItem[];
 };
 
 export type AiMemoryMatchResult =
@@ -98,6 +125,7 @@ function cleanExtractedText(value: string) {
   return stripNodeDisplaySyntaxMarkers(
     stripInlineFormattingMarkers(replaceLinkMarkupWithLabels(value)),
   )
+    .replace(/\s+(?:you can\s+)?(?:mark|move|set)\b.*$/i, "")
     .replace(/\s+/g, " ")
     .replace(/^(?:to|that)\s+/i, "")
     .replace(/[?.!,;:]+$/g, "")
@@ -119,6 +147,71 @@ export function extractAiMemoryStoreText(input: string) {
   }
 
   return null;
+}
+
+function cleanStoreParentText(value: string) {
+  return cleanExtractedText(value)
+    .replace(/^(?:please\s+)?(?:remember|save|capture|jot down|write down|track|log)\s+/i, "")
+    .replace(/^the\s+following\s+/i, "")
+    .replace(/^that\s+/i, "")
+    .trim();
+}
+
+function cleanChecklistItemText(value: string) {
+  const withoutOuterStrike = value
+    .trim()
+    .replace(/^~~([\s\S]+)~~$/, "$1")
+    .trim();
+  return cleanExtractedText(withoutOuterStrike);
+}
+
+function parseMemoryChecklistLine(line: string): AiMemoryStoreOutlineItem | null {
+  const checkboxMatch = line.match(/^\s*(?:[-*]\s*)?\[\s*([xX]?)\s*\]\s+(.+)$/);
+  const bulletMatch = line.match(/^\s*[-*]\s+(.+)$/);
+  const rawText = checkboxMatch?.[2] ?? bulletMatch?.[1] ?? "";
+  if (!rawText) {
+    return null;
+  }
+
+  const text = cleanChecklistItemText(rawText);
+  if (text.length === 0) {
+    return null;
+  }
+
+  return {
+    text,
+    noteCompleted: Boolean(checkboxMatch?.[1]) || /~~.+~~/.test(rawText),
+  };
+}
+
+export function extractAiMemoryStoreOutline(input: string): AiMemoryStoreOutline | null {
+  const lines = input
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const firstItemIndex = lines.findIndex((line) => parseMemoryChecklistLine(line) !== null);
+  if (firstItemIndex < 0) {
+    return null;
+  }
+
+  const items = lines
+    .slice(firstItemIndex)
+    .map((line) => parseMemoryChecklistLine(line))
+    .filter((item): item is AiMemoryStoreOutlineItem => item !== null);
+  if (items.length === 0) {
+    return null;
+  }
+
+  const parentText =
+    firstItemIndex > 0
+      ? cleanStoreParentText(lines.slice(0, firstItemIndex).join(" "))
+      : "";
+
+  return {
+    parentText: parentText.length > 0 ? parentText : null,
+    items,
+  };
 }
 
 export function extractAiMemoryImplicitStoreText(input: string) {
@@ -168,6 +261,7 @@ function normalizeComparableText(value: string) {
 function tokenizeComparableText(value: string) {
   return normalizeComparableText(value)
     .split(" ")
+    .map((token) => TOKEN_ALIASES[token] ?? token)
     .map((token) => token.trim())
     .filter((token) => token.length > 0 && !TOKEN_STOP_WORDS.has(token));
 }

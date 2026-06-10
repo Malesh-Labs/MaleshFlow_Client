@@ -181,10 +181,13 @@ function buildHeuristicPlan(input: {
       operations: archiveableDoneTasks.slice(0, 12).map((node) => ({
         type: "archive_node" as const,
         description: `Archive task "${node.text}"`,
+        clientId: null,
         pageId: null,
         nodeId: node._id,
         parentNodeId: null,
+        parentClientId: null,
         afterNodeId: null,
+        afterClientId: null,
         sourceNodeId: null,
         targetNodeId: null,
         title: null,
@@ -249,8 +252,8 @@ export const runChatPlanner = action({
       pageId: args.pageId as string | undefined,
       workspace: workspace as PlannerWorkspace,
     });
-    const systemPrompt =
-      "You are planning safe workspace edits for a personal outliner. Only propose operations using real pageId and nodeId values present in the provided context. Never invent ids. Every operation object must include every schema field; use null for fields that do not apply, including noteCompleted unless the operation intentionally changes note completion. If the request is ambiguous, return zero operations and explain why. All edits require later human approval.";
+  const systemPrompt =
+    "You are planning safe workspace edits for a personal outliner. Only propose operations using real pageId and nodeId values present in the provided context. Never invent ids. Every operation object must include every schema field; use null for fields that do not apply, including clientId, parentClientId, afterClientId, and noteCompleted unless the operation intentionally uses or changes those fields. If the request is ambiguous, return zero operations and explain why. All edits require later human approval.";
     const userPrompt = [
       `Prompt: ${args.prompt}`,
       "",

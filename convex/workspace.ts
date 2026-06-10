@@ -1053,27 +1053,61 @@ export const getAiWorkingMemoryContext = internalQuery({
     }
 
     const sortedNodes = [...nodes].sort((left, right) => left.position - right.position);
-    const toMemoryItem = (node: Doc<"nodes">) => ({
-      nodeId: node._id,
-      text: normalizeWorkspaceActionCandidateText(node.text) || node.text.trim(),
-      rawText: node.text,
-      noteCompleted: getNodeSourceMeta(node).noteCompleted === true,
-      kind: node.kind,
-    });
+    const childrenByParent = groupNodesByParent(sortedNodes.filter((node) => !node.archived));
+    const nodeById = new Map(sortedNodes.map((node) => [node._id as string, node]));
+    const sectionIds = new Set([liveSection._id as string, previousSection._id as string]);
+    const getMemoryAncestorLabels = (node: Doc<"nodes">, sectionId: Id<"nodes">) => {
+      const labels: string[] = [];
+      let parentNodeId = node.parentNodeId;
+
+      while (parentNodeId && parentNodeId !== sectionId) {
+        const parent = nodeById.get(parentNodeId as string) ?? null;
+        if (!parent || sectionIds.has(parent._id as string)) {
+          break;
+        }
+
+        const label = normalizeWorkspaceActionCandidateText(parent.text) || parent.text.trim();
+        if (label.length > 0) {
+          labels.unshift(label);
+        }
+        parentNodeId = parent.parentNodeId;
+      }
+
+      return labels;
+    };
+    const toMemoryItem = (node: Doc<"nodes">, sectionId: Id<"nodes">) => {
+      const text = normalizeWorkspaceActionCandidateText(node.text) || node.text.trim();
+      const ancestors = getMemoryAncestorLabels(node, sectionId);
+      return {
+        nodeId: node._id,
+        text,
+        rawText: node.text,
+        parentText: ancestors[ancestors.length - 1] ?? null,
+        path: [...ancestors, text].filter((value) => value.length > 0).join(" > "),
+        noteCompleted: getNodeSourceMeta(node).noteCompleted === true,
+        kind: node.kind,
+      };
+    };
+    const collectMemorySectionItems = (sectionId: Id<"nodes">) => {
+      const items: ReturnType<typeof toMemoryItem>[] = [];
+      const queue = [...(childrenByParent.get(sectionId as string) ?? [])];
+
+      while (queue.length > 0 && items.length < limit) {
+        const node = queue.shift()!;
+        items.push(toMemoryItem(node, sectionId));
+        queue.unshift(...(childrenByParent.get(node._id as string) ?? []));
+      }
+
+      return items;
+    };
 
     return {
       pageId: page._id,
       pageTitle: page.title,
       liveSectionId: liveSection._id,
       previousSectionId: previousSection._id,
-      liveItems: sortedNodes
-        .filter((node) => node.parentNodeId === liveSection._id && !node.archived)
-        .slice(0, limit)
-        .map(toMemoryItem),
-      previousItems: sortedNodes
-        .filter((node) => node.parentNodeId === previousSection._id && !node.archived)
-        .slice(0, limit)
-        .map(toMemoryItem),
+      liveItems: collectMemorySectionItems(liveSection._id),
+      previousItems: collectMemorySectionItems(previousSection._id),
     };
   },
 });

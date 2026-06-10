@@ -1861,6 +1861,8 @@ function readWorkspaceActionPlan(
         typeof operationRecord.description === "string"
           ? operationRecord.description
           : "",
+      clientId:
+        typeof operationRecord.clientId === "string" ? operationRecord.clientId : null,
       pageId:
         typeof operationRecord.pageId === "string" ? operationRecord.pageId : null,
       nodeId: typeof operationRecord.nodeId === "string" ? operationRecord.nodeId : null,
@@ -1868,8 +1870,16 @@ function readWorkspaceActionPlan(
         typeof operationRecord.parentNodeId === "string"
           ? operationRecord.parentNodeId
           : null,
+      parentClientId:
+        typeof operationRecord.parentClientId === "string"
+          ? operationRecord.parentClientId
+          : null,
       afterNodeId:
         typeof operationRecord.afterNodeId === "string" ? operationRecord.afterNodeId : null,
+      afterClientId:
+        typeof operationRecord.afterClientId === "string"
+          ? operationRecord.afterClientId
+          : null,
       sourceNodeId: null,
       targetNodeId: null,
       title: null,

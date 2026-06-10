@@ -73,6 +73,7 @@ import {
 import {
   extractAiMemoryCompletionText,
   extractAiMemoryImplicitStoreText,
+  extractAiMemoryStoreOutline,
   extractAiMemoryStoreText,
   matchAiMemoryCompletion,
 } from "../lib/domain/aiMemory";
@@ -140,10 +141,13 @@ test("chat plans can propose creating a child node under a parent", () => {
       {
         type: "create_node",
         description: "Add sunset picnic under Ava date ideas",
+        clientId: null,
         pageId: "page_123",
         nodeId: null,
         parentNodeId: "node_parent",
+        parentClientId: null,
         afterNodeId: null,
+        afterClientId: null,
         sourceNodeId: null,
         targetNodeId: null,
         title: null,
@@ -163,6 +167,60 @@ test("chat plans can propose creating a child node under a parent", () => {
   assert.equal(parsed.operations[0]?.text, "sunset picnic");
 });
 
+test("chat plans can create children under a plan-local parent", () => {
+  const parsed = chatPlanSchema.parse({
+    summary: "Remember grouped items.",
+    rationale: "The request is a memory checklist.",
+    preview: ['Remember "things to do with Ava"', 'Remember "go to the beach"'],
+    operations: [
+      {
+        type: "create_node",
+        description: "Remember group",
+        clientId: "memory_parent",
+        pageId: "page_123",
+        nodeId: null,
+        parentNodeId: "live_section",
+        parentClientId: null,
+        afterNodeId: null,
+        afterClientId: null,
+        sourceNodeId: null,
+        targetNodeId: null,
+        title: null,
+        text: "things to do with Ava",
+        kind: "note",
+        taskStatus: null,
+        noteCompleted: false,
+        priority: null,
+        dueAt: null,
+        archived: null,
+      },
+      {
+        type: "create_node",
+        description: "Remember child",
+        clientId: "memory_child",
+        pageId: "page_123",
+        nodeId: null,
+        parentNodeId: null,
+        parentClientId: "memory_parent",
+        afterNodeId: null,
+        afterClientId: null,
+        sourceNodeId: null,
+        targetNodeId: null,
+        title: null,
+        text: "go to the beach",
+        kind: "note",
+        taskStatus: null,
+        noteCompleted: false,
+        priority: null,
+        dueAt: null,
+        archived: null,
+      },
+    ],
+  });
+
+  assert.equal(parsed.operations[1]?.parentClientId, "memory_parent");
+});
+
 test("chat plans can carry note completion operations", () => {
   const parsed = chatPlanSchema.parse({
     summary: "Complete memory.",
@@ -172,10 +230,13 @@ test("chat plans can carry note completion operations", () => {
       {
         type: "update_node",
         description: "Mark watch backrooms complete",
+        clientId: null,
         pageId: null,
         nodeId: "node_memory",
         parentNodeId: null,
+        parentClientId: null,
         afterNodeId: null,
+        afterClientId: null,
         sourceNodeId: null,
         targetNodeId: null,
         title: null,
@@ -204,7 +265,29 @@ test("AI memory helpers extract store and completion text", () => {
   assert.equal(extractAiMemoryImplicitStoreText("Backrooms"), "Backrooms");
   assert.equal(extractAiMemoryImplicitStoreText("what movies should i watch?"), null);
   assert.equal(extractAiMemoryCompletionText("i watched backrooms"), "backrooms");
+  assert.equal(
+    extractAiMemoryCompletionText(
+      "ok i went to the beach with ava you can mark it as done and move it to previous or whatever",
+    ),
+    "the beach with ava",
+  );
   assert.equal(extractAiMemoryCompletionText("what movies should i watch?"), null);
+});
+
+test("AI memory helpers parse multiline checklist remembers", () => {
+  assert.deepEqual(
+    extractAiMemoryStoreOutline(`please remember the following things i want to do with [[Ava|node:123]]
+
+[ ] ~~buy her bike~~
+[ ] go to the beach`),
+    {
+      parentText: "things i want to do with Ava",
+      items: [
+        { text: "buy her bike", noteCompleted: true },
+        { text: "go to the beach", noteCompleted: false },
+      ],
+    },
+  );
 });
 
 test("AI memory completion matching finds one active item or ambiguity", () => {
@@ -216,6 +299,20 @@ test("AI memory completion matching finds one active item or ambiguity", () => {
     {
       kind: "single",
       item: { nodeId: "node_1", text: "watch backrooms" },
+    },
+  );
+
+  assert.deepEqual(
+    matchAiMemoryCompletion("the beach with ava", [
+      { nodeId: "node_1", text: "things i want to do with Ava go to the beach" },
+      { nodeId: "node_2", text: "things i want to do with Ava book boat day" },
+    ]),
+    {
+      kind: "single",
+      item: {
+        nodeId: "node_1",
+        text: "things i want to do with Ava go to the beach",
+      },
     },
   );
 

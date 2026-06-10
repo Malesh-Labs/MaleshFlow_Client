@@ -4,10 +4,13 @@ import { CHAT_OPERATION_TYPES, NODE_KINDS, TASK_PRIORITIES, TASK_STATUSES } from
 export const chatOperationSchema = z.object({
   type: z.enum(CHAT_OPERATION_TYPES),
   description: z.string(),
+  clientId: z.string().nullable(),
   pageId: z.string().nullable(),
   nodeId: z.string().nullable(),
   parentNodeId: z.string().nullable(),
+  parentClientId: z.string().nullable(),
   afterNodeId: z.string().nullable(),
+  afterClientId: z.string().nullable(),
   sourceNodeId: z.string().nullable(),
   targetNodeId: z.string().nullable(),
   title: z.string().nullable(),
