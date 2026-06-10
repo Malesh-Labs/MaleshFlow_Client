@@ -1710,11 +1710,11 @@ function isOptimisticNodeId(nodeId: string | null | undefined) {
   return typeof nodeId === "string" && nodeId.startsWith("optimistic-node:");
 }
 
-function buildNodeClipboardLink(node: Pick<Doc<"nodes">, "_id" | "text">) {
+function buildNodeClipboardLink(node: Pick<Doc<"nodes">, "_id">) {
   if (isOptimisticNodeId(node._id as string)) {
     return null;
   }
-  return `[[${sanitizeLinkLabel(node.text)}|node:${node._id}]]`;
+  return `[[node:${node._id}]]`;
 }
 
 function buildPageLinkInsertText(page: Pick<Doc<"pages">, "_id" | "title">) {
