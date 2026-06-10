@@ -21,6 +21,8 @@ type UnresolvedPageLinkGroup = {
     pageId: Id<"pages">;
     pageTitle: string;
     nodeText: string;
+    parentNodeId: Id<"nodes"> | null;
+    parentNodeText: string | null;
     occurrenceCount: number;
   }>;
 };
@@ -72,11 +74,15 @@ function getNodeDisplayText(node: Pick<Doc<"nodes">, "text">) {
   return replaceLinkMarkupWithLabels(node.text).trim() || node.text.trim() || "(empty item)";
 }
 
-function getNodeContextText(node: Pick<Doc<"nodes">, "text">) {
+function getNodeContextTextFromText(text: string) {
   const plainText = stripNodeDisplaySyntaxMarkers(
-    stripInlineFormattingMarkers(replaceLinkMarkupWithLabels(node.text)),
+    stripInlineFormattingMarkers(replaceLinkMarkupWithLabels(text)),
   ).trim();
-  return plainText || node.text.trim();
+  return plainText || text.trim();
+}
+
+function getNodeContextText(node: Pick<Doc<"nodes">, "text">) {
+  return getNodeContextTextFromText(node.text);
 }
 
 function getPageDisplayText(page: Pick<Doc<"pages">, "title">) {
@@ -473,6 +479,11 @@ export function UnresolvedLinksPanel({
                         <p className="mt-2 line-clamp-2 text-sm leading-6 text-[var(--workspace-text)]">
                           {sample.nodeText || "(empty item)"}
                         </p>
+                        {sample.parentNodeText ? (
+                          <p className="mt-1 line-clamp-1 text-xs leading-5 text-[var(--workspace-text-subtle)]">
+                            Parent: {getNodeContextTextFromText(sample.parentNodeText)}
+                          </p>
+                        ) : null}
                       </div>
                     ))}
                   </div>

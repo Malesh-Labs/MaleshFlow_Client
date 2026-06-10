@@ -3365,6 +3365,9 @@ export const listUnresolvedPageLinkGroups = query({
       pageResult.pages,
       UNRESOLVED_PAGE_LINK_SCAN_NODE_LIMIT,
     );
+    const activeNodeMap = new Map(
+      nodeResult.nodes.map((node) => [node._id as string, node]),
+    );
     const groups = new Map<
       string,
       {
@@ -3377,6 +3380,8 @@ export const listUnresolvedPageLinkGroups = query({
           pageId: Id<"pages">;
           pageTitle: string;
           nodeText: string;
+          parentNodeId: Id<"nodes"> | null;
+          parentNodeText: string | null;
           occurrenceCount: number;
         }>;
       }
@@ -3421,11 +3426,16 @@ export const listUnresolvedPageLinkGroups = query({
         existing.occurrenceCount += nodeOccurrenceCount;
         existing.nodeIds.add(node._id as string);
         if (existing.samples.length < UNRESOLVED_PAGE_LINK_SAMPLE_LIMIT) {
+          const parentNode = node.parentNodeId
+            ? activeNodeMap.get(node.parentNodeId as string) ?? null
+            : null;
           existing.samples.push({
             nodeId: node._id,
             pageId: page._id,
             pageTitle: page.title,
             nodeText: node.text,
+            parentNodeId: node.parentNodeId ?? null,
+            parentNodeText: parentNode?.text ?? null,
             occurrenceCount: nodeOccurrenceCount,
           });
         }
