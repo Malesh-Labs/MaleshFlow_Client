@@ -506,26 +506,41 @@ async function applyOperation(
 
       const nextKind = operation.kind ?? node.kind;
       const patch: Partial<Doc<"nodes">> = {
-        text: operation.text ?? undefined,
-        kind: operation.kind ?? undefined,
-        taskStatus:
-          operation.kind === "task"
-            ? (operation.taskStatus ?? "todo")
-            : operation.kind === "note"
-              ? null
-              : undefined,
-        priority: operation.priority ?? undefined,
-        dueAt: operation.dueAt ?? undefined,
         updatedAt: Date.now(),
       };
+
+      if (operation.text !== null) {
+        patch.text = operation.text;
+      }
+
+      if (operation.kind !== null) {
+        patch.kind = operation.kind;
+        patch.taskStatus =
+          operation.kind === "task" ? (operation.taskStatus ?? "todo") : null;
+      } else if (operation.taskStatus !== null) {
+        patch.taskStatus = operation.taskStatus;
+      }
+
+      if (operation.priority !== null) {
+        patch.priority = operation.priority;
+      }
+
+      if (operation.dueAt !== null) {
+        patch.dueAt = operation.dueAt;
+      }
 
       if (operation.noteCompleted !== null || operation.kind !== null) {
         const sourceMeta =
           node.sourceMeta && typeof node.sourceMeta === "object"
             ? { ...(node.sourceMeta as Record<string, unknown>) }
             : {};
-        sourceMeta.noteCompleted =
-          nextKind === "note" ? (operation.noteCompleted ?? false) : false;
+        if (operation.noteCompleted !== null) {
+          sourceMeta.noteCompleted = nextKind === "note" ? operation.noteCompleted : false;
+        } else if (operation.kind === "task") {
+          sourceMeta.noteCompleted = false;
+        } else if (operation.kind === "note" && sourceMeta.noteCompleted !== true) {
+          sourceMeta.noteCompleted = false;
+        }
         patch.sourceMeta = sourceMeta;
       }
 
@@ -757,7 +772,7 @@ async function applyPlannerOperation(
     }
     case "update_planner_node": {
       await ctx.db.patch(operation.nodeId as Id<"nodes">, {
-        text: operation.text ?? undefined,
+        ...(operation.text !== null ? { text: operation.text } : {}),
         updatedAt: Date.now(),
       });
       const updated = await ctx.db.get(operation.nodeId as Id<"nodes">);
