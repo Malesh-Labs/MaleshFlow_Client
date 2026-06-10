@@ -21,6 +21,9 @@ const STORE_PATTERNS = [
   /\b(?:i\s+)?(?:need|want)\s+to\s+remember\s+(?:to\s+)?(.+)$/i,
 ];
 
+const QUESTION_LIKE_PATTERN =
+  /^(?:what|who|when|where|why|how|which|show|list|find|search|summarize|explain|tell me|do|does|did|can|could|should|would|is|are|am|was|were)\b/i;
+
 const TOKEN_STOP_WORDS = new Set([
   "a",
   "an",
@@ -116,6 +119,25 @@ export function extractAiMemoryStoreText(input: string) {
   }
 
   return null;
+}
+
+export function extractAiMemoryImplicitStoreText(input: string) {
+  const normalized = normalizeInput(input);
+  if (
+    normalized.length === 0 ||
+    QUESTION_LIKE_PATTERN.test(normalized) ||
+    extractAiMemoryCompletionText(normalized) ||
+    extractAiMemoryStoreText(normalized)
+  ) {
+    return null;
+  }
+
+  const commaStoreMatch = normalized.match(
+    /^(?:another|new|one more|more|add(?:\s+another)?)\b[^,]{0,120},\s*(.+)$/i,
+  );
+  const candidate = commaStoreMatch?.[1] ?? normalized;
+  const text = cleanExtractedText(candidate);
+  return text.length > 0 ? text : null;
 }
 
 export function extractAiMemoryCompletionText(input: string) {

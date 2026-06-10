@@ -72,6 +72,7 @@ import {
 } from "../lib/domain/migration";
 import {
   extractAiMemoryCompletionText,
+  extractAiMemoryImplicitStoreText,
   extractAiMemoryStoreText,
   matchAiMemoryCompletion,
 } from "../lib/domain/aiMemory";
@@ -199,6 +200,9 @@ test("AI memory helpers extract store and completion text", () => {
     "watch backrooms",
   );
   assert.equal(extractAiMemoryStoreText("remember to watch Backrooms!"), "watch Backrooms");
+  assert.equal(extractAiMemoryImplicitStoreText("another movie idea, Backrooms"), "Backrooms");
+  assert.equal(extractAiMemoryImplicitStoreText("Backrooms"), "Backrooms");
+  assert.equal(extractAiMemoryImplicitStoreText("what movies should i watch?"), null);
   assert.equal(extractAiMemoryCompletionText("i watched backrooms"), "backrooms");
   assert.equal(extractAiMemoryCompletionText("what movies should i watch?"), null);
 });
