@@ -73,9 +73,11 @@ import {
 import {
   extractAiMemoryCompletionText,
   extractAiMemoryImplicitStoreText,
+  extractAiMemoryInlineChecklistOutline,
   extractAiMemoryStoreOutline,
   extractAiMemoryStoreText,
   matchAiMemoryCompletion,
+  removeAiMemoryInlineChecklistItem,
 } from "../lib/domain/aiMemory";
 import { parseImportedTextToOutlineNodes } from "../lib/domain/importer";
 import { getEffectiveTaskDueDateRange } from "../lib/domain/planner";
@@ -287,6 +289,31 @@ test("AI memory helpers parse multiline checklist remembers", () => {
         { text: "go to the beach", noteCompleted: false },
       ],
     },
+  );
+});
+
+test("AI memory helpers parse and remove flattened checklist items", () => {
+  const outline = extractAiMemoryInlineChecklistOutline(
+    "things i want to do with Ava [ ] buy her bike [ ] go to the beach",
+  );
+
+  assert.equal(outline?.parentText, "things i want to do with Ava");
+  assert.deepEqual(
+    outline?.items.map((item) => ({
+      text: item.text,
+      noteCompleted: item.noteCompleted,
+    })),
+    [
+      { text: "buy her bike", noteCompleted: false },
+      { text: "go to the beach", noteCompleted: false },
+    ],
+  );
+  assert.equal(
+    outline ? removeAiMemoryInlineChecklistItem(
+      "things i want to do with Ava [ ] buy her bike [ ] go to the beach",
+      outline.items[1]!,
+    ) : null,
+    "things i want to do with Ava [ ] buy her bike",
   );
 });
 

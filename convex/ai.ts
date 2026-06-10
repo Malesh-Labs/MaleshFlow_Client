@@ -26,9 +26,11 @@ import {
   AI_WORKING_MEMORY_PAGE_TITLE,
   extractAiMemoryCompletionText,
   extractAiMemoryImplicitStoreText,
+  extractAiMemoryInlineChecklistOutline,
   extractAiMemoryStoreOutline,
   extractAiMemoryStoreText,
   matchAiMemoryCompletion,
+  removeAiMemoryInlineChecklistItem,
 } from "../lib/domain/aiMemory";
 
 const taskMetadataSchema = z.object({
@@ -581,6 +583,102 @@ async function maybePlanAiWorkingMemoryAction(
     limit: 80,
   })) as AiWorkingMemoryContext;
   const liveItems = (memoryContext?.liveItems ?? []).filter((item) => !item.noteCompleted);
+  const inlineChecklistCandidates = liveItems.flatMap((item) => {
+    const outline = extractAiMemoryInlineChecklistOutline(item.rawText);
+    if (!outline || outline.items.length < 2) {
+      return [];
+    }
+
+    return outline.items
+      .filter((outlineItem) => !outlineItem.noteCompleted)
+      .map((outlineItem, index) => ({
+        key: `${item.nodeId}:${index}`,
+        sourceItem: item,
+        outline,
+        outlineItem,
+        matchText: [
+          outlineItem.text,
+          outline.parentText ?? "",
+          item.parentText ?? "",
+          item.path,
+        ]
+          .filter((value) => value.trim().length > 0)
+          .join(" "),
+      }));
+  });
+  const inlineChecklistMatch = matchAiMemoryCompletion(
+    completionText ?? "",
+    inlineChecklistCandidates.map((candidate) => ({
+      nodeId: candidate.key,
+      text: candidate.matchText,
+    })),
+  );
+
+  if (inlineChecklistMatch.kind === "single") {
+    const matchedInlineItem =
+      inlineChecklistCandidates.find(
+        (candidate) => candidate.key === inlineChecklistMatch.item.nodeId,
+      ) ?? null;
+    if (matchedInlineItem && memoryContext?.previousSectionId) {
+      const nextSourceText = removeAiMemoryInlineChecklistItem(
+        matchedInlineItem.sourceItem.rawText,
+        matchedInlineItem.outlineItem,
+      );
+      const updateOperation = {
+        ...buildEmptyChatOperation("update_node"),
+        description: `Remove "${matchedInlineItem.outlineItem.text}" from active memory`,
+        nodeId: matchedInlineItem.sourceItem.nodeId,
+        text: nextSourceText,
+      } satisfies ChatPlan["operations"][number];
+      const createOperation = {
+        ...buildEmptyChatOperation("create_node"),
+        description: `Move "${matchedInlineItem.outlineItem.text}" to Previous`,
+        pageId: sections.pageId,
+        parentNodeId: memoryContext.previousSectionId,
+        text: matchedInlineItem.outlineItem.text,
+        kind: "note" as const,
+        noteCompleted: true,
+      } satisfies ChatPlan["operations"][number];
+      const plan: ChatPlan = {
+        summary: "Complete memory checklist item",
+        rationale: `I can remove that checklist item from the active memory line and move it to ${AI_WORKING_MEMORY_PAGE_TITLE} > Previous.`,
+        preview: [`Move "${matchedInlineItem.outlineItem.text}" to Previous`],
+        operations: [updateOperation, createOperation],
+      };
+      const messageId: Id<"chatMessages"> = await ctx.runMutation(storeAssistantPlanRef, {
+        threadId: args.threadId,
+        text: plan.rationale,
+        preview: plan.preview,
+        proposedPlan: plan,
+        metadata: {
+          kind: "workspace_memory_plan",
+          model,
+          request: requestPreview,
+        },
+      });
+
+      return {
+        kind: "plan",
+        threadId: args.threadId,
+        messageId,
+        plan,
+      };
+    }
+  }
+
+  if (inlineChecklistMatch.kind === "ambiguous") {
+    const options = inlineChecklistMatch.items
+      .slice(0, 4)
+      .map((item) => `"${item.text}"`)
+      .join(", ");
+    return await storeWorkspaceMemoryNoopResponse(ctx, {
+      threadId: args.threadId,
+      answer: `I found multiple active checklist items that could match "${completionText}": ${options}. Tell me which one to complete.`,
+      model,
+      request: requestPreview,
+    });
+  }
+
   const match = matchAiMemoryCompletion(
     completionText ?? "",
     liveItems.map((item) => ({

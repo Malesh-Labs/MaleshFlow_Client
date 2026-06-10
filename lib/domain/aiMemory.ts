@@ -98,6 +98,16 @@ export type AiMemoryStoreOutline = {
   items: AiMemoryStoreOutlineItem[];
 };
 
+export type AiMemoryInlineChecklistItem = AiMemoryStoreOutlineItem & {
+  start: number;
+  end: number;
+};
+
+export type AiMemoryInlineChecklistOutline = {
+  parentText: string | null;
+  items: AiMemoryInlineChecklistItem[];
+};
+
 export type AiMemoryMatchResult =
   | {
       kind: "none";
@@ -212,6 +222,55 @@ export function extractAiMemoryStoreOutline(input: string): AiMemoryStoreOutline
     parentText: parentText.length > 0 ? parentText : null,
     items,
   };
+}
+
+export function extractAiMemoryInlineChecklistOutline(
+  input: string,
+): AiMemoryInlineChecklistOutline | null {
+  const checkboxPattern = /\[\s*([xX]?)\s*\]\s*/g;
+  const matches = [...input.matchAll(checkboxPattern)];
+  if (matches.length === 0) {
+    return null;
+  }
+
+  const parentText = cleanStoreParentText(input.slice(0, matches[0]?.index ?? 0));
+  const items = matches
+    .map((match, index) => {
+      const start = match.index ?? 0;
+      const textStart = start + match[0].length;
+      const end = matches[index + 1]?.index ?? input.length;
+      const rawText = input.slice(textStart, end).trim();
+      const text = cleanChecklistItemText(rawText);
+      if (text.length === 0) {
+        return null;
+      }
+
+      return {
+        text,
+        noteCompleted: Boolean(match[1]) || /~~.+~~/.test(rawText),
+        start,
+        end,
+      };
+    })
+    .filter((item): item is AiMemoryInlineChecklistItem => item !== null);
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  return {
+    parentText: parentText.length > 0 ? parentText : null,
+    items,
+  };
+}
+
+export function removeAiMemoryInlineChecklistItem(
+  input: string,
+  item: Pick<AiMemoryInlineChecklistItem, "start" | "end">,
+) {
+  return `${input.slice(0, item.start)} ${input.slice(item.end)}`
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export function extractAiMemoryImplicitStoreText(input: string) {
