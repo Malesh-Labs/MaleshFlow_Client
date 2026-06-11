@@ -15846,6 +15846,7 @@ function WorkspaceAiChatPanel({
   isMobileLayout: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const memoryTextareaRef = useRef<HTMLTextAreaElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
   const historyEndRef = useRef<HTMLDivElement>(null);
   const shouldStickHistoryToBottomRef = useRef(true);
@@ -15853,6 +15854,7 @@ function WorkspaceAiChatPanel({
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
   const [isShowingRequest, setIsShowingRequest] = useState(false);
   const [isShowingRequestStructure, setIsShowingRequestStructure] = useState(false);
+  const [isMemoryExpanded, setIsMemoryExpanded] = useState(false);
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
   const activeTagToken = activeLinkToken ? null : getActiveTagToken(draft, caretPosition);
   const linkTargetResults = useQuery(
@@ -15902,6 +15904,7 @@ function WorkspaceAiChatPanel({
     : (isMobileLayout ? "SRC" : "Show Request Structure");
   const dismissButtonLabel = isMobileLayout ? "DSM" : "Dismiss";
   const pinButtonLabel = isPinned ? "Unpin" : "Pin";
+  const memoryExpandButtonLabel = isMemoryExpanded ? "Collapse" : "Expand";
   const memoryStatusLabel = isMemorySaving
     ? "Saving..."
     : isMemoryDirty
@@ -15927,6 +15930,12 @@ function WorkspaceAiChatPanel({
   useEffect(() => {
     autoResizeTextarea(textareaRef.current);
   }, [draft]);
+
+  useEffect(() => {
+    if (memoryTextareaRef.current) {
+      memoryTextareaRef.current.style.height = "";
+    }
+  }, [isMemoryExpanded]);
 
   useEffect(() => {
     const container = historyRef.current;
@@ -16110,6 +16119,14 @@ function WorkspaceAiChatPanel({
             <span>{memoryStatusLabel}</span>
             <button
               type="button"
+              onClick={() => setIsMemoryExpanded((current) => !current)}
+              aria-expanded={isMemoryExpanded}
+              className="border border-[var(--workspace-border)] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]"
+            >
+              {memoryExpandButtonLabel}
+            </button>
+            <button
+              type="button"
               onClick={onSaveMemory}
               disabled={isMemorySaving || !isMemoryDirty}
               className="border border-[var(--workspace-border)] px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-40"
@@ -16119,6 +16136,7 @@ function WorkspaceAiChatPanel({
           </div>
         </div>
         <textarea
+          ref={memoryTextareaRef}
           value={memoryDraft}
           onChange={(event) => onMemoryDraftChange(event.target.value)}
           onBlur={() => {
@@ -16127,7 +16145,12 @@ function WorkspaceAiChatPanel({
             }
           }}
           spellCheck
-          className="max-h-52 min-h-28 w-full resize-y overflow-auto border border-[var(--workspace-border-subtle)] bg-[color-mix(in_srgb,var(--workspace-surface)_70%,black)] px-3 py-3 font-mono text-xs leading-5 text-[var(--workspace-text)] outline-none transition focus:border-[var(--workspace-accent)]"
+          className={clsx(
+            "min-h-28 w-full resize-y overflow-auto border border-[var(--workspace-border-subtle)] bg-[color-mix(in_srgb,var(--workspace-surface)_70%,black)] px-3 py-3 font-mono text-xs leading-5 text-[var(--workspace-text)] outline-none transition focus:border-[var(--workspace-accent)]",
+            isMemoryExpanded
+              ? "h-[min(52vh,34rem)] max-h-[min(70vh,48rem)]"
+              : "h-32 max-h-[min(45vh,28rem)]",
+          )}
         />
         {memorySaveError ? (
           <p className="mt-2 text-xs leading-5 text-[var(--workspace-danger)]">
