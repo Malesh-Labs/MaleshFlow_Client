@@ -4,6 +4,8 @@ import {
   buildPageBacklinkFindQuery,
   buildNodeSelectionIds,
   filterPagesForCommandPalette,
+  getActiveTagAutocompleteToken,
+  shouldAddSpaceAfterTagAutocomplete,
   splitFindQuerySegments,
 } from "../lib/domain/workspaceUi";
 
@@ -15,6 +17,35 @@ test("buildNodeSelectionIds returns the inclusive range between two nodes", () =
   );
 
   assert.deepEqual([...selection], ["b", "c", "d"]);
+});
+
+test("getActiveTagAutocompleteToken does not consume the following word", () => {
+  const token = getActiveTagAutocompleteToken("#pbuy milk", 2);
+
+  assert.deepEqual(token, {
+    startIndex: 0,
+    endIndex: 2,
+    query: "p",
+  });
+  assert.equal(shouldAddSpaceAfterTagAutocomplete("#pbuy milk", token!.endIndex), true);
+
+  const nextValue =
+    "#pbuy milk".slice(0, token!.startIndex) +
+    "#perm" +
+    (shouldAddSpaceAfterTagAutocomplete("#pbuy milk", token!.endIndex) ? " " : "") +
+    "#pbuy milk".slice(token!.endIndex);
+  assert.equal(nextValue, "#perm buy milk");
+});
+
+test("getActiveTagAutocompleteToken keeps normal tag replacement bounded", () => {
+  const token = getActiveTagAutocompleteToken("call Ava #te", "call Ava #te".length);
+
+  assert.deepEqual(token, {
+    startIndex: 9,
+    endIndex: 12,
+    query: "te",
+  });
+  assert.equal(shouldAddSpaceAfterTagAutocomplete("call Ava #te", token!.endIndex), false);
 });
 
 test("filterPagesForCommandPalette prioritizes active prefix matches before archived pages", () => {

@@ -113,6 +113,39 @@ export function buildNodeSelectionIds(
   return new Set(orderedNodeIds.slice(start, end + 1));
 }
 
+export function getActiveTagAutocompleteToken(
+  value: string,
+  caretPosition: number | null,
+) {
+  if (caretPosition === null) {
+    return null;
+  }
+
+  const beforeCaret = value.slice(0, caretPosition);
+  const match = beforeCaret.match(/(^|[^A-Za-z0-9_])#([A-Za-z0-9/-]*)$/);
+  if (!match) {
+    return null;
+  }
+
+  const query = match[2] ?? "";
+  if (query.length === 0) {
+    return null;
+  }
+
+  return {
+    startIndex: beforeCaret.length - query.length - 1,
+    endIndex: caretPosition,
+    query,
+  };
+}
+
+export function shouldAddSpaceAfterTagAutocomplete(
+  value: string,
+  tokenEndIndex: number,
+) {
+  return tokenEndIndex < value.length && /[A-Za-z0-9_]/.test(value.charAt(tokenEndIndex));
+}
+
 export function splitFindQuerySegments(query: string) {
   return query
     .split("||")

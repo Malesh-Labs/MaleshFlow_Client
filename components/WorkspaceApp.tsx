@@ -85,6 +85,8 @@ import {
   buildPageBacklinkFindQuery,
   buildNodeSelectionIds,
   filterPagesForCommandPalette,
+  getActiveTagAutocompleteToken as getActiveTagToken,
+  shouldAddSpaceAfterTagAutocomplete,
   splitFindQuerySegments,
 } from "@/lib/domain/workspaceUi";
 import { DEFAULT_AI_WORKING_MEMORY_TEXT } from "@/lib/domain/aiMemory";
@@ -1700,9 +1702,18 @@ function buildNodeLinkInsertText(node: Doc<"nodes">) {
 function getLinkSuggestionInsertText(
   suggestion: LinkSuggestion,
   options: { useParentTarget?: boolean } = {},
+  context?: { value: string; tokenEndIndex: number },
 ) {
   if (options.useParentTarget && suggestion.kind === "node" && suggestion.parentInsertText) {
     return suggestion.parentInsertText;
+  }
+
+  if (
+    suggestion.kind === "tag" &&
+    context &&
+    shouldAddSpaceAfterTagAutocomplete(context.value, context.tokenEndIndex)
+  ) {
+    return `${suggestion.insertText} `;
   }
 
   return suggestion.insertText;
@@ -1963,33 +1974,6 @@ function getActiveLinkToken(value: string, caretPosition: number | null) {
     startIndex,
     endIndex: caretPosition,
     query: inner,
-  };
-}
-
-function getActiveTagToken(value: string, caretPosition: number | null) {
-  if (caretPosition === null) {
-    return null;
-  }
-
-  const beforeCaret = value.slice(0, caretPosition);
-  const match = beforeCaret.match(/(^|[^A-Za-z0-9_])#([A-Za-z0-9/-]*)$/);
-  if (!match) {
-    return null;
-  }
-
-  const query = match[2] ?? "";
-  if (query.length === 0) {
-    return null;
-  }
-
-  const startIndex = beforeCaret.length - query.length - 1;
-  const trailingMatch = value.slice(caretPosition).match(/^[A-Za-z0-9/-]*/);
-  const trailing = trailingMatch?.[0] ?? "";
-
-  return {
-    startIndex,
-    endIndex: caretPosition + trailing.length,
-    query,
   };
 }
 
@@ -15965,7 +15949,10 @@ function WorkspaceAiChatPanel({
       return;
     }
 
-    const insertText = getLinkSuggestionInsertText(suggestion, options);
+    const insertText = getLinkSuggestionInsertText(suggestion, options, {
+      value: draft,
+      tokenEndIndex: autocompleteToken.endIndex,
+    });
     const nextValue =
       draft.slice(0, autocompleteToken.startIndex) +
       insertText +
@@ -16818,7 +16805,10 @@ function OutlineNodeEditor({
       return;
     }
 
-    const insertText = getLinkSuggestionInsertText(suggestion, options);
+    const insertText = getLinkSuggestionInsertText(suggestion, options, {
+      value: draft,
+      tokenEndIndex: autocompleteToken.endIndex,
+    });
     const nextValue =
       draft.slice(0, autocompleteToken.startIndex) +
       insertText +
@@ -19134,7 +19124,10 @@ function InlineComposer({
       return;
     }
 
-    const insertText = getLinkSuggestionInsertText(suggestion, options);
+    const insertText = getLinkSuggestionInsertText(suggestion, options, {
+      value: draft,
+      tokenEndIndex: autocompleteToken.endIndex,
+    });
     const nextValue =
       draft.slice(0, autocompleteToken.startIndex) +
       insertText +
