@@ -14,8 +14,9 @@ import {
   comparePlannerTaskOrder,
   formatPlannerDayTitle,
   getEffectiveTaskDueDateRange,
+  getPlannerDateRangeBoundary,
   getPlannerWeekdayName,
-  plannerDayMatchesDueDateRange,
+  plannerDayMatchesDueDateBoundary,
 } from "../../lib/domain/planner";
 import {
   advanceRecurringDueDateRange,
@@ -805,7 +806,7 @@ export async function appendPlannerLinkedTaskCopy(
     pageId: args.plannerPageId,
     parentNodeId: args.parentNodeId,
     position,
-    text: `[[node:${args.sourceTask._id}]]`,
+    text: buildPlannerLinkedTaskCopyText(args.sourceTask, args.plannerDate),
     kind: "task",
     taskStatus: args.sourceTask.taskStatus ?? "todo",
     priority: args.sourceTask.priority,
@@ -832,6 +833,18 @@ export async function appendPlannerLinkedTaskCopy(
   }
 
   return nodeId;
+}
+
+export function buildPlannerLinkedTaskCopyText(
+  sourceTask: Pick<PlannerSourceTask, "_id" | "dueAt" | "dueEndAt">,
+  plannerDate: number,
+) {
+  const boundary = getPlannerDateRangeBoundary({
+    dayTimestamp: plannerDate,
+    dueAt: sourceTask.dueAt,
+    dueEndAt: sourceTask.dueEndAt ?? null,
+  });
+  return `[[node:${sourceTask._id}]]${boundary ? ` (${boundary})` : ""}`;
 }
 
 export async function listEligiblePlannerSourceTasks(
@@ -910,7 +923,7 @@ export async function listEligiblePlannerSourceTasks(
     };
 
     if (args.plannerDate) {
-      return plannerDayMatchesDueDateRange({
+      return plannerDayMatchesDueDateBoundary({
         dayTimestamp: args.plannerDate,
         dueAt: effectiveTask.dueAt,
         dueEndAt: effectiveTask.dueEndAt ?? null,
@@ -971,7 +984,7 @@ export function listEligiblePlannerSidebarSourceTasksFromNodes(
     };
 
     if (args.plannerDate) {
-      return plannerDayMatchesDueDateRange({
+      return plannerDayMatchesDueDateBoundary({
         dayTimestamp: args.plannerDate,
         dueAt: effectiveTask.dueAt,
         dueEndAt: effectiveTask.dueEndAt ?? null,
@@ -1018,27 +1031,32 @@ export function findExistingPlannerDayForSidebarSourceTask(
     return null;
   }
 
-  const matchingDay =
-    getPlannerDayRoots(nodes).find((dayNode) =>
-      plannerDayMatchesDueDateRange({
-        dayTimestamp: getPlannerDayTimestamp(dayNode) ?? 0,
-        dueAt: sourceTask.dueAt,
-        dueEndAt: sourceTask.dueEndAt ?? null,
-      }),
-    ) ?? null;
-  if (!matchingDay) {
+  const matchingDays = getPlannerDayRoots(nodes).filter((dayNode) =>
+    plannerDayMatchesDueDateBoundary({
+      dayTimestamp: getPlannerDayTimestamp(dayNode) ?? 0,
+      dueAt: sourceTask.dueAt,
+      dueEndAt: sourceTask.dueEndAt ?? null,
+    }),
+  );
+  if (matchingDays.length === 0) {
     return null;
   }
 
-  const alreadyLinkedOnDay = nodes.some(
-    (node) =>
-      !node.archived &&
-      node._id !== matchingDay._id &&
-      getPlannerLinkedSourceTaskId(node) === sourceTask._id &&
-      isNodeWithinRootSubtree(node, matchingDay._id, nodeMap),
-  );
+  for (const matchingDay of matchingDays) {
+    const alreadyLinkedOnDay = nodes.some(
+      (node) =>
+        !node.archived &&
+        node._id !== matchingDay._id &&
+        getPlannerLinkedSourceTaskId(node) === sourceTask._id &&
+        isNodeWithinRootSubtree(node, matchingDay._id, nodeMap),
+    );
 
-  return alreadyLinkedOnDay ? null : matchingDay;
+    if (!alreadyLinkedOnDay) {
+      return matchingDay;
+    }
+  }
+
+  return null;
 }
 
 export async function appendPlannerSidebarSourceTaskToMatchingDay(

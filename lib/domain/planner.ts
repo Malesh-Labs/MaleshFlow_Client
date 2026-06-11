@@ -125,6 +125,52 @@ export function plannerDayMatchesDueDateRange(args: {
   return day >= dueStart && day <= dueEnd;
 }
 
+export function getPlannerDateRangeBoundary(args: {
+  dayTimestamp: number;
+  dueAt: number | null;
+  dueEndAt?: number | null;
+}) {
+  if (!args.dueAt) {
+    return null;
+  }
+
+  const day = getPlannerDayDate(args.dayTimestamp).getTime();
+  const dueStart = getPlannerDayDate(args.dueAt).getTime();
+  const dueEnd = getPlannerDayDate(args.dueEndAt ?? args.dueAt).getTime();
+  if (dueEnd <= dueStart) {
+    return null;
+  }
+
+  if (day === dueStart) {
+    return "begins" as const;
+  }
+
+  if (day === dueEnd) {
+    return "ends" as const;
+  }
+
+  return null;
+}
+
+export function plannerDayMatchesDueDateBoundary(args: {
+  dayTimestamp: number;
+  dueAt: number | null;
+  dueEndAt?: number | null;
+}) {
+  if (!args.dueAt) {
+    return false;
+  }
+
+  const day = getPlannerDayDate(args.dayTimestamp).getTime();
+  const dueStart = getPlannerDayDate(args.dueAt).getTime();
+  const dueEnd = getPlannerDayDate(args.dueEndAt ?? args.dueAt).getTime();
+  if (dueEnd > dueStart) {
+    return getPlannerDateRangeBoundary(args) !== null;
+  }
+
+  return day === dueStart;
+}
+
 export function getEffectiveTaskDueDateRange<
   TNode extends TaskDueInheritanceNode,
   TMapNode extends TaskDueInheritanceNode,

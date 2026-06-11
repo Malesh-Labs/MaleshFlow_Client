@@ -86,8 +86,13 @@ import {
   restoreAiMemoryItemInText,
 } from "../lib/domain/aiMemory";
 import { parseImportedTextToOutlineNodes } from "../lib/domain/importer";
-import { getEffectiveTaskDueDateRange } from "../lib/domain/planner";
 import {
+  getEffectiveTaskDueDateRange,
+  getPlannerDateRangeBoundary,
+  plannerDayMatchesDueDateBoundary,
+} from "../lib/domain/planner";
+import {
+  buildPlannerLinkedTaskCopyText,
   findExistingPlannerDayForSidebarSourceTask,
   listEligiblePlannerSidebarSourceTasksFromNodes,
   shouldSyncPlannerLinkedRecurringSourceTaskCompletion,
@@ -1258,6 +1263,239 @@ test("planner sidebar dated tasks are eligible for matching planner days", () =>
       plannerDate,
     }).map((node) => node._id),
     ["dated-task"],
+  );
+});
+
+test("planner date ranges only auto-link on boundary days", () => {
+  const rangeStart = dateInputValueToTimestamp("2026-05-14");
+  const rangeMiddle = dateInputValueToTimestamp("2026-05-15");
+  const rangeEnd = dateInputValueToTimestamp("2026-05-16");
+  assert.ok(rangeStart);
+  assert.ok(rangeMiddle);
+  assert.ok(rangeEnd);
+
+  assert.equal(
+    plannerDayMatchesDueDateBoundary({
+      dayTimestamp: rangeStart,
+      dueAt: rangeStart,
+      dueEndAt: rangeEnd,
+    }),
+    true,
+  );
+  assert.equal(
+    getPlannerDateRangeBoundary({
+      dayTimestamp: rangeStart,
+      dueAt: rangeStart,
+      dueEndAt: rangeEnd,
+    }),
+    "begins",
+  );
+  assert.equal(
+    plannerDayMatchesDueDateBoundary({
+      dayTimestamp: rangeMiddle,
+      dueAt: rangeStart,
+      dueEndAt: rangeEnd,
+    }),
+    false,
+  );
+  assert.equal(
+    getPlannerDateRangeBoundary({
+      dayTimestamp: rangeMiddle,
+      dueAt: rangeStart,
+      dueEndAt: rangeEnd,
+    }),
+    null,
+  );
+  assert.equal(
+    plannerDayMatchesDueDateBoundary({
+      dayTimestamp: rangeEnd,
+      dueAt: rangeStart,
+      dueEndAt: rangeEnd,
+    }),
+    true,
+  );
+  assert.equal(
+    getPlannerDateRangeBoundary({
+      dayTimestamp: rangeEnd,
+      dueAt: rangeStart,
+      dueEndAt: rangeEnd,
+    }),
+    "ends",
+  );
+  assert.equal(
+    plannerDayMatchesDueDateBoundary({
+      dayTimestamp: rangeStart,
+      dueAt: rangeStart,
+      dueEndAt: null,
+    }),
+    true,
+  );
+  assert.equal(
+    getPlannerDateRangeBoundary({
+      dayTimestamp: rangeStart,
+      dueAt: rangeStart,
+      dueEndAt: null,
+    }),
+    null,
+  );
+});
+
+test("planner sidebar date range tasks skip middle planner days", () => {
+  const rangeStart = dateInputValueToTimestamp("2026-05-14");
+  const rangeMiddle = dateInputValueToTimestamp("2026-05-15");
+  const rangeEnd = dateInputValueToTimestamp("2026-05-16");
+  assert.ok(rangeStart);
+  assert.ok(rangeMiddle);
+  assert.ok(rangeEnd);
+
+  const nodes = [
+    {
+      _id: "sidebar",
+      pageId: "planner",
+      parentNodeId: null,
+      position: 1024,
+      text: "Sidebar",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      dueEndAt: null,
+      archived: false,
+      sourceMeta: { sectionSlot: "plannerSidebar" },
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    {
+      _id: "range-task",
+      pageId: "planner",
+      parentNodeId: "sidebar",
+      position: 1024,
+      text: "Range sidebar task",
+      kind: "task",
+      taskStatus: "todo",
+      priority: null,
+      dueAt: rangeStart,
+      dueEndAt: rangeEnd,
+      archived: false,
+      sourceMeta: { sourceType: "manual" },
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  ];
+
+  assert.deepEqual(
+    listEligiblePlannerSidebarSourceTasksFromNodes(nodes as never, {
+      plannerDate: rangeStart,
+    }).map((node) => node._id),
+    ["range-task"],
+  );
+  assert.deepEqual(
+    listEligiblePlannerSidebarSourceTasksFromNodes(nodes as never, {
+      plannerDate: rangeMiddle,
+    }).map((node) => node._id),
+    [],
+  );
+  assert.deepEqual(
+    listEligiblePlannerSidebarSourceTasksFromNodes(nodes as never, {
+      plannerDate: rangeEnd,
+    }).map((node) => node._id),
+    ["range-task"],
+  );
+
+  const plannedNodes = [
+    ...nodes,
+    {
+      _id: "start-day",
+      pageId: "planner",
+      parentNodeId: null,
+      position: 2048,
+      text: "Thursday",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      dueEndAt: null,
+      archived: false,
+      sourceMeta: { plannerKind: "plannerDay", plannerDate: rangeStart },
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    {
+      _id: "middle-day",
+      pageId: "planner",
+      parentNodeId: null,
+      position: 3072,
+      text: "Friday",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      dueEndAt: null,
+      archived: false,
+      sourceMeta: { plannerKind: "plannerDay", plannerDate: rangeMiddle },
+      createdAt: 1,
+      updatedAt: 1,
+    },
+    {
+      _id: "end-day",
+      pageId: "planner",
+      parentNodeId: null,
+      position: 4096,
+      text: "Saturday",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      dueEndAt: null,
+      archived: false,
+      sourceMeta: { plannerKind: "plannerDay", plannerDate: rangeEnd },
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  ];
+  assert.equal(
+    findExistingPlannerDayForSidebarSourceTask(
+      plannedNodes as never,
+      nodes[1] as never,
+    )?._id,
+    "start-day",
+  );
+  assert.equal(
+    findExistingPlannerDayForSidebarSourceTask(
+      [
+        ...plannedNodes,
+        {
+          _id: "existing-start-link",
+          pageId: "planner",
+          parentNodeId: "start-day",
+          position: 1024,
+          text: "[[node:range-task]] (begins)",
+          kind: "task",
+          taskStatus: "todo",
+          priority: null,
+          dueAt: null,
+          dueEndAt: null,
+          archived: false,
+          sourceMeta: {
+            plannerKind: "plannerLinkedTask",
+            sourceTaskNodeId: "range-task",
+          },
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ] as never,
+      nodes[1] as never,
+    )?._id,
+    "end-day",
+  );
+
+  assert.equal(
+    buildPlannerLinkedTaskCopyText(nodes[1] as never, rangeStart),
+    "[[node:range-task]] (begins)",
+  );
+  assert.equal(
+    buildPlannerLinkedTaskCopyText(nodes[1] as never, rangeEnd),
+    "[[node:range-task]] (ends)",
   );
 });
 
