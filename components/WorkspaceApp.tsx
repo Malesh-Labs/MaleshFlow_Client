@@ -1189,6 +1189,62 @@ function collectExpandableNodeIds(nodes: TreeNode[]): string[] {
   ]);
 }
 
+function collectExpandableNodeIdsFromSection(sectionNode: TreeNode | null) {
+  return sectionNode ? collectExpandableNodeIds(sectionNode.children) : [];
+}
+
+function collectEmbeddedMultiPagePageExpandableNodeIds(page: PageDoc, tree: TreeNode[]) {
+  const pageMeta = getPageMeta(page);
+  const modelSection = findSectionNode(tree, "model");
+  const recentExamplesSection = findSectionNode(tree, "recentExamples");
+  const taskSidebarSection = findSectionNode(tree, "taskSidebar");
+  const journalThoughtsSection = findSectionNode(tree, "journalThoughts");
+  const journalWhatHappenedSection = findSectionNode(tree, "journalWhatHappened");
+  const journalFeedbackSection = findSectionNode(tree, "journalFeedback");
+  const scratchpadLiveSection = findSectionNode(tree, "scratchpadLive");
+  const scratchpadPreviousSection = findSectionNode(tree, "scratchpadPrevious");
+
+  if (pageMeta.pageType === "task") {
+    const genericRoots = collectChildren(
+      tree,
+      new Set([taskSidebarSection?._id].filter(Boolean) as string[]),
+    );
+    return [
+      ...collectExpandableNodeIds(genericRoots),
+      ...collectExpandableNodeIdsFromSection(taskSidebarSection),
+    ];
+  }
+
+  if (pageMeta.pageType === "model") {
+    return [
+      ...collectExpandableNodeIdsFromSection(modelSection),
+      ...collectExpandableNodeIdsFromSection(recentExamplesSection),
+    ];
+  }
+
+  if (pageMeta.pageType === "journal") {
+    return [
+      ...collectExpandableNodeIdsFromSection(journalThoughtsSection),
+      ...collectExpandableNodeIdsFromSection(journalWhatHappenedSection),
+      ...collectExpandableNodeIdsFromSection(journalFeedbackSection),
+    ];
+  }
+
+  if (pageMeta.pageType === "scratchpad") {
+    return [
+      ...collectExpandableNodeIdsFromSection(scratchpadLiveSection),
+      ...collectExpandableNodeIdsFromSection(scratchpadPreviousSection),
+    ];
+  }
+
+  return collectExpandableNodeIds(tree);
+}
+
+function collectEmbeddedMultiPageNodeExpandableNodeIds(tree: TreeNode[]) {
+  const rootNode = tree[0] ?? null;
+  return rootNode ? collectExpandableNodeIds(rootNode.children) : [];
+}
+
 function getNodeMeta(node: { sourceMeta?: unknown } | null | undefined) {
   if (!node || typeof node.sourceMeta !== "object" || !node.sourceMeta) {
     return {};
@@ -4297,21 +4353,7 @@ function ConfiguredWorkspace({
     () => (activePageTree ? toTreeNodes(activePageTree.nodes) : []),
     [activePageTree],
   );
-  const collapsiblePageNodeIds = useMemo(() => collectExpandableNodeIds(tree), [tree]);
-  const collapseAllNodesOnSelectedPage = useCallback(() => {
-    if (!selectedPage || collapsiblePageNodeIds.length === 0) {
-      return;
-    }
-
-    updateCollapsedNodeIds((current) => {
-      const next = new Set(current);
-      for (const nodeId of collapsiblePageNodeIds) {
-        next.add(nodeId);
-      }
-      return next;
-    });
-    setPaletteOpen(false);
-  }, [collapsiblePageNodeIds, selectedPage, updateCollapsedNodeIds]);
+  const collapsiblePageTreeNodeIds = useMemo(() => collectExpandableNodeIds(tree), [tree]);
   const nodeMap = new Map(
     (activePageTree?.nodes ?? []).map((node) => [node._id as string, node]),
   );
@@ -4435,6 +4477,35 @@ function ConfiguredWorkspace({
 
     return renderItems;
   }, [multiPageIncludedNodeTrees, multiPageIncludedPageTrees, multiPageIncludedRawItems]);
+  const multiPageIncludedCollapsibleNodeIds = useMemo(
+    () => [
+      ...multiPageIncludedPageTrees.flatMap((entry) =>
+        collectEmbeddedMultiPagePageExpandableNodeIds(entry.pageTree.page, entry.tree),
+      ),
+      ...multiPageIncludedNodeTrees.flatMap((entry) =>
+        collectEmbeddedMultiPageNodeExpandableNodeIds(entry.tree),
+      ),
+    ],
+    [multiPageIncludedNodeTrees, multiPageIncludedPageTrees],
+  );
+  const collapsiblePageNodeIds =
+    pageMeta.pageType === "multiPage"
+      ? multiPageIncludedCollapsibleNodeIds
+      : collapsiblePageTreeNodeIds;
+  const collapseAllNodesOnSelectedPage = useCallback(() => {
+    if (!selectedPage || collapsiblePageNodeIds.length === 0) {
+      return;
+    }
+
+    updateCollapsedNodeIds((current) => {
+      const next = new Set(current);
+      for (const nodeId of collapsiblePageNodeIds) {
+        next.add(nodeId);
+      }
+      return next;
+    });
+    setPaletteOpen(false);
+  }, [collapsiblePageNodeIds, selectedPage, updateCollapsedNodeIds]);
   const modelPromptLines = useMemo(
     () =>
       (modelSection?.children ?? [])
