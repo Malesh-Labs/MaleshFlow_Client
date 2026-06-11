@@ -1723,6 +1723,10 @@ function buildPageLinkInsertText(page: Pick<Doc<"pages">, "_id" | "title">) {
   return `[[page:${page._id}]]`;
 }
 
+function buildPageClipboardLink(page: Pick<Doc<"pages">, "_id">) {
+  return `[[page:${page._id}]]`;
+}
+
 function buildPageBacklinkSearchQuery(page: Pick<Doc<"pages">, "_id" | "title">) {
   return buildPageBacklinkFindQuery(page);
 }
@@ -5134,6 +5138,20 @@ function ConfiguredWorkspace({
     await copyTextToClipboard(link);
     setCopySnackbarMessage("Copied node link");
   }, [selectedNodeIds, workspaceNodeMap]);
+  const copyFocusedLinkToClipboard = useCallback(async (target: EventTarget | null) => {
+    const pageTitleInput = pageTitleInputRef.current;
+    const isPageTitleFocused =
+      Boolean(pageTitleInput) &&
+      (target === pageTitleInput || document.activeElement === pageTitleInput);
+
+    if (isPageTitleFocused && selectedPage) {
+      await copyTextToClipboard(buildPageClipboardLink(selectedPage));
+      setCopySnackbarMessage("Copied page link");
+      return;
+    }
+
+    await copyNodeLinkToClipboard(target);
+  }, [copyNodeLinkToClipboard, selectedPage]);
   const getSelectedClipboardRoots = useCallback(() => {
     if (selectedNodeIds.size === 0) {
       return {
@@ -9635,7 +9653,7 @@ function ConfiguredWorkspace({
 
       if (isModifier && event.shiftKey && normalizedKey === "k") {
         event.preventDefault();
-        void copyNodeLinkToClipboard(event.target);
+        void copyFocusedLinkToClipboard(event.target);
         return;
       }
 
@@ -9915,7 +9933,7 @@ function ConfiguredWorkspace({
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
-    copyNodeLinkToClipboard,
+    copyFocusedLinkToClipboard,
     applyInlineFormattingToHighlightedNodes,
     deleteHighlightedNodes,
     focusLastVisiblePageNode,
