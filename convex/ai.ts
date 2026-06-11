@@ -50,10 +50,6 @@ const knowledgeAnswerSchema = z.object({
   sourceIndexes: z.array(z.number().int().min(1)).max(8),
 });
 
-const memoryAnswerSchema = z.object({
-  answer: z.string(),
-});
-
 const screenshotImportOutputSchema = screenshotImportResultSchema;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -740,163 +736,6 @@ async function maybePlanAiWorkingMemoryAction(
   };
 }
 
-function buildAiWorkingMemoryPromptContext(memoryContext: AiWorkingMemoryContext) {
-  if (!memoryContext) {
-    return `${AI_WORKING_MEMORY_PAGE_TITLE}: empty`;
-  }
-
-  const activeMemoryItems = memoryContext.liveItems.filter((item) => !item.noteCompleted);
-  const completedMemoryItems = [
-    ...memoryContext.previousItems,
-    ...memoryContext.liveItems.filter((item) => item.noteCompleted),
-  ];
-  const activeLines =
-    activeMemoryItems.length > 0
-      ? activeMemoryItems.map((item) => `- ${item.path || item.text || item.rawText}`)
-      : ["- none"];
-  const previousLines =
-    completedMemoryItems.length > 0
-      ? completedMemoryItems.map((item) => `- ${item.path || item.text || item.rawText}`)
-      : ["- none"];
-
-  return [
-    `${AI_WORKING_MEMORY_PAGE_TITLE} plain text note:`,
-    memoryContext.text.trim(),
-    "",
-    "Active memory items:",
-    ...activeLines,
-    "",
-    "Completed/history memory items:",
-    ...previousLines,
-  ].join("\n");
-}
-
-function buildDeterministicAiMemoryAnswer(memoryContext: AiWorkingMemoryContext) {
-  const activeItems = (memoryContext?.liveItems ?? []).filter((item) => !item.noteCompleted);
-  const previousItems = [
-    ...(memoryContext?.previousItems ?? []),
-    ...(memoryContext?.liveItems ?? []).filter((item) => item.noteCompleted),
-  ];
-
-  if (activeItems.length === 0 && previousItems.length === 0) {
-    return `${AI_WORKING_MEMORY_PAGE_TITLE} is empty right now.`;
-  }
-
-  if (activeItems.length === 0) {
-    return `There are no active ${AI_WORKING_MEMORY_PAGE_TITLE} items right now.`;
-  }
-
-  return [
-    `Active ${AI_WORKING_MEMORY_PAGE_TITLE}:`,
-    ...activeItems.slice(0, 12).map((item) => `- ${item.path || item.text || item.rawText}`),
-  ].join("\n");
-}
-
-async function answerAiWorkingMemoryQuestionInternal(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ctx: any,
-  args: WorkspaceKnowledgeArgs,
-): Promise<WorkspaceKnowledgeAnswer> {
-  assertOwnerKey(args.ownerKey);
-
-  const question = args.question.trim();
-  const model = process.env.OPENAI_CHAT_MODEL ?? "gpt-5-mini";
-  if (question.length === 0) {
-    return {
-      answer: `Tell me what to remember in ${AI_WORKING_MEMORY_PAGE_TITLE}, or ask about what is already there.`,
-      sources: [],
-      model,
-      error: null,
-      request: null,
-    };
-  }
-
-  const memoryContext = (await ctx.runQuery(getAiWorkingMemoryContextRef, {
-    limit: 80,
-  })) as AiWorkingMemoryContext;
-  const conversationContext =
-    args.conversation && args.conversation.length > 0
-      ? args.conversation
-          .slice(-RECENT_CHAT_CONTEXT_MESSAGE_COUNT)
-          .map((message) => `${message.role}: ${message.text}`)
-          .join("\n")
-      : "";
-  const memoryPromptContext = buildAiWorkingMemoryPromptContext(memoryContext);
-  const systemPrompt =
-    `${buildTodayPromptLine()} You are the AI Working Memory chat. Your only accessible workspace data is the AI Working Memory plain text note below. Answer using only that memory. Treat # Live items as current preferences, intentions, or things to remember. Treat # Previous items as done and do not recommend them as active unless the user asks about completed memory. If the memory is insufficient, say so clearly. Keep the answer concise.`;
-  const userPrompt = [
-    conversationContext.length > 0 ? "Recent conversation:" : null,
-    conversationContext.length > 0 ? conversationContext : null,
-    conversationContext.length > 0 ? "" : null,
-    `User message: ${question}`,
-    "",
-    memoryPromptContext,
-  ]
-    .filter((value): value is string => value !== null)
-    .join("\n");
-  const requestPreview = `System:\n${systemPrompt}\n\nUser:\n${userPrompt}`;
-
-  const client = getOpenAIClient();
-  if (!client) {
-    return {
-      answer: buildDeterministicAiMemoryAnswer(memoryContext),
-      sources: [],
-      model,
-      error: "OPENAI_API_KEY is not configured in Convex.",
-      request: requestPreview,
-    };
-  }
-
-  try {
-    const response = await client.responses.parse({
-      model,
-      input: [
-        {
-          role: "system",
-          content: systemPrompt,
-        },
-        {
-          role: "user",
-          content: userPrompt,
-        },
-      ],
-      text: {
-        format: zodTextFormat(memoryAnswerSchema, "ai_working_memory_answer"),
-      },
-    });
-
-    const parsed = response.output_parsed;
-    if (!parsed) {
-      return {
-        answer: "OpenAI returned no answer.",
-        sources: [],
-        model,
-        error: "OpenAI returned no parsed answer.",
-        request: requestPreview,
-      };
-    }
-
-    return {
-      answer: parsed.answer,
-      sources: [],
-      model,
-      error: null,
-      request: requestPreview,
-    };
-  } catch (error) {
-    return {
-      answer:
-        error instanceof Error
-          ? `AI Working Memory chat failed: ${error.message}`
-          : "AI Working Memory chat failed.",
-      sources: [],
-      model,
-      error: error instanceof Error ? error.message : "Unknown OpenAI error.",
-      request: requestPreview,
-    };
-  }
-}
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function answerWorkspaceQuestionInternal(ctx: any, args: WorkspaceKnowledgeArgs): Promise<WorkspaceKnowledgeAnswer> {
   assertOwnerKey(args.ownerKey);
@@ -1265,7 +1104,7 @@ export const chatWithWorkspace = action({
 
     let response: WorkspaceKnowledgeAnswer;
     try {
-      response = await answerAiWorkingMemoryQuestionInternal(ctx, {
+      response = await answerWorkspaceQuestionInternal(ctx, {
         ...args,
         question,
         conversation: priorMessages.slice(0, -1),
@@ -1275,11 +1114,11 @@ export const chatWithWorkspace = action({
       response = {
         answer:
           error instanceof Error
-            ? `AI Working Memory chat failed: ${error.message}`
-            : "AI Working Memory chat failed.",
+            ? `Workspace chat failed: ${error.message}`
+            : "Workspace chat failed.",
         sources: [],
         model,
-        error: error instanceof Error ? error.message : "Unknown AI Working Memory chat error.",
+        error: error instanceof Error ? error.message : "Unknown workspace chat error.",
         request: null,
       };
     }
