@@ -85,6 +85,7 @@ import {
   buildPageBacklinkFindQuery,
   buildNodeSelectionIds,
   filterPagesForCommandPalette,
+  getActiveLinkAutocompleteToken as getActiveLinkToken,
   getActiveTagAutocompleteToken as getActiveTagToken,
   shouldAddSpaceAfterTagAutocomplete,
   splitFindQuerySegments,
@@ -2011,34 +2012,6 @@ function readAiRequestPreview(message: Doc<"chatMessages">) {
   return typeof record.request === "string" ? record.request : null;
 }
 
-function getActiveLinkToken(value: string, caretPosition: number | null) {
-  if (caretPosition === null) {
-    return null;
-  }
-
-  const beforeCaret = value.slice(0, caretPosition);
-  const startIndex = beforeCaret.lastIndexOf("[[");
-  if (startIndex === -1) {
-    return null;
-  }
-
-  const inner = beforeCaret.slice(startIndex + 2);
-  if (
-    inner.includes("]]") ||
-    inner.includes("\n") ||
-    inner.includes("|node:") ||
-    inner.includes("|page:")
-  ) {
-    return null;
-  }
-
-  return {
-    startIndex,
-    endIndex: caretPosition,
-    query: inner,
-  };
-}
-
 function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): LinkSuggestion[] {
   if (!results) {
     return [];
@@ -2049,7 +2022,7 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
       key: `page:${page._id}`,
       kind: "page" as const,
       title: page.title,
-      subtitle: "Page",
+      subtitle: page.archived ? "Page • Archived" : "Page",
       insertText: buildPageLinkInsertText(page),
     }));
 
@@ -2067,6 +2040,7 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
         subtitle: [
           "Node",
           entry.page?.title ?? "",
+          entry.page?.archived ? "Archived page" : "",
         ].filter((value) => value.length > 0).join(" • "),
         parentTitle: parentText || null,
         parentInsertText: entry.parentNode ? buildNodeLinkInsertText(entry.parentNode) : null,
@@ -16005,12 +15979,13 @@ function WorkspaceAiChatPanel({
   const linkTargetResults = useQuery(
     api.workspace.searchLinkTargets,
     ownerKey && activeLinkToken
-      ? {
-          ownerKey,
-          query: activeLinkToken.query,
-          limit: 12,
-        }
-      : SKIP,
+        ? {
+            ownerKey,
+            query: activeLinkToken.query,
+            limit: 12,
+            includeArchived: activeLinkToken.includeArchived,
+          }
+        : SKIP,
   ) as LinkTargetSearchResults | undefined;
   const linkSuggestions = useMemo(
     () => buildLinkSuggestions(linkTargetResults),
@@ -16764,13 +16739,14 @@ function OutlineNodeEditor({
   const linkTargetResults = useQuery(
     api.workspace.searchLinkTargets,
     ownerKey && isFocused && activeLinkToken
-      ? {
-          ownerKey,
-          query: activeLinkToken.query,
-          limit: 12,
-          excludeNodeId: node._id as Id<"nodes">,
-        }
-      : SKIP,
+        ? {
+            ownerKey,
+            query: activeLinkToken.query,
+            limit: 12,
+            excludeNodeId: node._id as Id<"nodes">,
+            includeArchived: activeLinkToken.includeArchived,
+          }
+        : SKIP,
   ) as LinkTargetSearchResults | undefined;
   const linkSuggestions = useMemo(
     () => buildLinkSuggestions(linkTargetResults),
@@ -19216,12 +19192,13 @@ function InlineComposer({
   const linkTargetResults = useQuery(
     api.workspace.searchLinkTargets,
     ownerKey && isFocused && activeLinkToken
-      ? {
-          ownerKey,
-          query: activeLinkToken.query,
-          limit: 12,
-        }
-      : SKIP,
+        ? {
+            ownerKey,
+            query: activeLinkToken.query,
+            limit: 12,
+            includeArchived: activeLinkToken.includeArchived,
+          }
+        : SKIP,
   ) as LinkTargetSearchResults | undefined;
   const linkSuggestions = useMemo(
     () => buildLinkSuggestions(linkTargetResults),

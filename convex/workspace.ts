@@ -3868,6 +3868,7 @@ export const searchLinkTargets = query({
     query: v.string(),
     limit: v.optional(v.number()),
     excludeNodeId: v.optional(v.id("nodes")),
+    includeArchived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
@@ -3875,10 +3876,21 @@ export const searchLinkTargets = query({
     const normalizedQuery = normalizeLinkSearchQuery(args.query);
     const limit = Math.max(1, Math.min(args.limit ?? 12, 24));
 
-    const pages = await ctx.db
-      .query("pages")
-      .withIndex("by_archived_position", (query) => query.eq("archived", false))
-      .collect();
+    const pageBatches = await Promise.all([
+      ctx.db
+        .query("pages")
+        .withIndex("by_archived_position", (query) => query.eq("archived", false))
+        .collect(),
+      ...(args.includeArchived
+        ? [
+            ctx.db
+              .query("pages")
+              .withIndex("by_archived_position", (query) => query.eq("archived", true))
+              .collect(),
+          ]
+        : []),
+    ]);
+    const pages = pageBatches.flat();
     const visiblePages = pages.filter(
       (page) => !isSidebarSpecialPage(page) && !isPagePendingDeletion(page),
     );
@@ -3891,6 +3903,9 @@ export const searchLinkTargets = query({
         if (leftScore !== rightScore) {
           return leftScore - rightScore;
         }
+        if (left.archived !== right.archived) {
+          return left.archived ? 1 : -1;
+        }
         const lengthDelta = left.title.trim().length - right.title.trim().length;
         if (lengthDelta !== 0) {
           return lengthDelta;
@@ -3899,9 +3914,9 @@ export const searchLinkTargets = query({
       })
       .slice(0, limit);
 
-    const activePageIds = new Set(visiblePages.map((page) => page._id));
+    const searchablePageIds = new Set(visiblePages.map((page) => page._id));
     const activeNodes = (await ctx.db.query("nodes").collect()).filter(
-      (node) => !node.archived && activePageIds.has(node.pageId),
+      (node) => !node.archived && searchablePageIds.has(node.pageId),
     );
     const activeNodeMap = new Map(activeNodes.map((node) => [node._id as string, node]));
     const nodes = activeNodes.filter(

@@ -139,6 +139,64 @@ export function getActiveTagAutocompleteToken(
   };
 }
 
+function findActiveLinkAutocompleteMarker(beforeCaret: string) {
+  for (let index = beforeCaret.length - 2; index >= 0; index -= 1) {
+    if (beforeCaret.slice(index, index + 3) === "[[[") {
+      return {
+        startIndex: index,
+        markerLength: 3,
+        includeArchived: true,
+      };
+    }
+
+    if (beforeCaret.slice(index, index + 2) === "[[") {
+      if (index > 0 && beforeCaret.charAt(index - 1) === "[") {
+        continue;
+      }
+
+      return {
+        startIndex: index,
+        markerLength: 2,
+        includeArchived: false,
+      };
+    }
+  }
+
+  return null;
+}
+
+export function getActiveLinkAutocompleteToken(
+  value: string,
+  caretPosition: number | null,
+) {
+  if (caretPosition === null) {
+    return null;
+  }
+
+  const beforeCaret = value.slice(0, caretPosition);
+  const marker = findActiveLinkAutocompleteMarker(beforeCaret);
+  if (!marker) {
+    return null;
+  }
+
+  const inner = beforeCaret.slice(marker.startIndex + marker.markerLength);
+  if (
+    inner.includes("]]") ||
+    inner.includes("\n") ||
+    inner.includes("|node:") ||
+    inner.includes("|page:")
+  ) {
+    return null;
+  }
+
+  return {
+    startIndex: marker.startIndex,
+    endIndex: caretPosition,
+    query: inner,
+    includeArchived: marker.includeArchived,
+  };
+}
+
 export function shouldAddSpaceAfterTagAutocomplete(
   value: string,
   tokenEndIndex: number,

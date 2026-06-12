@@ -4,6 +4,7 @@ import {
   buildPageBacklinkFindQuery,
   buildNodeSelectionIds,
   filterPagesForCommandPalette,
+  getActiveLinkAutocompleteToken,
   getActiveTagAutocompleteToken,
   shouldAddSpaceAfterTagAutocomplete,
   splitFindQuerySegments,
@@ -46,6 +47,39 @@ test("getActiveTagAutocompleteToken keeps normal tag replacement bounded", () =>
     query: "te",
   });
   assert.equal(shouldAddSpaceAfterTagAutocomplete("call Ava #te", token!.endIndex), false);
+});
+
+test("getActiveLinkAutocompleteToken detects normal link autocomplete", () => {
+  const token = getActiveLinkAutocompleteToken("call [[ava", "call [[ava".length);
+
+  assert.deepEqual(token, {
+    startIndex: 5,
+    endIndex: 10,
+    query: "ava",
+    includeArchived: false,
+  });
+});
+
+test("getActiveLinkAutocompleteToken detects archive link autocomplete", () => {
+  const token = getActiveLinkAutocompleteToken("call [[[past", "call [[[past".length);
+
+  assert.deepEqual(token, {
+    startIndex: 5,
+    endIndex: 12,
+    query: "past",
+    includeArchived: true,
+  });
+});
+
+test("getActiveLinkAutocompleteToken ignores the inner double marker inside archive autocomplete", () => {
+  const token = getActiveLinkAutocompleteToken("[[[past", "[[[past".length);
+
+  assert.deepEqual(token, {
+    startIndex: 0,
+    endIndex: 7,
+    query: "past",
+    includeArchived: true,
+  });
 });
 
 test("filterPagesForCommandPalette prioritizes active prefix matches before archived pages", () => {
