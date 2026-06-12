@@ -122,6 +122,22 @@ export async function computeNodePosition(
   return getPositionBetween(before, after);
 }
 
+export async function computeAppendNodePosition(
+  db: DatabaseReader,
+  pageId: Id<"pages">,
+  parentNodeId: Id<"nodes"> | null,
+) {
+  const lastSibling = await db
+    .query("nodes")
+    .withIndex("by_page_parent_position", (query) =>
+      query.eq("pageId", pageId).eq("parentNodeId", parentNodeId),
+    )
+    .order("desc")
+    .first();
+
+  return getAppendPosition(lastSibling?.position ?? null);
+}
+
 export async function syncLinksForNode(
   db: DatabaseWriter,
   node: Doc<"nodes">,

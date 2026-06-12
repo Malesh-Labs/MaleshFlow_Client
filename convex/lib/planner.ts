@@ -3,6 +3,7 @@ import type { DatabaseReader, MutationCtx } from "../_generated/server";
 import {
   buildUniquePageSlug,
   collectNodeTree,
+  computeAppendNodePosition,
   computeNodePosition,
   enqueueNodeAiWork,
   enqueuePageRootEmbeddingRefresh,
@@ -437,20 +438,15 @@ async function archivePlannerSubtreeToPastWeeks(
   await syncPlannerLinkedSourceTaskCompletion(ctx, plannerSubtree, completionMode, now);
 
   const pastWeeksPage = await ensurePastWeeksPage(ctx);
-  const existingPastWeeksRoots = (await listPageNodes(ctx.db, pastWeeksPage._id)).filter(
-    (node) => node.parentNodeId === null,
-  );
-  const afterNodeId =
-    existingPastWeeksRoots.sort((left, right) => left.position - right.position)[
-      existingPastWeeksRoots.length - 1
-    ]?._id ?? null;
+  const rootPosition = await computeAppendNodePosition(ctx.db, pastWeeksPage._id, null);
 
   await clonePlannerSubtree(ctx, {
     sourceNodes: plannerSubtree,
     rootNodeId: plannerRootNode._id,
     targetPageId: pastWeeksPage._id,
     targetParentNodeId: null,
-    targetAfterNodeId: afterNodeId,
+    targetAfterNodeId: null,
+    targetRootPosition: rootPosition,
     transformSourceMeta: (_sourceNode, sourceMeta) => ({
       ...sourceMeta,
       sourceType: "plannerArchive",
@@ -478,6 +474,7 @@ export async function clonePlannerSubtree(
     targetPageId: Id<"pages">;
     targetParentNodeId: Id<"nodes"> | null;
     targetAfterNodeId: Id<"nodes"> | null;
+    targetRootPosition?: number;
     transformSourceMeta?: (
       sourceNode: Doc<"nodes">,
       sourceMeta: Record<string, unknown>,
@@ -515,12 +512,15 @@ export async function clonePlannerSubtree(
     const overrides = args.transformNode
       ? args.transformNode(sourceNode, depth)
       : {};
-    const position = await computeNodePosition(
-      ctx.db,
-      args.targetPageId,
-      parentNodeId,
-      afterNodeId,
-    );
+    const position =
+      depth === 0 && args.targetRootPosition !== undefined
+        ? args.targetRootPosition
+        : await computeNodePosition(
+            ctx.db,
+            args.targetPageId,
+            parentNodeId,
+            afterNodeId,
+          );
     const nodeId = await ctx.db.insert("nodes", {
       pageId: args.targetPageId,
       parentNodeId,
