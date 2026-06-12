@@ -10,6 +10,7 @@ export type ExtractedLink =
       label: string;
       targetNodeRef: string;
       includeParent?: boolean;
+      hideTags?: boolean;
     }
   | {
       kind: "external";
@@ -32,8 +33,9 @@ const PLAIN_URL_PATTERN =
 const PLAIN_EMAIL_PATTERN =
   /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const PAGE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?page:([a-zA-Z0-9_-]+)$/;
-const NODE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?node:([a-zA-Z0-9_-]+)(\?parent)?$/;
-const NODE_PARENT_LINK_OPTION = "?parent";
+const NODE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?node:([a-zA-Z0-9_-]+)(\?[A-Za-z]+(?:&[A-Za-z]+)*)?$/;
+const NODE_LINK_OPTION_TEXT_PATTERN = /\?(?:parent|hidetags)(?:&(?:parent|hidetags))*$/;
+const NODE_LINK_OPTION_CANDIDATE_PATTERN = /^\?[A-Za-z]+(?:&[A-Za-z]+)*/;
 const COMPLETE_MARKDOWN_LINK_PATTERN = /^\[([^\]]+)\]\(([^)]*)\)$/;
 const COMPLETE_WIKI_LINK_PATTERN = /^\[\[([^[\]]+)\]\]$/;
 const HTML_ANCHOR_PATTERN = /<a\b[^>]*href=(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi;
@@ -149,6 +151,57 @@ function isValidPlainEmailBoundary(text: string, start: number, end: number) {
   );
 }
 
+function parseNodeLinkOptions(optionText: string | null | undefined) {
+  if (!optionText) {
+    return {
+      text: "",
+      includeParent: false,
+      hideTags: false,
+    };
+  }
+
+  if (!optionText.startsWith("?")) {
+    return null;
+  }
+
+  const options = optionText.slice(1).split("&");
+  if (options.length === 0 || options.some((option) => option.length === 0)) {
+    return null;
+  }
+
+  const optionSet = new Set(options);
+  if (![...optionSet].every((option) => option === "parent" || option === "hidetags")) {
+    return null;
+  }
+
+  return {
+    text: optionText,
+    includeParent: optionSet.has("parent"),
+    hideTags: optionSet.has("hidetags"),
+  };
+}
+
+function readTrailingNodeLinkOptions(text: string, start: number) {
+  const match = text.slice(start).match(NODE_LINK_OPTION_CANDIDATE_PATTERN);
+  if (!match) {
+    return {
+      text: "",
+      includeParent: false,
+      hideTags: false,
+    };
+  }
+
+  return parseNodeLinkOptions(match[0]) ?? {
+    text: "",
+    includeParent: false,
+    hideTags: false,
+  };
+}
+
+function stripTrailingNodeLinkOptions(label: string) {
+  return label.replace(NODE_LINK_OPTION_TEXT_PATTERN, "");
+}
+
 export function extractLinkMatches(text: string) {
   const matches: ExtractedLinkMatch[] = [];
 
@@ -177,32 +230,38 @@ export function extractLinkMatches(text: string) {
       continue;
     }
 
-    const trailingParentOption =
-      text
-        .slice((match.index ?? 0) + match[0].length)
-        .startsWith(NODE_PARENT_LINK_OPTION);
     const nodeMatch = inner.match(NODE_WIKI_TARGET_PATTERN);
     if (nodeMatch) {
       const ref = nodeMatch[2]?.trim();
       if (!ref) {
         continue;
       }
-      const hasParentOption = nodeMatch[3] === NODE_PARENT_LINK_OPTION || trailingParentOption;
-      const label = trailingParentOption
-        ? `${match[0]}${NODE_PARENT_LINK_OPTION}`
+      const innerOptions = parseNodeLinkOptions(nodeMatch[3]);
+      if (!innerOptions) {
+        continue;
+      }
+      const trailingOptions = readTrailingNodeLinkOptions(
+        text,
+        (match.index ?? 0) + match[0].length,
+      );
+      const label = trailingOptions.text
+        ? `${match[0]}${trailingOptions.text}`
         : match[0];
+      const includeParent = innerOptions.includeParent || trailingOptions.includeParent;
+      const hideTags = innerOptions.hideTags || trailingOptions.hideTags;
 
       matches.push({
         start: match.index ?? 0,
         end:
           (match.index ?? 0) +
           match[0].length +
-          (trailingParentOption ? NODE_PARENT_LINK_OPTION.length : 0),
+          trailingOptions.text.length,
         link: {
           kind: "node",
           label,
           targetNodeRef: ref,
-          ...(hasParentOption ? { includeParent: true } : {}),
+          ...(includeParent ? { includeParent: true } : {}),
+          ...(hideTags ? { hideTags: true } : {}),
         },
       });
       continue;
@@ -350,18 +409,16 @@ export function getExplicitWikiLinkPreviewText(label: string) {
     return "";
   }
 
-  const wikiLabel = label.endsWith(`]]${NODE_PARENT_LINK_OPTION}`)
-    ? label.slice(0, -NODE_PARENT_LINK_OPTION.length)
-    : label;
+  const wikiLabel = stripTrailingNodeLinkOptions(label);
   if (!wikiLabel.endsWith("]]")) {
     return "";
   }
 
   return wikiLabel
     .slice(2, -2)
-    .replace(/^node:[a-zA-Z0-9_-]+(?:\?parent)?$/, "")
+    .replace(/^node:[a-zA-Z0-9_-]+(?:\?(?:parent|hidetags)(?:&(?:parent|hidetags))*)?$/, "")
     .replace(/^page:[a-zA-Z0-9_-]+$/, "")
-    .replace(/\|node:[a-zA-Z0-9_-]+(?:\?parent)?$/, "")
+    .replace(/\|node:[a-zA-Z0-9_-]+(?:\?(?:parent|hidetags)(?:&(?:parent|hidetags))*)?$/, "")
     .replace(/\|page:[a-zA-Z0-9_-]+$/, "")
     .trim();
 }

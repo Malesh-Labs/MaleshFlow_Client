@@ -2341,10 +2341,18 @@ function buildLinkPreviewSegments(
           ? normalizeNodeLinkPreviewDisplay(targetNode.parentText)
           : { text: "", isDimmed: false };
       const childNodeText = nodeLabel.text || renderedTargetNode.text || "Linked node";
-      const renderedNodeText = parentNode.text
-        ? `${childNodeText} (${parentNode.text})`
+      const visibleChildNodeText = match.link.hideTags
+        ? splitLeadingTagBadges(childNodeText).text || "Linked node"
         : childNodeText;
-      const renderedNodeParts = splitLeadingTagBadges(renderedNodeText);
+      const visibleParentNodeText = match.link.hideTags
+        ? splitLeadingTagBadges(parentNode.text).text
+        : parentNode.text;
+      const renderedNodeText = visibleParentNodeText
+        ? `${visibleChildNodeText} (${visibleParentNodeText})`
+        : visibleChildNodeText;
+      const renderedNodeParts = match.link.hideTags
+        ? { leadingTags: [], text: renderedNodeText.trimStart() }
+        : splitLeadingTagBadges(renderedNodeText);
       segments.push({
         key: `node:${match.start}`,
         kind: "link",
