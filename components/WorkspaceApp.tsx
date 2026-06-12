@@ -10467,6 +10467,13 @@ function ConfiguredWorkspace({
         return;
       }
 
+      if (
+        isTextEntryElement(event.target) ||
+        isTextEntryElement(document.activeElement)
+      ) {
+        return;
+      }
+
       event.preventDefault();
       handleExitFocusedNode();
     };
