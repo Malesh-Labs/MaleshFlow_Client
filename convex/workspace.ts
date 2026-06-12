@@ -1105,10 +1105,6 @@ function getMultiPageIncludedNodeSkipReason(
     return "System page nodes are not shown in multi-page views.";
   }
 
-  if (isPlannerPage(page)) {
-    return "Planner page nodes are not supported in multi-page views yet.";
-  }
-
   return null;
 }
 
