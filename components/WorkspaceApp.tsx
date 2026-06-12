@@ -735,6 +735,12 @@ type TreeNode = OutlineTreeNode<{
   archived: boolean;
   sourceMeta?: Record<string, unknown> | null;
 }>;
+type FocusedOutlineContextValue = {
+  roots: TreeNode[];
+  focusedNode: TreeNode | null;
+  parentNode: TreeNode | null;
+  rootParentNodeId: string | null;
+};
 
 const NodeZoomContext = createContext<(nodeId: string) => void>(() => undefined);
 const PageSectionCollapseContext = createContext<{
@@ -3593,6 +3599,12 @@ function ConfiguredWorkspace({
     new Map<number, { nodeIds: string[]; pageIds: string[] }>(),
   );
   const nextPendingSyncTokenRef = useRef(1);
+  const missingFocusedNodeClearTimeoutRef = useRef<number | null>(null);
+  const lastFocusedOutlineContextRef = useRef<{
+    pageId: string | null;
+    focusedNodeId: string;
+    context: FocusedOutlineContextValue;
+  } | null>(null);
 
   const isOwnerKeyValid = useQuery(
     api.workspace.validateOwnerKey,
@@ -4746,7 +4758,7 @@ function ConfiguredWorkspace({
   const multiPageVisibleRoots = [multiPageIncludedPagesSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
-  const focusedOutlineContext = useMemo(
+  const computedFocusedOutlineContext = useMemo<FocusedOutlineContextValue>(
     () =>
       focusedNodeId
         ? buildFocusedOutlineContext(tree, focusedNodeId)
@@ -4758,6 +4770,27 @@ function ConfiguredWorkspace({
           },
     [focusedNodeId, tree],
   );
+  useEffect(() => {
+    if (!focusedNodeId) {
+      lastFocusedOutlineContextRef.current = null;
+      return;
+    }
+
+    if (selectedPageId && computedFocusedOutlineContext.focusedNode) {
+      lastFocusedOutlineContextRef.current = {
+        pageId: selectedPageId,
+        focusedNodeId,
+        context: computedFocusedOutlineContext,
+      };
+    }
+  }, [computedFocusedOutlineContext, focusedNodeId, selectedPageId]);
+  const focusedOutlineContext =
+    computedFocusedOutlineContext.focusedNode || !focusedNodeId
+      ? computedFocusedOutlineContext
+      : lastFocusedOutlineContextRef.current?.focusedNodeId === focusedNodeId &&
+          lastFocusedOutlineContextRef.current.pageId === selectedPageId
+        ? lastFocusedOutlineContextRef.current.context
+        : computedFocusedOutlineContext;
   const focusedTreeNode = focusedOutlineContext.focusedNode;
   const focusedParentTreeNode = focusedOutlineContext.parentNode;
   const focusedContextRoots = focusedOutlineContext.roots;
@@ -6322,6 +6355,16 @@ function ConfiguredWorkspace({
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
+  useEffect(
+    () => () => {
+      if (missingFocusedNodeClearTimeoutRef.current !== null) {
+        window.clearTimeout(missingFocusedNodeClearTimeoutRef.current);
+        missingFocusedNodeClearTimeoutRef.current = null;
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     if (isOwnerKeyValid === false) {
       setOwnerKey("");
@@ -6628,6 +6671,10 @@ function ConfiguredWorkspace({
 
   useEffect(() => {
     if (!locationFocusedNodeId) {
+      if (missingFocusedNodeClearTimeoutRef.current !== null) {
+        window.clearTimeout(missingFocusedNodeClearTimeoutRef.current);
+        missingFocusedNodeClearTimeoutRef.current = null;
+      }
       if (focusedNodeId) {
         setFocusedNodeId(null);
       }
@@ -6645,14 +6692,40 @@ function ConfiguredWorkspace({
 
     const matchingNode = findTreeNodeById(tree, locationFocusedNodeId);
     if (!matchingNode) {
-      setLocationFocusedNodeId(null);
-      setFocusedNodeId(null);
-      writePageIdToHistory(
-        selectedPageId,
-        "replace",
-        selectedPage?.title ?? pagesById.get(selectedPageId as string)?.title ?? null,
-      );
+      if (isMainPaneLoading || pendingSyncSnapshot.count > 0) {
+        if (missingFocusedNodeClearTimeoutRef.current !== null) {
+          window.clearTimeout(missingFocusedNodeClearTimeoutRef.current);
+          missingFocusedNodeClearTimeoutRef.current = null;
+        }
+        return;
+      }
+
+      if (missingFocusedNodeClearTimeoutRef.current === null) {
+        missingFocusedNodeClearTimeoutRef.current = window.setTimeout(() => {
+          missingFocusedNodeClearTimeoutRef.current = null;
+          if (
+            readPageIdFromLocation() !== selectedPageId ||
+            readFocusedNodeIdFromLocation() !== locationFocusedNodeId
+          ) {
+            return;
+          }
+
+          setLocationFocusedNodeId(null);
+          setFocusedNodeId(null);
+          lastFocusedOutlineContextRef.current = null;
+          writePageIdToHistory(
+            selectedPageId,
+            "replace",
+            selectedPage?.title ?? pagesById.get(selectedPageId as string)?.title ?? null,
+          );
+        }, 1200);
+      }
       return;
+    }
+
+    if (missingFocusedNodeClearTimeoutRef.current !== null) {
+      window.clearTimeout(missingFocusedNodeClearTimeoutRef.current);
+      missingFocusedNodeClearTimeoutRef.current = null;
     }
 
     if (focusedNodeId !== locationFocusedNodeId) {
@@ -6676,8 +6749,10 @@ function ConfiguredWorkspace({
   }, [
     activePageTree,
     focusedNodeId,
+    isMainPaneLoading,
     locationFocusedNodeId,
     pagesById,
+    pendingSyncSnapshot.count,
     selectedPage?.title,
     selectedPageId,
     tree,
