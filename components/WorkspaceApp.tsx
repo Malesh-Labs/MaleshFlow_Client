@@ -16635,7 +16635,6 @@ function OutlineNodeEditor({
   const draftRef = useRef(draft);
   const markerHoldTimeoutRef = useRef<number | null>(null);
   const markerLongPressTriggeredRef = useRef(false);
-  const markerPointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const childrenAnimationFrameRef = useRef<number | null>(null);
 
   const nodeMeta = getNodeMeta(node);
@@ -17195,7 +17194,6 @@ function OutlineNodeEditor({
     }
 
     markerLongPressTriggeredRef.current = false;
-    markerPointerStartRef.current = { x: event.clientX, y: event.clientY };
     clearMarkerHold();
     markerHoldTimeoutRef.current = window.setTimeout(() => {
       markerHoldTimeoutRef.current = null;
@@ -17204,19 +17202,7 @@ function OutlineNodeEditor({
     }, NODE_MARKER_FOCUS_HOLD_MS);
   };
 
-  const handleMarkerPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (markerPointerStartRef.current === null || markerHoldTimeoutRef.current === null) {
-      return;
-    }
-    const dx = event.clientX - markerPointerStartRef.current.x;
-    const dy = event.clientY - markerPointerStartRef.current.y;
-    if (Math.sqrt(dx * dx + dy * dy) > 6) {
-      clearMarkerHold();
-    }
-  };
-
   const handleMarkerPointerEnd = () => {
-    markerPointerStartRef.current = null;
     clearMarkerHold();
   };
 
@@ -18741,7 +18727,6 @@ function OutlineNodeEditor({
                 data-selection-gutter="true"
                 draggable={!isDisabled}
                 onPointerDown={handleMarkerPointerDown}
-                onPointerMove={handleMarkerPointerMove}
                 onPointerUp={handleMarkerPointerEnd}
                 onPointerLeave={handleMarkerPointerEnd}
                 onPointerCancel={handleMarkerPointerEnd}
@@ -18757,7 +18742,7 @@ function OutlineNodeEditor({
                 disabled={isDisabled}
                 title="Click to toggle task status. Hold a modifier key to convert to a note. Long-press to focus this item."
                 className={clsx(
-                  "flex h-4 w-4 flex-none cursor-grab items-center justify-center border text-[10px] transition active:cursor-grabbing",
+                  "flex h-4 w-4 flex-none cursor-grab items-center justify-center border text-[10px] transition select-none touch-none active:cursor-grabbing",
                   node.taskStatus === "done"
                     ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
                     : "border-[var(--workspace-border-hover)] bg-[var(--workspace-surface)] text-transparent hover:border-[var(--workspace-accent)]",
@@ -18773,7 +18758,6 @@ function OutlineNodeEditor({
                 data-selection-gutter="true"
                 draggable={!isDisabled}
                 onPointerDown={handleMarkerPointerDown}
-                onPointerMove={handleMarkerPointerMove}
                 onPointerUp={handleMarkerPointerEnd}
                 onPointerLeave={handleMarkerPointerEnd}
                 onPointerCancel={handleMarkerPointerEnd}
@@ -18789,7 +18773,7 @@ function OutlineNodeEditor({
                 disabled={isDisabled}
                 title="Click to convert this note into a task. Long-press to focus this item."
                 className={clsx(
-                  "flex h-4 w-4 flex-none cursor-grab items-center justify-center transition hover:text-[var(--workspace-brand)] active:cursor-grabbing",
+                  "flex h-4 w-4 flex-none cursor-grab items-center justify-center transition select-none touch-none hover:text-[var(--workspace-brand)] active:cursor-grabbing",
                   shouldHideNoteMarker ? "opacity-0" : "",
                   isDisabled ? "cursor-not-allowed opacity-60" : "",
                 )}
@@ -18922,30 +18906,33 @@ function OutlineNodeEditor({
                   }
                 />
               ) : null}
-              {isFocused && isMobileLayout && !isDisabled ? (
-                <div className="mt-1 flex items-center gap-1">
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => { void handleMobileMoveUp().catch(() => undefined); }}
-                    disabled={!previousSibling}
-                    className="flex h-7 w-7 flex-none items-center justify-center rounded border border-[var(--workspace-border)] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-text)] active:bg-[var(--workspace-surface-hover)] disabled:opacity-30"
-                    title="Move item up"
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => { void handleMobileMoveDown().catch(() => undefined); }}
-                    disabled={!nextSibling}
-                    className="flex h-7 w-7 flex-none items-center justify-center rounded border border-[var(--workspace-border)] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-text)] active:bg-[var(--workspace-surface-hover)] disabled:opacity-30"
-                    title="Move item down"
-                  >
-                    ↓
-                  </button>
-                </div>
-              ) : null}
+              {isFocused && isMobileLayout && !isDisabled
+                ? createPortal(
+                    <div className="fixed bottom-0 left-0 right-0 z-50 flex items-center gap-2 border-t border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-3 py-2" style={{ paddingBottom: "env(safe-area-inset-bottom, 8px)" }}>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => { void handleMobileMoveUp().catch(() => undefined); }}
+                        disabled={!previousSibling}
+                        className="flex h-9 w-9 flex-none items-center justify-center rounded border border-[var(--workspace-border)] text-[var(--workspace-text-faint)] text-lg transition hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-text)] active:bg-[var(--workspace-surface-hover)] disabled:opacity-30"
+                        title="Move item up"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => { void handleMobileMoveDown().catch(() => undefined); }}
+                        disabled={!nextSibling}
+                        className="flex h-9 w-9 flex-none items-center justify-center rounded border border-[var(--workspace-border)] text-[var(--workspace-text-faint)] text-lg transition hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-text)] active:bg-[var(--workspace-surface-hover)] disabled:opacity-30"
+                        title="Move item down"
+                      >
+                        ↓
+                      </button>
+                    </div>,
+                    document.body,
+                  )
+                : null}
             </div>
             {(node.kind === "task" && (effectiveDueRange.dueAt || recurrenceFrequency)) ||
             (node.kind === "note" && node.dueAt) ? (
