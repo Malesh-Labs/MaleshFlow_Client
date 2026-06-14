@@ -181,7 +181,7 @@ const WORKSPACE_AI_CHAT_PINNED_STORAGE_KEY = "maleshflow-workspace-ai-chat-pinne
 const WORKSPACE_INBOX_TEXTAREA_ID = "workspace-inbox-textarea";
 const WORKSPACE_RANDOM_BOX_TEXTAREA_ID = "workspace-random-box-textarea";
 const MIN_WORKSPACE_TEXT_BOX_COUNT = 2;
-const NODE_MARKER_FOCUS_HOLD_MS = 500;
+const NODE_MARKER_FOCUS_HOLD_MS = 800;
 const OUTLINE_MOBILE_INDENT_STEP = 6;
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
 const ALL_PAGE_TYPE_GROUP_ORDER = [
@@ -16618,6 +16618,7 @@ function OutlineNodeEditor({
 }) {
   const history = useWorkspaceHistory();
   const onZoomIntoNode = useContext(NodeZoomContext);
+  const isMobileLayout = useIsMobileLayout();
   const completePlannerTaskRaw = useMutation(api.planner.completePlannerTask);
   const completePlannerTaskMutation = completePlannerTaskRaw.withOptimisticUpdate(
     (localStore, args) => {
@@ -16634,6 +16635,7 @@ function OutlineNodeEditor({
   const draftRef = useRef(draft);
   const markerHoldTimeoutRef = useRef<number | null>(null);
   const markerLongPressTriggeredRef = useRef(false);
+  const markerPointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const childrenAnimationFrameRef = useRef<number | null>(null);
 
   const nodeMeta = getNodeMeta(node);
@@ -17193,6 +17195,7 @@ function OutlineNodeEditor({
     }
 
     markerLongPressTriggeredRef.current = false;
+    markerPointerStartRef.current = { x: event.clientX, y: event.clientY };
     clearMarkerHold();
     markerHoldTimeoutRef.current = window.setTimeout(() => {
       markerHoldTimeoutRef.current = null;
@@ -17201,7 +17204,19 @@ function OutlineNodeEditor({
     }, NODE_MARKER_FOCUS_HOLD_MS);
   };
 
+  const handleMarkerPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (markerPointerStartRef.current === null || markerHoldTimeoutRef.current === null) {
+      return;
+    }
+    const dx = event.clientX - markerPointerStartRef.current.x;
+    const dy = event.clientY - markerPointerStartRef.current.y;
+    if (Math.sqrt(dx * dx + dy * dy) > 6) {
+      clearMarkerHold();
+    }
+  };
+
   const handleMarkerPointerEnd = () => {
+    markerPointerStartRef.current = null;
     clearMarkerHold();
   };
 
@@ -17231,6 +17246,74 @@ function OutlineNodeEditor({
     }
 
     void handleToggleNodeKind().catch(() => undefined);
+  };
+
+  const handleMobileMoveUp = async () => {
+    if (isDisabled || !previousSibling) return;
+    const saveResult = await commitNodeText(draft);
+    const historyEntries: HistoryEntry[] = [];
+    if (saveResult.updateEntry) historyEntries.push(saveResult.updateEntry);
+    if (saveResult.deleted) return;
+    const afterNodeId =
+      siblingIndex > 1
+        ? (siblings[siblingIndex - 2]?._id as Id<"nodes"> | undefined) ?? null
+        : null;
+    const beforePlacement = buildNodePlacement(
+      pageId,
+      parentNodeId,
+      (previousSibling._id as Id<"nodes"> | undefined) ?? null,
+    );
+    const afterPlacement = buildNodePlacement(pageId, parentNodeId, afterNodeId);
+    await moveNode({ ownerKey, nodeId: node._id as Id<"nodes">, pageId, parentNodeId, afterNodeId });
+    historyEntries.push({
+      type: "move_node",
+      pageId,
+      nodeId: node._id as Id<"nodes">,
+      beforePlacement,
+      afterPlacement,
+      focusEditorId: editorId,
+    });
+    if (historyEntries.length === 1) {
+      history.pushUndoEntry(historyEntries[0]!);
+    } else {
+      history.pushUndoEntry({ type: "compound", pageId, entries: historyEntries, focusAfterUndoId: editorId, focusAfterRedoId: editorId });
+    }
+    window.setTimeout(() => { focusElementAtEnd(textareaRef.current); }, 0);
+    onSelectSingleNode(node._id);
+  };
+
+  const handleMobileMoveDown = async () => {
+    if (isDisabled || !nextSibling) return;
+    const saveResult = await commitNodeText(draft);
+    const historyEntries: HistoryEntry[] = [];
+    if (saveResult.updateEntry) historyEntries.push(saveResult.updateEntry);
+    if (saveResult.deleted) return;
+    const beforePlacement = buildNodePlacement(
+      pageId,
+      parentNodeId,
+      (previousSibling?._id as Id<"nodes"> | undefined) ?? null,
+    );
+    const afterPlacement = buildNodePlacement(
+      pageId,
+      parentNodeId,
+      nextSibling._id as Id<"nodes">,
+    );
+    await moveNode({ ownerKey, nodeId: node._id as Id<"nodes">, pageId, parentNodeId, afterNodeId: nextSibling._id as Id<"nodes"> });
+    historyEntries.push({
+      type: "move_node",
+      pageId,
+      nodeId: node._id as Id<"nodes">,
+      beforePlacement,
+      afterPlacement,
+      focusEditorId: editorId,
+    });
+    if (historyEntries.length === 1) {
+      history.pushUndoEntry(historyEntries[0]!);
+    } else {
+      history.pushUndoEntry({ type: "compound", pageId, entries: historyEntries, focusAfterUndoId: editorId, focusAfterRedoId: editorId });
+    }
+    window.setTimeout(() => { focusElementAtEnd(textareaRef.current); }, 0);
+    onSelectSingleNode(node._id);
   };
 
   const handleDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
@@ -18658,6 +18741,7 @@ function OutlineNodeEditor({
                 data-selection-gutter="true"
                 draggable={!isDisabled}
                 onPointerDown={handleMarkerPointerDown}
+                onPointerMove={handleMarkerPointerMove}
                 onPointerUp={handleMarkerPointerEnd}
                 onPointerLeave={handleMarkerPointerEnd}
                 onPointerCancel={handleMarkerPointerEnd}
@@ -18689,6 +18773,7 @@ function OutlineNodeEditor({
                 data-selection-gutter="true"
                 draggable={!isDisabled}
                 onPointerDown={handleMarkerPointerDown}
+                onPointerMove={handleMarkerPointerMove}
                 onPointerUp={handleMarkerPointerEnd}
                 onPointerLeave={handleMarkerPointerEnd}
                 onPointerCancel={handleMarkerPointerEnd}
@@ -18836,6 +18921,30 @@ function OutlineNodeEditor({
                       : "No matching tags."
                   }
                 />
+              ) : null}
+              {isFocused && isMobileLayout && !isDisabled ? (
+                <div className="mt-1 flex items-center gap-1">
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => { void handleMobileMoveUp().catch(() => undefined); }}
+                    disabled={!previousSibling}
+                    className="flex h-7 w-7 flex-none items-center justify-center rounded border border-[var(--workspace-border)] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-text)] active:bg-[var(--workspace-surface-hover)] disabled:opacity-30"
+                    title="Move item up"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => { void handleMobileMoveDown().catch(() => undefined); }}
+                    disabled={!nextSibling}
+                    className="flex h-7 w-7 flex-none items-center justify-center rounded border border-[var(--workspace-border)] text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-text)] active:bg-[var(--workspace-surface-hover)] disabled:opacity-30"
+                    title="Move item down"
+                  >
+                    ↓
+                  </button>
+                </div>
               ) : null}
             </div>
             {(node.kind === "task" && (effectiveDueRange.dueAt || recurrenceFrequency)) ||
