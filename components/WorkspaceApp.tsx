@@ -18906,7 +18906,7 @@ function OutlineNodeEditor({
                   }
                 />
               ) : null}
-              {isFocused && isMobileLayout && !isDisabled
+              {isFocused && !isDisabled
                 ? createPortal(
                     <div className="fixed bottom-0 left-0 right-0 z-50 flex items-center gap-2 border-t border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-3 py-2" style={{ paddingBottom: "env(safe-area-inset-bottom, 8px)" }}>
                       <button
@@ -18914,20 +18914,20 @@ function OutlineNodeEditor({
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={() => { void handleMobileMoveUp().catch(() => undefined); }}
                         disabled={!previousSibling}
-                        className="flex h-9 w-9 flex-none items-center justify-center rounded border border-[var(--workspace-border)] text-[var(--workspace-text-faint)] text-lg transition hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-text)] active:bg-[var(--workspace-surface-hover)] disabled:opacity-30"
-                        title="Move item up"
+                        className="flex h-9 items-center justify-center gap-1 rounded border border-[var(--workspace-border)] px-2 text-xs text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-text)] active:bg-[var(--workspace-surface-hover)] disabled:opacity-30"
                       >
-                        ↑
+                        <span className="text-base leading-none">↑</span>
+                        <span>Move up</span>
                       </button>
                       <button
                         type="button"
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={() => { void handleMobileMoveDown().catch(() => undefined); }}
                         disabled={!nextSibling}
-                        className="flex h-9 w-9 flex-none items-center justify-center rounded border border-[var(--workspace-border)] text-[var(--workspace-text-faint)] text-lg transition hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-text)] active:bg-[var(--workspace-surface-hover)] disabled:opacity-30"
-                        title="Move item down"
+                        className="flex h-9 items-center justify-center gap-1 rounded border border-[var(--workspace-border)] px-2 text-xs text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-text)] active:bg-[var(--workspace-surface-hover)] disabled:opacity-30"
                       >
-                        ↓
+                        <span className="text-base leading-none">↓</span>
+                        <span>Move down</span>
                       </button>
                     </div>,
                     document.body,
