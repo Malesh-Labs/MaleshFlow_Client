@@ -821,6 +821,68 @@ function useIsMobileLayout() {
   );
 }
 
+// Keeps a fixed-position element pinned to the bottom of the visual viewport
+// (just above the on-screen keyboard on mobile). On desktop the offset is 0.
+function useVisualViewportStyle(): React.CSSProperties {
+  const [style, setStyle] = useState<React.CSSProperties>({});
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const update = () => {
+      const offsetY = window.innerHeight - vv.height - vv.offsetTop;
+      setStyle({ transform: `translateY(${-offsetY}px)` });
+    };
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, []);
+  return style;
+}
+
+function MobileReorderToolbar({
+  canMoveUp,
+  canMoveDown,
+  onMoveUp,
+  onMoveDown,
+}: {
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+}) {
+  const vpStyle = useVisualViewportStyle();
+  return createPortal(
+    <div
+      className="fixed bottom-0 left-0 right-0 z-50 flex items-center gap-2 border-t border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-3 py-2"
+      style={{ ...vpStyle, paddingBottom: "env(safe-area-inset-bottom, 8px)" }}
+    >
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onMoveUp}
+        disabled={!canMoveUp}
+        className="flex h-9 w-9 flex-none items-center justify-center rounded border border-[var(--workspace-border)] text-lg text-[var(--workspace-text-faint)] transition active:bg-[var(--workspace-surface-hover)] disabled:opacity-30"
+      >
+        ↑
+      </button>
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onMoveDown}
+        disabled={!canMoveDown}
+        className="flex h-9 w-9 flex-none items-center justify-center rounded border border-[var(--workspace-border)] text-lg text-[var(--workspace-text-faint)] transition active:bg-[var(--workspace-surface-hover)] disabled:opacity-30"
+      >
+        ↓
+      </button>
+    </div>,
+    document.body,
+  );
+}
+
 function toTreeNodes(nodes: Doc<"nodes">[]) {
   return buildOutlineTree(
     nodes.map((node) => ({
@@ -18906,33 +18968,14 @@ function OutlineNodeEditor({
                   }
                 />
               ) : null}
-              {isFocused && !isDisabled
-                ? createPortal(
-                    <div className="fixed bottom-0 left-0 right-0 z-50 flex items-center gap-2 border-t border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-3 py-2" style={{ paddingBottom: "env(safe-area-inset-bottom, 8px)" }}>
-                      <button
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => { void handleMobileMoveUp().catch(() => undefined); }}
-                        disabled={!previousSibling}
-                        className="flex h-9 items-center justify-center gap-1 rounded border border-[var(--workspace-border)] px-2 text-xs text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-text)] active:bg-[var(--workspace-surface-hover)] disabled:opacity-30"
-                      >
-                        <span className="text-base leading-none">↑</span>
-                        <span>Move up</span>
-                      </button>
-                      <button
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => { void handleMobileMoveDown().catch(() => undefined); }}
-                        disabled={!nextSibling}
-                        className="flex h-9 items-center justify-center gap-1 rounded border border-[var(--workspace-border)] px-2 text-xs text-[var(--workspace-text-faint)] transition hover:border-[var(--workspace-border-hover)] hover:text-[var(--workspace-text)] active:bg-[var(--workspace-surface-hover)] disabled:opacity-30"
-                      >
-                        <span className="text-base leading-none">↓</span>
-                        <span>Move down</span>
-                      </button>
-                    </div>,
-                    document.body,
-                  )
-                : null}
+              {isFocused && isMobileLayout && !isDisabled ? (
+                <MobileReorderToolbar
+                  canMoveUp={previousSibling !== null}
+                  canMoveDown={nextSibling !== null}
+                  onMoveUp={() => { void handleMobileMoveUp().catch(() => undefined); }}
+                  onMoveDown={() => { void handleMobileMoveDown().catch(() => undefined); }}
+                />
+              ) : null}
             </div>
             {(node.kind === "task" && (effectiveDueRange.dueAt || recurrenceFrequency)) ||
             (node.kind === "note" && node.dueAt) ? (
