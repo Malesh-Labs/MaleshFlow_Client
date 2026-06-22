@@ -11,6 +11,7 @@ export type ExtractedLink =
       targetNodeRef: string;
       includeParent?: boolean;
       hideTags?: boolean;
+      showChildren?: boolean;
     }
   | {
       kind: "external";
@@ -34,7 +35,8 @@ const PLAIN_EMAIL_PATTERN =
   /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const PAGE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?page:([a-zA-Z0-9_-]+)$/;
 const NODE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?node:([a-zA-Z0-9_-]+)(\?[A-Za-z]+(?:&[A-Za-z]+)*)?$/;
-const NODE_LINK_OPTION_TEXT_PATTERN = /\?(?:parent|hidetags)(?:&(?:parent|hidetags))*$/;
+const NODE_LINK_OPTION_TEXT_PATTERN =
+  /\?(?:parent|hidetags|showchildren)(?:&(?:parent|hidetags|showchildren))*$/i;
 const NODE_LINK_OPTION_CANDIDATE_PATTERN = /^\?[A-Za-z]+(?:&[A-Za-z]+)*/;
 const COMPLETE_MARKDOWN_LINK_PATTERN = /^\[([^\]]+)\]\(([^)]*)\)$/;
 const COMPLETE_WIKI_LINK_PATTERN = /^\[\[([^[\]]+)\]\]$/;
@@ -157,6 +159,7 @@ function parseNodeLinkOptions(optionText: string | null | undefined) {
       text: "",
       includeParent: false,
       hideTags: false,
+      showChildren: false,
     };
   }
 
@@ -169,8 +172,15 @@ function parseNodeLinkOptions(optionText: string | null | undefined) {
     return null;
   }
 
-  const optionSet = new Set(options);
-  if (![...optionSet].every((option) => option === "parent" || option === "hidetags")) {
+  const optionSet = new Set(options.map((option) => option.toLowerCase()));
+  if (
+    ![...optionSet].every(
+      (option) =>
+        option === "parent" ||
+        option === "hidetags" ||
+        option === "showchildren",
+    )
+  ) {
     return null;
   }
 
@@ -178,6 +188,7 @@ function parseNodeLinkOptions(optionText: string | null | undefined) {
     text: optionText,
     includeParent: optionSet.has("parent"),
     hideTags: optionSet.has("hidetags"),
+    showChildren: optionSet.has("showchildren"),
   };
 }
 
@@ -188,6 +199,7 @@ function readTrailingNodeLinkOptions(text: string, start: number) {
       text: "",
       includeParent: false,
       hideTags: false,
+      showChildren: false,
     };
   }
 
@@ -195,6 +207,7 @@ function readTrailingNodeLinkOptions(text: string, start: number) {
     text: "",
     includeParent: false,
     hideTags: false,
+    showChildren: false,
   };
 }
 
@@ -249,6 +262,7 @@ export function extractLinkMatches(text: string) {
         : match[0];
       const includeParent = innerOptions.includeParent || trailingOptions.includeParent;
       const hideTags = innerOptions.hideTags || trailingOptions.hideTags;
+      const showChildren = innerOptions.showChildren || trailingOptions.showChildren;
 
       matches.push({
         start: match.index ?? 0,
@@ -262,6 +276,7 @@ export function extractLinkMatches(text: string) {
           targetNodeRef: ref,
           ...(includeParent ? { includeParent: true } : {}),
           ...(hideTags ? { hideTags: true } : {}),
+          ...(showChildren ? { showChildren: true } : {}),
         },
       });
       continue;
@@ -416,9 +431,15 @@ export function getExplicitWikiLinkPreviewText(label: string) {
 
   return wikiLabel
     .slice(2, -2)
-    .replace(/^node:[a-zA-Z0-9_-]+(?:\?(?:parent|hidetags)(?:&(?:parent|hidetags))*)?$/, "")
+    .replace(
+      /^node:[a-zA-Z0-9_-]+(?:\?(?:parent|hidetags|showchildren)(?:&(?:parent|hidetags|showchildren))*)?$/i,
+      "",
+    )
     .replace(/^page:[a-zA-Z0-9_-]+$/, "")
-    .replace(/\|node:[a-zA-Z0-9_-]+(?:\?(?:parent|hidetags)(?:&(?:parent|hidetags))*)?$/, "")
+    .replace(
+      /\|node:[a-zA-Z0-9_-]+(?:\?(?:parent|hidetags|showchildren)(?:&(?:parent|hidetags|showchildren))*)?$/i,
+      "",
+    )
     .replace(/\|page:[a-zA-Z0-9_-]+$/, "")
     .trim();
 }

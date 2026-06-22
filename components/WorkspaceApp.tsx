@@ -182,6 +182,7 @@ const WORKSPACE_INBOX_TEXTAREA_ID = "workspace-inbox-textarea";
 const WORKSPACE_RANDOM_BOX_TEXTAREA_ID = "workspace-random-box-textarea";
 const MIN_WORKSPACE_TEXT_BOX_COUNT = 2;
 const NODE_MARKER_FOCUS_HOLD_MS = 800;
+const MAX_NODE_LINK_SHOW_CHILDREN_DEPTH = 3;
 const OUTLINE_MOBILE_INDENT_STEP = 6;
 const SIDEBAR_MOBILE_INDENT_STEP = 12;
 const ALL_PAGE_TYPE_GROUP_ORDER = [
@@ -416,6 +417,13 @@ type LinkTargetSearchResults = {
     parentNode?: Doc<"nodes"> | null;
   }>;
 };
+type NodeLinkChildTreeResult = {
+  sourcePage: PageDoc;
+  rootNode: Doc<"nodes">;
+  nodes: Doc<"nodes">[];
+  nodeBacklinkCounts: Record<string, number>;
+  loadWarning: string | null;
+};
 type NodeLinkTargetResolution = {
   nodeId: Id<"nodes">;
   pageId: Id<"pages"> | null;
@@ -425,6 +433,7 @@ type NodeLinkTargetResolution = {
   parentNodeId: Id<"nodes"> | null;
   parentText: string | null;
   parentArchived: boolean;
+  childTree?: NodeLinkChildTreeResult | null;
 };
 type LinkSuggestion =
   | {
@@ -478,6 +487,7 @@ type LinkPreviewSegment =
       isDimmed?: boolean;
       pageTypeBadge?: string | null;
       leadingTags?: LinkPreviewTagBadge[];
+      showChildren?: boolean;
     }
   | {
       key: string;
@@ -751,6 +761,7 @@ const PageSectionCollapseContext = createContext<{
   collapsedSectionKeys: new Set(),
   onToggleSectionCollapsed: () => undefined,
 });
+const EMPTY_NODE_ID_SET = new Set<string>();
 
 function useOwnerKey() {
   const ownerKey = useSyncExternalStore(
@@ -2408,6 +2419,7 @@ function buildLinkPreviewSegments(
           renderedNodeParts.leadingTags.length > 0
             ? renderedNodeParts.leadingTags
             : undefined,
+        showChildren: match.link.showChildren === true,
       });
     }
 
@@ -15198,6 +15210,8 @@ function OutlineNodeList({
   recurringCompletionMode,
   completeTaskPageTask = async () => undefined,
   mobileIndentStep = OUTLINE_MOBILE_INDENT_STEP,
+  showChildrenDepth = 0,
+  showChildrenAncestorNodeIds = EMPTY_NODE_ID_SET,
 }: {
   nodes: TreeNode[];
   ownerKey: string;
@@ -15253,6 +15267,8 @@ function OutlineNodeList({
   recurringCompletionMode: RecurringCompletionMode;
   completeTaskPageTask?: CompleteTaskPageTaskMutation;
   mobileIndentStep?: number;
+  showChildrenDepth?: number;
+  showChildrenAncestorNodeIds?: Set<string>;
 }) {
   return (
     <>
@@ -15345,9 +15361,341 @@ function OutlineNodeList({
           recurringCompletionMode={recurringCompletionMode}
           completeTaskPageTask={completeTaskPageTask}
           mobileIndentStep={mobileIndentStep}
+          showChildrenDepth={showChildrenDepth}
+          showChildrenAncestorNodeIds={showChildrenAncestorNodeIds}
         />
       ))}
     </>
+  );
+}
+
+function LinkedNodeChildrenBlock({
+  sourcePage,
+  rootNode,
+  roots,
+  nodeMap,
+  nodeBacklinkCounts,
+  loadWarning,
+  ownerKey,
+  createNodesBatch,
+  insertOutlineClipboardNodes,
+  updateNode,
+  moveNode,
+  insertNodeAbove,
+  splitNode,
+  replaceNodeAndInsertSiblings,
+  setNodeTreeArchived,
+  collapsedNodeIds,
+  pendingSyncNodeIds,
+  selectedNodeIds,
+  selectionAnchorNodeId,
+  onToggleNodeCollapsed,
+  onSelectSingleNode,
+  onSuppressTextEditingSelectionClear,
+  pendingInsertedComposer,
+  onOpenInsertedComposer,
+  onClearInsertedComposer,
+  onBeginTextEditing,
+  activeDraggedNodeId,
+  activeDraggedNodePayload,
+  onSetActiveDraggedNodeId,
+  onSetActiveDraggedNodePayload,
+  onSetSelectedNodeIds,
+  availableTags,
+  pagesByTitle,
+  pagesById,
+  favoritedNodeIds,
+  onOpenPage,
+  onOpenNode,
+  onOpenTag,
+  onOpenFindQuery,
+  onToggleNodeFavorite,
+  recurringCompletionMode,
+  completeTaskPageTask,
+  mobileIndentStep,
+  showChildrenDepth,
+  ancestorNodeIds,
+}: {
+  sourcePage: PageDoc;
+  rootNode: Doc<"nodes">;
+  roots: TreeNode[];
+  nodeMap: Map<string, Doc<"nodes">>;
+  nodeBacklinkCounts: Map<string, number>;
+  loadWarning: string | null;
+  ownerKey: string;
+  createNodesBatch: CreateNodesBatchMutation;
+  insertOutlineClipboardNodes: InsertOutlineClipboardNodesFn;
+  updateNode: UpdateNodeMutation;
+  moveNode: MoveNodeMutation;
+  insertNodeAbove: InsertNodeAboveMutation;
+  splitNode: SplitNodeMutation;
+  replaceNodeAndInsertSiblings: ReplaceNodeAndInsertSiblingsMutation;
+  setNodeTreeArchived: SetNodeTreeArchivedMutation;
+  collapsedNodeIds: Set<string>;
+  pendingSyncNodeIds: Set<string>;
+  selectedNodeIds: Set<string>;
+  selectionAnchorNodeId: string | null;
+  onToggleNodeCollapsed: (nodeId: string) => void;
+  onSelectSingleNode: (nodeId: string) => void;
+  onSuppressTextEditingSelectionClear: () => void;
+  pendingInsertedComposer: PendingInsertedComposer | null;
+  onOpenInsertedComposer: (
+    pageId: Id<"pages">,
+    parentNodeId: Id<"nodes"> | null,
+    afterNodeId: Id<"nodes">,
+    defaultKind?: "note" | "task",
+  ) => void;
+  onClearInsertedComposer: () => void;
+  onBeginTextEditing: () => void;
+  activeDraggedNodeId: string | null;
+  activeDraggedNodePayload: DraggedNodePayload | null;
+  onSetActiveDraggedNodeId: (nodeId: string | null) => void;
+  onSetActiveDraggedNodePayload: (payload: DraggedNodePayload | null) => void;
+  onSetSelectedNodeIds: (nodeIds: string[]) => void;
+  availableTags: SidebarTagResult[];
+  pagesByTitle: Map<string, PageDoc>;
+  pagesById: Map<string, PageDoc>;
+  favoritedNodeIds: Set<string>;
+  onOpenPage: (pageId: Id<"pages">) => void;
+  onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
+  onOpenTag: (tag: string) => void;
+  onOpenFindQuery: (query: string) => void;
+  onToggleNodeFavorite: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
+  recurringCompletionMode: RecurringCompletionMode;
+  completeTaskPageTask: CompleteTaskPageTaskMutation;
+  mobileIndentStep: number;
+  showChildrenDepth: number;
+  ancestorNodeIds: Set<string>;
+}) {
+  const history = useWorkspaceHistory();
+  const linkedVisibleNodeOrder = useMemo(
+    () => flattenTreeNodes(roots, collapsedNodeIds).map((node) => node._id),
+    [collapsedNodeIds, roots],
+  );
+  const sourcePageId = sourcePage._id as Id<"pages">;
+  const rootNodeId = rootNode._id as Id<"nodes">;
+  const isSourcePageReadOnly = sourcePage.archived;
+
+  const selectLinkedNodeRange = useCallback(
+    (anchorNodeId: string, currentNodeId: string) => {
+      onSetSelectedNodeIds([
+        ...buildNodeSelectionIds(
+          linkedVisibleNodeOrder,
+          anchorNodeId,
+          currentNodeId,
+        ),
+      ]);
+    },
+    [linkedVisibleNodeOrder, onSetSelectedNodeIds],
+  );
+
+  const beginLinkedNodeSelection = useCallback(
+    (nodeId: string) => {
+      onSetSelectedNodeIds([nodeId]);
+    },
+    [onSetSelectedNodeIds],
+  );
+
+  const extendLinkedNodeSelection = useCallback(
+    (nodeId: string) => {
+      const anchorNodeId =
+        selectionAnchorNodeId && linkedVisibleNodeOrder.includes(selectionAnchorNodeId)
+          ? selectionAnchorNodeId
+          : linkedVisibleNodeOrder[0] ?? nodeId;
+      selectLinkedNodeRange(anchorNodeId, nodeId);
+    },
+    [linkedVisibleNodeOrder, selectLinkedNodeRange, selectionAnchorNodeId],
+  );
+
+  const buildLinkedDraggedNodePayload = useCallback<BuildDraggedNodePayloadFn>(
+    ({ nodeId, pageId }) => {
+      const selectedRootNodeIds = getSelectedRootNodeIds(
+        selectedNodeIds,
+        linkedVisibleNodeOrder,
+        nodeMap,
+      ).filter((selectedRootNodeId) => {
+        const selectedNode = nodeMap.get(selectedRootNodeId);
+        return (
+          selectedNode?.pageId === pageId &&
+          getNodeMeta(selectedNode).locked !== true &&
+          !isSourcePageReadOnly
+        );
+      });
+
+      const rootNodeIds =
+        selectedNodeIds.has(nodeId) && selectedRootNodeIds.includes(nodeId)
+          ? selectedRootNodeIds
+          : [nodeId];
+
+      return {
+        nodeId,
+        pageId,
+        rootNodeIds: [...new Set(rootNodeIds)],
+      };
+    },
+    [isSourcePageReadOnly, linkedVisibleNodeOrder, nodeMap, selectedNodeIds],
+  );
+
+  const dropLinkedDraggedNodes = useCallback<DropDraggedNodesFn>(
+    async (payload, dropTarget) => {
+      if (payload.pageId !== sourcePageId) {
+        return;
+      }
+
+      const requestedRootNodeIds =
+        payload.rootNodeIds.length > 0 ? payload.rootNodeIds : [payload.nodeId];
+      const rootNodeContexts = [...new Set(requestedRootNodeIds)]
+        .map((nodeId) => findNodeContextInTree(roots, nodeId, rootNodeId))
+        .filter(
+          (
+            context,
+          ): context is NonNullable<ReturnType<typeof findNodeContextInTree>> =>
+            context !== null,
+        )
+        .filter(
+          (context) =>
+            context.pageId === sourcePageId &&
+            getNodeMeta(context.node).locked !== true &&
+            !isSourcePageReadOnly,
+        );
+
+      if (rootNodeContexts.length === 0) {
+        return;
+      }
+
+      const historyEntries: Array<Extract<HistoryEntry, { type: "move_node" }>> = [];
+      const desiredPlacements = rootNodeContexts.map((context, index) =>
+        buildNodePlacement(
+          sourcePageId,
+          dropTarget.parentNodeId,
+          index === 0
+            ? dropTarget.afterNodeId
+            : (rootNodeContexts[index - 1]!.node._id as Id<"nodes">),
+        ),
+      );
+      const isNoOp = rootNodeContexts.every((context, index) =>
+        arePlacementsEqual(
+          buildNodePlacement(
+            context.pageId,
+            context.parentNodeId,
+            (context.previousSibling?._id as Id<"nodes"> | undefined) ?? null,
+          ),
+          desiredPlacements[index]!,
+        ),
+      );
+      if (isNoOp) {
+        return;
+      }
+
+      for (let index = 0; index < rootNodeContexts.length; index += 1) {
+        const context = rootNodeContexts[index]!;
+        const beforePlacement = buildNodePlacement(
+          context.pageId,
+          context.parentNodeId,
+          (context.previousSibling?._id as Id<"nodes"> | undefined) ?? null,
+        );
+        const afterPlacement = desiredPlacements[index]!;
+
+        await moveNode({
+          ownerKey,
+          nodeId: context.node._id as Id<"nodes">,
+          pageId: sourcePageId,
+          parentNodeId: afterPlacement.parentNodeId,
+          afterNodeId: afterPlacement.afterNodeId,
+        });
+
+        historyEntries.push({
+          type: "move_node",
+          pageId: sourcePageId,
+          nodeId: context.node._id as Id<"nodes">,
+          beforePlacement,
+          afterPlacement,
+          focusEditorId: getNodeEditorId(context.node._id as Id<"nodes">),
+        });
+      }
+
+      if (historyEntries.length === 1) {
+        history.pushUndoEntry(historyEntries[0]!);
+      } else {
+        history.pushUndoEntry({
+          type: "compound",
+          pageId: sourcePageId,
+          entries: historyEntries,
+          focusAfterUndoId: null,
+          focusAfterRedoId: null,
+        });
+      }
+    },
+    [
+      history,
+      isSourcePageReadOnly,
+      moveNode,
+      ownerKey,
+      rootNodeId,
+      roots,
+      sourcePageId,
+    ],
+  );
+
+  return (
+    <div className="ml-5 mt-1 border-l border-[var(--workspace-border-subtle)] pl-2">
+      {loadWarning ? (
+        <p className="mb-1 text-xs text-[var(--workspace-text-faint)]">{loadWarning}</p>
+      ) : null}
+      <OutlineNodeList
+        nodes={roots}
+        ownerKey={ownerKey}
+        pageId={sourcePageId}
+        parentNodeId={rootNodeId}
+        nodeBacklinkCounts={nodeBacklinkCounts}
+        nodeMap={nodeMap}
+        createNodesBatch={createNodesBatch}
+        insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+        updateNode={updateNode}
+        moveNode={moveNode}
+        insertNodeAbove={insertNodeAbove}
+        splitNode={splitNode}
+        replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+        setNodeTreeArchived={setNodeTreeArchived}
+        depth={0}
+        isPageReadOnly={isSourcePageReadOnly}
+        collapsedNodeIds={collapsedNodeIds}
+        pendingSyncNodeIds={pendingSyncNodeIds}
+        selectedNodeIds={selectedNodeIds}
+        selectionAnchorNodeId={selectionAnchorNodeId}
+        onToggleNodeCollapsed={onToggleNodeCollapsed}
+        onSelectSingleNode={onSelectSingleNode}
+        onSelectNodeRange={selectLinkedNodeRange}
+        onSuppressTextEditingSelectionClear={onSuppressTextEditingSelectionClear}
+        pendingInsertedComposer={pendingInsertedComposer}
+        onOpenInsertedComposer={onOpenInsertedComposer}
+        onClearInsertedComposer={onClearInsertedComposer}
+        onBeginTextEditing={onBeginTextEditing}
+        activeDraggedNodeId={activeDraggedNodeId}
+        activeDraggedNodePayload={activeDraggedNodePayload}
+        onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
+        onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
+        onSetSelectedNodeIds={onSetSelectedNodeIds}
+        buildDraggedNodePayload={buildLinkedDraggedNodePayload}
+        onDropDraggedNodes={dropLinkedDraggedNodes}
+        onSelectionStart={beginLinkedNodeSelection}
+        onSelectionExtend={extendLinkedNodeSelection}
+        availableTags={availableTags}
+        pagesByTitle={pagesByTitle}
+        pagesById={pagesById}
+        favoritedNodeIds={favoritedNodeIds}
+        onOpenPage={onOpenPage}
+        onOpenNode={onOpenNode}
+        onOpenTag={onOpenTag}
+        onOpenFindQuery={onOpenFindQuery}
+        onToggleNodeFavorite={onToggleNodeFavorite}
+        recurringCompletionMode={recurringCompletionMode}
+        completeTaskPageTask={completeTaskPageTask}
+        mobileIndentStep={mobileIndentStep}
+        showChildrenDepth={showChildrenDepth + 1}
+        showChildrenAncestorNodeIds={ancestorNodeIds}
+      />
+    </div>
   );
 }
 
@@ -16617,6 +16965,8 @@ function OutlineNodeEditor({
   recurringCompletionMode,
   completeTaskPageTask = async () => undefined,
   mobileIndentStep = OUTLINE_MOBILE_INDENT_STEP,
+  showChildrenDepth = 0,
+  showChildrenAncestorNodeIds = EMPTY_NODE_ID_SET,
 }: {
   node: TreeNode;
   siblings: TreeNode[];
@@ -16677,6 +17027,8 @@ function OutlineNodeEditor({
   recurringCompletionMode: RecurringCompletionMode;
   completeTaskPageTask?: CompleteTaskPageTaskMutation;
   mobileIndentStep?: number;
+  showChildrenDepth?: number;
+  showChildrenAncestorNodeIds?: Set<string>;
 }) {
   const history = useWorkspaceHistory();
   const onZoomIntoNode = useContext(NodeZoomContext);
@@ -16750,21 +17102,47 @@ function OutlineNodeEditor({
   const hasInlineFormattingPreview = hasRenderableInlineFormatting(displayDraft);
   const shouldHideNoteMarker = false;
   const shouldRevealVisualPlaceholder = isFocused || isSelected;
-  const nodeLinkTargetIds = useMemo(
-    () =>
-      extractLinkMatches(draft)
-        .flatMap((match) =>
-          match.link.kind === "node" ? [match.link.targetNodeRef as Id<"nodes">] : [],
-        )
-        .filter((value, index, collection) => collection.indexOf(value) === index),
-    [draft],
-  );
+  const parsedNodeLinkTargets = useMemo(() => {
+    const allNodeIds: Id<"nodes">[] = [];
+    const showChildrenNodeIds: Id<"nodes">[] = [];
+    const blockedShowChildrenNodeIds = new Set([
+      ...showChildrenAncestorNodeIds,
+      ...getAncestorNodeIds(node._id as string, nodeMap),
+      node._id as string,
+    ]);
+
+    for (const match of extractLinkMatches(draft)) {
+      if (match.link.kind !== "node") {
+        continue;
+      }
+
+      const targetNodeId = match.link.targetNodeRef as Id<"nodes">;
+      allNodeIds.push(targetNodeId);
+      if (
+        match.link.showChildren === true &&
+        showChildrenDepth < MAX_NODE_LINK_SHOW_CHILDREN_DEPTH &&
+        !blockedShowChildrenNodeIds.has(match.link.targetNodeRef)
+      ) {
+        showChildrenNodeIds.push(targetNodeId);
+      }
+    }
+
+    return {
+      nodeIds: allNodeIds.filter((value, index, collection) => collection.indexOf(value) === index),
+      showChildrenNodeIds: showChildrenNodeIds.filter(
+        (value, index, collection) => collection.indexOf(value) === index,
+      ),
+    };
+  }, [draft, node._id, nodeMap, showChildrenAncestorNodeIds, showChildrenDepth]);
+  const nodeLinkTargetIds = parsedNodeLinkTargets.nodeIds;
+  const showChildrenNodeLinkTargetIds = parsedNodeLinkTargets.showChildrenNodeIds;
   const resolvedNodeLinks = useQuery(
     api.workspace.resolveNodeLinks,
     ownerKey && !isFocused && nodeLinkTargetIds.length > 0
       ? {
           ownerKey,
           nodeIds: nodeLinkTargetIds,
+          showChildrenNodeIds: showChildrenNodeLinkTargetIds,
         }
       : SKIP,
   ) as NodeLinkTargetResolution[] | undefined;
@@ -16778,6 +17156,44 @@ function OutlineNodeEditor({
   const linkPreviewSegments = useMemo(() => {
     return buildLinkPreviewSegments(displayDraft, pagesByTitle, pagesById, nodeTargetsById);
   }, [displayDraft, nodeTargetsById, pagesById, pagesByTitle]);
+  const linkedShowChildrenTrees = useMemo(
+    () =>
+      linkPreviewSegments.flatMap((segment) => {
+        if (
+          segment.kind !== "link" ||
+          segment.linkKind !== "node" ||
+          segment.showChildren !== true ||
+          !segment.nodeId
+        ) {
+          return [];
+        }
+
+        const target = nodeTargetsById.get(segment.nodeId as string);
+        const childTree = target?.childTree ?? null;
+        if (!childTree) {
+          return [];
+        }
+
+        const childTreeNodes = toTreeNodes(childTree.nodes);
+        const rootTreeNode =
+          findTreeNodeById(childTreeNodes, childTree.rootNode._id as string) ??
+          childTreeNodes[0] ??
+          null;
+
+        return [
+          {
+            key: `${segment.key}:show-children`,
+            sourcePage: childTree.sourcePage,
+            rootNode: childTree.rootNode,
+            roots: rootTreeNode?.children ?? [],
+            nodeMap: new Map(childTree.nodes.map((childNode) => [childNode._id as string, childNode])),
+            nodeBacklinkCounts: new Map(Object.entries(childTree.nodeBacklinkCounts ?? {})),
+            loadWarning: childTree.loadWarning,
+          },
+        ];
+      }),
+    [linkPreviewSegments, nodeTargetsById],
+  );
   const hasPageLinkPreview =
     !isFocused &&
     !isVisualEmptyLine &&
@@ -19108,6 +19524,66 @@ function OutlineNodeEditor({
         {isPlannerDayRoot ? (
           <div className="mx-1 mt-3 mb-5 border-t border-[color-mix(in_srgb,var(--workspace-brand)_20%,var(--workspace-border))]" />
         ) : null}
+        {!isFocused && linkedShowChildrenTrees.length > 0 ? (
+          <div className="space-y-2">
+            {linkedShowChildrenTrees.map((linkedTree) => (
+              <LinkedNodeChildrenBlock
+                key={linkedTree.key}
+                sourcePage={linkedTree.sourcePage}
+                rootNode={linkedTree.rootNode}
+                roots={linkedTree.roots}
+                nodeMap={linkedTree.nodeMap}
+                nodeBacklinkCounts={linkedTree.nodeBacklinkCounts}
+                loadWarning={linkedTree.loadWarning}
+                ownerKey={ownerKey}
+                createNodesBatch={createNodesBatch}
+                insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+                updateNode={updateNode}
+                moveNode={moveNode}
+                insertNodeAbove={insertNodeAbove}
+                splitNode={splitNode}
+                replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                setNodeTreeArchived={setNodeTreeArchived}
+                collapsedNodeIds={collapsedNodeIds}
+                pendingSyncNodeIds={pendingSyncNodeIds}
+                selectedNodeIds={selectedNodeIds}
+                selectionAnchorNodeId={selectionAnchorNodeId}
+                onToggleNodeCollapsed={onToggleNodeCollapsed}
+                onSelectSingleNode={onSelectSingleNode}
+                onSuppressTextEditingSelectionClear={onSuppressTextEditingSelectionClear}
+                pendingInsertedComposer={pendingInsertedComposer}
+                onOpenInsertedComposer={onOpenInsertedComposer}
+                onClearInsertedComposer={onClearInsertedComposer}
+                onBeginTextEditing={onBeginTextEditing}
+                activeDraggedNodeId={activeDraggedNodeId}
+                activeDraggedNodePayload={activeDraggedNodePayload}
+                onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
+                onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
+                onSetSelectedNodeIds={onSetSelectedNodeIds}
+                availableTags={availableTags}
+                pagesByTitle={pagesByTitle}
+                pagesById={pagesById}
+                favoritedNodeIds={favoritedNodeIds}
+                onOpenPage={onOpenPage}
+                onOpenNode={onOpenNode}
+                onOpenTag={onOpenTag}
+                onOpenFindQuery={onOpenFindQuery}
+                onToggleNodeFavorite={onToggleNodeFavorite}
+                recurringCompletionMode={recurringCompletionMode}
+                completeTaskPageTask={completeTaskPageTask}
+                mobileIndentStep={mobileIndentStep}
+                showChildrenDepth={showChildrenDepth}
+                ancestorNodeIds={
+                  new Set([
+                    ...showChildrenAncestorNodeIds,
+                    node._id as string,
+                    linkedTree.rootNode._id as string,
+                  ])
+                }
+              />
+            ))}
+          </div>
+        ) : null}
       </div>
       {hasChildren && (shouldRenderChildren || !isCollapsed) ? (
         <div
@@ -19180,6 +19656,8 @@ function OutlineNodeEditor({
               recurringCompletionMode={recurringCompletionMode}
               completeTaskPageTask={completeTaskPageTask}
               mobileIndentStep={mobileIndentStep}
+              showChildrenDepth={showChildrenDepth}
+              showChildrenAncestorNodeIds={showChildrenAncestorNodeIds}
             />
           </div>
         </div>

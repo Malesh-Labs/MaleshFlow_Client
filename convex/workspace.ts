@@ -107,6 +107,8 @@ const MAX_MULTI_PAGE_VIEW_PAGES = 8;
 const MAX_MULTI_PAGE_VIEW_NODE_SECTIONS = 16;
 const MAX_MULTI_PAGE_VIEW_NODES = 5000;
 const MAX_MULTI_PAGE_VIEW_TEXT_CHARS = 1_000_000;
+const MAX_NODE_LINK_CHILD_TREE_NODES = 500;
+const MAX_NODE_LINK_CHILD_TREE_TEXT_CHARS = 100_000;
 const MAX_NODE_AI_ANCESTOR_DEPTH = 40;
 const MAX_NODE_AI_SUBTREE_NODES = 2000;
 const PAGE_DELETE_NODE_BATCH_SIZE = 100;
@@ -3963,11 +3965,15 @@ export const resolveNodeLinks = query({
   args: {
     ownerKey: v.string(),
     nodeIds: v.array(v.id("nodes")),
+    showChildrenNodeIds: v.optional(v.array(v.id("nodes"))),
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
 
     const uniqueNodeIds = [...new Set(args.nodeIds)];
+    const showChildrenNodeIds = new Set(
+      (args.showChildrenNodeIds ?? []).map((nodeId) => nodeId as string),
+    );
     const nodes = await Promise.all(uniqueNodeIds.map((nodeId) => ctx.db.get(nodeId)));
     const pageIds = [
       ...new Set(
@@ -3999,13 +4005,20 @@ export const resolveNodeLinks = query({
         .map((node) => [node._id, node]),
     );
 
-    return nodes
+    return await Promise.all(nodes
       .filter((node): node is Doc<"nodes"> => node !== null)
-      .map((node) => {
+      .map(async (node) => {
         const page = pageMap.get(node.pageId) ?? null;
         const parentNode = node.parentNodeId
           ? (parentNodeMap.get(node.parentNodeId) ?? null)
           : null;
+        const childTree =
+          page && !node.archived && showChildrenNodeIds.has(node._id as string)
+            ? await buildNodeTreeResult(ctx, node, page, {
+                maxNodes: MAX_NODE_LINK_CHILD_TREE_NODES,
+                maxTextChars: MAX_NODE_LINK_CHILD_TREE_TEXT_CHARS,
+              })
+            : null;
         return {
           nodeId: node._id,
           pageId: page?._id ?? null,
@@ -4015,8 +4028,9 @@ export const resolveNodeLinks = query({
           parentNodeId: parentNode?._id ?? null,
           parentText: parentNode && !parentNode.archived ? parentNode.text : null,
           parentArchived: parentNode?.archived ?? false,
+          childTree,
         };
-      });
+      }));
   },
 });
 
