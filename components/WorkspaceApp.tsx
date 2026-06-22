@@ -523,15 +523,18 @@ type PlannerSymbolGenerationFailure = {
   message: string;
   failedCount: number;
   keys: string[];
+  nodeIds: string[];
 };
 type PlannerSymbolModeRenderProps = {
   plannerSymbolModeEnabled?: boolean;
   plannerSymbolModePlannerPageId?: Id<"pages"> | null;
   plannerSymbolLabelsByNodeId?: Map<string, string>;
+  plannerSymbolFailedNodeIds?: Set<string>;
   plannerSymbolTextExemptNodeIds?: Set<string>;
 };
 type PlannerSymbolLabelState = {
   labelsByNodeId: Map<string, string>;
+  failedNodeIds: Set<string>;
   pendingCount: number;
   generationFailure: PlannerSymbolGenerationFailure | null;
   retryGeneration: () => void;
@@ -852,17 +855,28 @@ function usePlannerSymbolLabels({
     }
 
     const missingKeys = new Set(result.missing.map((entry) => getPlannerSymbolRequestKey(entry)));
-    const activeKeys = generationFailure.keys.filter((key) => missingKeys.has(key));
+    const activeEntries = generationFailure.keys
+      .map((key, index) => ({
+        key,
+        nodeId: generationFailure.nodeIds[index] ?? "",
+      }))
+      .filter((entry) => missingKeys.has(entry.key));
+    const activeKeys = activeEntries.map((entry) => entry.key);
     return activeKeys.length > 0
       ? {
           ...generationFailure,
           failedCount: activeKeys.length,
           keys: activeKeys,
+          nodeIds: activeEntries.map((entry) => entry.nodeId).filter(Boolean),
         }
       : null;
   }, [enabled, generationFailure, result]);
   const failedKeySet = useMemo(
     () => new Set(activeGenerationFailure?.keys ?? []),
+    [activeGenerationFailure],
+  );
+  const failedNodeIds = useMemo(
+    () => new Set(activeGenerationFailure?.nodeIds ?? []),
     [activeGenerationFailure],
   );
   const pendingCount = useMemo(() => {
@@ -915,6 +929,7 @@ function usePlannerSymbolLabels({
         message: getPlannerSymbolGenerationErrorMessage(error),
         failedCount: missingToGenerate.length,
         keys: missingToGenerate.map((entry) => getPlannerSymbolRequestKey(entry)),
+        nodeIds: missingToGenerate.map((entry) => entry.nodeId as string),
       });
     });
   }, [
@@ -928,6 +943,7 @@ function usePlannerSymbolLabels({
 
   return {
     labelsByNodeId,
+    failedNodeIds,
     pendingCount,
     generationFailure: activeGenerationFailure,
     retryGeneration,
@@ -5103,6 +5119,13 @@ function ConfiguredWorkspace({
         : [],
     [effectiveCollapsedNodeIds, pageMeta.pageType, plannerSidebarSection],
   );
+  const plannerTemplateSymbolRows = useMemo(
+    () =>
+      pageMeta.pageType === "planner" && plannerTemplateSection
+        ? flattenTreeNodes(plannerTemplateSection.children)
+        : [],
+    [pageMeta.pageType, plannerTemplateSection],
+  );
   const plannerSymbolTextExemptNodeIds = useMemo(
     () =>
       new Set([
@@ -5115,7 +5138,11 @@ function ConfiguredWorkspace({
     () =>
       pageMeta.pageType === "planner"
         ? collectPlannerSymbolCandidateNodeIds(
-            [...pageVisibleRows, ...plannerSidebarVisibleRows],
+            [
+              ...pageVisibleRows,
+              ...plannerSidebarVisibleRows,
+              ...plannerTemplateSymbolRows,
+            ],
             plannerSymbolTextExemptNodeIds,
           )
         : [],
@@ -5123,6 +5150,7 @@ function ConfiguredWorkspace({
       pageMeta.pageType,
       pageVisibleRows,
       plannerSidebarVisibleRows,
+      plannerTemplateSymbolRows,
       plannerSymbolTextExemptNodeIds,
     ],
   );
@@ -5134,6 +5162,7 @@ function ConfiguredWorkspace({
     candidateNodeIds: plannerSymbolCandidateNodeIds,
   });
   const plannerSymbolLabelsByNodeId = plannerSymbolState.labelsByNodeId;
+  const plannerSymbolFailedNodeIds = plannerSymbolState.failedNodeIds;
   const plannerSymbolPendingCount = plannerSymbolState.pendingCount;
   const plannerSymbolGenerationFailure = plannerSymbolState.generationFailure;
   const retryPlannerSymbolGeneration = plannerSymbolState.retryGeneration;
@@ -12575,6 +12604,7 @@ function ConfiguredWorkspace({
                         pageMeta.pageType === "planner" ? selectedPage._id : null
                       }
                       plannerSymbolLabelsByNodeId={plannerSymbolLabelsByNodeId}
+                      plannerSymbolFailedNodeIds={plannerSymbolFailedNodeIds}
                       plannerSymbolTextExemptNodeIds={plannerSymbolTextExemptNodeIds}
                     />
                   </div>
@@ -12948,6 +12978,7 @@ function ConfiguredWorkspace({
                           plannerSymbolModeEnabled={isPlannerSymbolModeEnabled}
                           plannerSymbolModePlannerPageId={selectedPage._id}
                           plannerSymbolLabelsByNodeId={plannerSymbolLabelsByNodeId}
+                          plannerSymbolFailedNodeIds={plannerSymbolFailedNodeIds}
                           plannerSymbolTextExemptNodeIds={plannerSymbolTextExemptNodeIds}
                         />
                       </div>
@@ -13034,6 +13065,7 @@ function ConfiguredWorkspace({
                             plannerSymbolModeEnabled={isPlannerSymbolModeEnabled}
                             plannerSymbolModePlannerPageId={selectedPage._id}
                             plannerSymbolLabelsByNodeId={plannerSymbolLabelsByNodeId}
+                            plannerSymbolFailedNodeIds={plannerSymbolFailedNodeIds}
                             plannerSymbolTextExemptNodeIds={plannerSymbolTextExemptNodeIds}
                           />
                         ) : (
@@ -13094,6 +13126,7 @@ function ConfiguredWorkspace({
                       plannerSymbolModeEnabled={isPlannerSymbolModeEnabled}
                       plannerSymbolModePlannerPageId={selectedPage._id}
                       plannerSymbolLabelsByNodeId={plannerSymbolLabelsByNodeId}
+                      plannerSymbolFailedNodeIds={plannerSymbolFailedNodeIds}
                       plannerSymbolTextExemptNodeIds={plannerSymbolTextExemptNodeIds}
                     />
                   </div>
@@ -15324,6 +15357,7 @@ function PageSection({
   plannerSymbolModeEnabled = false,
   plannerSymbolModePlannerPageId = null,
   plannerSymbolLabelsByNodeId = EMPTY_SYMBOL_LABELS_BY_NODE_ID,
+  plannerSymbolFailedNodeIds = EMPTY_NODE_ID_SET,
   plannerSymbolTextExemptNodeIds = EMPTY_NODE_ID_SET,
 }: {
   title: string;
@@ -15499,6 +15533,7 @@ function PageSection({
           plannerSymbolModeEnabled={plannerSymbolModeEnabled}
           plannerSymbolModePlannerPageId={plannerSymbolModePlannerPageId}
           plannerSymbolLabelsByNodeId={plannerSymbolLabelsByNodeId}
+          plannerSymbolFailedNodeIds={plannerSymbolFailedNodeIds}
           plannerSymbolTextExemptNodeIds={plannerSymbolTextExemptNodeIds}
         />
       </div>
@@ -15562,6 +15597,7 @@ function OutlineNodeList({
   plannerSymbolModeEnabled = false,
   plannerSymbolModePlannerPageId = null,
   plannerSymbolLabelsByNodeId = EMPTY_SYMBOL_LABELS_BY_NODE_ID,
+  plannerSymbolFailedNodeIds = EMPTY_NODE_ID_SET,
   plannerSymbolTextExemptNodeIds = EMPTY_NODE_ID_SET,
 }: {
   nodes: TreeNode[];
@@ -15717,6 +15753,7 @@ function OutlineNodeList({
           plannerSymbolModeEnabled={plannerSymbolModeEnabled}
           plannerSymbolModePlannerPageId={plannerSymbolModePlannerPageId}
           plannerSymbolLabelsByNodeId={plannerSymbolLabelsByNodeId}
+          plannerSymbolFailedNodeIds={plannerSymbolFailedNodeIds}
           plannerSymbolTextExemptNodeIds={plannerSymbolTextExemptNodeIds}
         />
       ))}
@@ -15844,6 +15881,7 @@ function LinkedNodeChildrenBlock({
     candidateNodeIds: linkedSymbolCandidateNodeIds,
   });
   const linkedSymbolLabelsByNodeId = linkedSymbolState.labelsByNodeId;
+  const linkedSymbolFailedNodeIds = linkedSymbolState.failedNodeIds;
   const sourcePageId = sourcePage._id as Id<"pages">;
   const rootNodeId = rootNode._id as Id<"nodes">;
   const isSourcePageReadOnly = sourcePage.archived;
@@ -16069,6 +16107,7 @@ function LinkedNodeChildrenBlock({
         plannerSymbolModeEnabled={plannerSymbolModeEnabled}
         plannerSymbolModePlannerPageId={plannerSymbolModePlannerPageId}
         plannerSymbolLabelsByNodeId={linkedSymbolLabelsByNodeId}
+        plannerSymbolFailedNodeIds={linkedSymbolFailedNodeIds}
         plannerSymbolTextExemptNodeIds={EMPTY_NODE_ID_SET}
       />
     </div>
@@ -17429,6 +17468,7 @@ function OutlineNodeEditor({
   plannerSymbolModeEnabled = false,
   plannerSymbolModePlannerPageId = null,
   plannerSymbolLabelsByNodeId = EMPTY_SYMBOL_LABELS_BY_NODE_ID,
+  plannerSymbolFailedNodeIds = EMPTY_NODE_ID_SET,
   plannerSymbolTextExemptNodeIds = EMPTY_NODE_ID_SET,
 }: {
   node: TreeNode;
@@ -17628,6 +17668,7 @@ function OutlineNodeEditor({
     !isVisualEmptyLine &&
     !isVisualSeparatorLine &&
     !isPlannerTemplateWeekdayRoot &&
+    !plannerSymbolFailedNodeIds.has(node._id as string) &&
     !plannerSymbolTextExemptNodeIds.has(node._id as string) &&
     isPlannerSymbolizableText(displayDraft);
   const isPlannerSymbolPending = hasPlannerSymbolPreview && !plannerSymbolText;
@@ -20199,6 +20240,7 @@ function OutlineNodeEditor({
               plannerSymbolModeEnabled={plannerSymbolModeEnabled}
               plannerSymbolModePlannerPageId={plannerSymbolModePlannerPageId}
               plannerSymbolLabelsByNodeId={plannerSymbolLabelsByNodeId}
+              plannerSymbolFailedNodeIds={plannerSymbolFailedNodeIds}
               plannerSymbolTextExemptNodeIds={plannerSymbolTextExemptNodeIds}
             />
           </div>
