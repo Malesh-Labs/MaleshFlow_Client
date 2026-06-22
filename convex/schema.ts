@@ -388,6 +388,7 @@ export default defineSchema({
     contentHash: v.string(),
     sourceText: v.string(),
     symbols: v.string(),
+    style: v.optional(v.string()),
     model: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),

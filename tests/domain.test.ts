@@ -804,12 +804,13 @@ test("planner symbol helpers normalize source text without mutating links", () =
   );
 });
 
-test("planner symbol helpers validate generated labels and deterministic fallback", () => {
-  assert.equal(normalizeGeneratedPlannerSymbols(" ⚑ ✦ "), "⚑✦");
+test("planner symbol helpers validate generated emoji labels and deterministic fallback", () => {
+  assert.equal(normalizeGeneratedPlannerSymbols(" ⚑ ✦ "), null);
   assert.equal(normalizeGeneratedPlannerSymbols("🧾✨"), "🧾✨");
   assert.equal(normalizeGeneratedPlannerSymbols("work"), null);
   assert.equal(normalizeGeneratedPlannerSymbols("1"), null);
   assert.equal(normalizeGeneratedPlannerSymbols("⚑✦◆◎"), null);
+  assert.match(buildDeterministicPlannerSymbols("Call Sam"), /\p{Emoji}/u);
   assert.equal(
     buildDeterministicPlannerSymbols("Call Sam"),
     buildDeterministicPlannerSymbols("Call Sam"),

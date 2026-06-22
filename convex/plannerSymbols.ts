@@ -11,10 +11,9 @@ import { isPlannerPage } from "./lib/planner";
 import {
   isPlannerSymbolizableText,
   normalizePlannerSymbolSourceText,
+  PLANNER_EMOJI_CACHE_STYLE,
   parsePurePlannerNodeReference,
 } from "../lib/domain/plannerSymbols";
-
-const MAX_PLANNER_SYMBOL_NODE_COUNT = 160;
 
 type PlannerSymbolSource = {
   nodeId: Id<"nodes">;
@@ -52,7 +51,7 @@ async function getPlannerSymbolSources(
   db: DatabaseReader,
   nodeIds: Id<"nodes">[],
 ): Promise<PlannerSymbolSource[]> {
-  const uniqueNodeIds = [...new Set(nodeIds)].slice(0, MAX_PLANNER_SYMBOL_NODE_COUNT);
+  const uniqueNodeIds = [...new Set(nodeIds)];
   const nodes = await Promise.all(uniqueNodeIds.map((nodeId) => db.get(nodeId)));
   const sources = await Promise.all(
     nodes
@@ -71,7 +70,13 @@ async function getMatchingNodeCache(db: DatabaseReader, source: PlannerSymbolSou
     .query("nodeSymbolCaches")
     .withIndex("by_node", (index) => index.eq("nodeId", source.nodeId))
     .collect();
-  return caches.find((cache) => cache.sourceText === source.sourceText) ?? null;
+  return (
+    caches.find(
+      (cache) =>
+        cache.sourceText === source.sourceText &&
+        cache.style === PLANNER_EMOJI_CACHE_STYLE,
+    ) ?? null
+  );
 }
 
 export const getPlannerSymbolLabels = query({
@@ -143,11 +148,16 @@ export const getPlannerSymbolLabelsByContentHash = internalQuery({
         cache: await ctx.db
           .query("nodeSymbolCaches")
           .withIndex("by_content_hash", (index) => index.eq("contentHash", contentHash))
-          .first(),
+          .collect(),
       })),
     );
 
     return entries
+      .map((entry) => ({
+        contentHash: entry.contentHash,
+        cache:
+          entry.cache.find((cache) => cache.style === PLANNER_EMOJI_CACHE_STYLE) ?? null,
+      }))
       .filter((entry) => entry.cache !== null)
       .map((entry) => ({
         contentHash: entry.contentHash,
@@ -164,6 +174,7 @@ export const savePlannerSymbolLabels = internalMutation({
         contentHash: v.string(),
         sourceText: v.string(),
         symbols: v.string(),
+        style: v.string(),
         model: v.string(),
       }),
     ),
@@ -180,6 +191,7 @@ export const savePlannerSymbolLabels = internalMutation({
           contentHash: label.contentHash,
           sourceText: label.sourceText,
           symbols: label.symbols,
+          style: label.style,
           model: label.model,
           updatedAt: now,
         });
@@ -191,6 +203,7 @@ export const savePlannerSymbolLabels = internalMutation({
         contentHash: label.contentHash,
         sourceText: label.sourceText,
         symbols: label.symbols,
+        style: label.style,
         model: label.model,
         createdAt: now,
         updatedAt: now,

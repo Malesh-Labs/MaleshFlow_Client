@@ -525,6 +525,10 @@ type PlannerSymbolModeRenderProps = {
   plannerSymbolLabelsByNodeId?: Map<string, string>;
   plannerSymbolTextExemptNodeIds?: Set<string>;
 };
+type PlannerSymbolLabelState = {
+  labelsByNodeId: Map<string, string>;
+  pendingCount: number;
+};
 type WorkspaceKnowledgeSourceSnapshot = {
   nodeId: string;
   pageId: string | null;
@@ -821,6 +825,17 @@ function usePlannerSymbolLabels({
       ),
     [result?.labels],
   );
+  const pendingCount = useMemo(() => {
+    if (!enabled || candidateNodeIds.length === 0) {
+      return 0;
+    }
+
+    if (result === undefined) {
+      return candidateNodeIds.length;
+    }
+
+    return result.missing.length;
+  }, [candidateNodeIds.length, enabled, result]);
   useEffect(() => {
     if (!enabled || !ownerKey || !plannerPageId) {
       requestedKeysRef.current.clear();
@@ -850,7 +865,10 @@ function usePlannerSymbolLabels({
     });
   }, [enabled, generatePlannerSymbolLabels, ownerKey, plannerPageId, result?.missing]);
 
-  return labelsByNodeId;
+  return {
+    labelsByNodeId,
+    pendingCount,
+  } satisfies PlannerSymbolLabelState;
 }
 
 function useOwnerKey() {
@@ -5044,13 +5062,15 @@ function ConfiguredWorkspace({
       plannerSymbolTextExemptNodeIds,
     ],
   );
-  const plannerSymbolLabelsByNodeId = usePlannerSymbolLabels({
+  const plannerSymbolState = usePlannerSymbolLabels({
     ownerKey,
     enabled: pageMeta.pageType === "planner" && isPlannerSymbolModeEnabled,
     plannerPageId:
       pageMeta.pageType === "planner" && selectedPage ? selectedPage._id : null,
     candidateNodeIds: plannerSymbolCandidateNodeIds,
   });
+  const plannerSymbolLabelsByNodeId = plannerSymbolState.labelsByNodeId;
+  const plannerSymbolPendingCount = plannerSymbolState.pendingCount;
   const multiPageIncludedVisibleRows =
     pageMeta.pageType === "multiPage"
       ? [
@@ -12561,8 +12581,8 @@ function ConfiguredWorkspace({
                         )}
                         title={
                           isPlannerSymbolModeEnabled
-                            ? "Turn symbol mode off"
-                            : "Turn symbol mode on"
+                            ? "Turn emoji mode off"
+                            : "Turn emoji mode on"
                         }
                       >
                         <span
@@ -12576,8 +12596,21 @@ function ConfiguredWorkspace({
                         >
                           <span className="mx-0.5 h-2 w-2 bg-current" />
                         </span>
-                        Symbol Mode
+                        Emoji Mode
                       </button>
+                      {isPlannerSymbolModeEnabled && plannerSymbolPendingCount > 0 ? (
+                        <span
+                          className="inline-flex items-center gap-2 border border-[var(--workspace-border)] px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]"
+                          role="status"
+                          aria-live="polite"
+                        >
+                          <span
+                            aria-hidden="true"
+                            className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--workspace-accent)]"
+                          />
+                          Generating emojis {plannerSymbolPendingCount}
+                        </span>
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => void handleAppendPlannerDay()}
@@ -15718,12 +15751,13 @@ function LinkedNodeChildrenBlock({
     () => collectPlannerSymbolCandidateNodeIds(linkedVisibleNodes, EMPTY_NODE_ID_SET),
     [linkedVisibleNodes],
   );
-  const linkedSymbolLabelsByNodeId = usePlannerSymbolLabels({
+  const linkedSymbolState = usePlannerSymbolLabels({
     ownerKey,
     enabled: plannerSymbolModeEnabled,
     plannerPageId: plannerSymbolModePlannerPageId,
     candidateNodeIds: linkedSymbolCandidateNodeIds,
   });
+  const linkedSymbolLabelsByNodeId = linkedSymbolState.labelsByNodeId;
   const sourcePageId = sourcePage._id as Id<"pages">;
   const rootNodeId = rootNode._id as Id<"nodes">;
   const isSourcePageReadOnly = sourcePage.archived;
@@ -16428,6 +16462,7 @@ function SymbolTextPreview({
   onRevealTouch,
   isDisabled,
   isRevealed,
+  isPending,
   className,
 }: {
   symbolText: string;
@@ -16436,6 +16471,7 @@ function SymbolTextPreview({
   onRevealTouch: () => void;
   isDisabled: boolean;
   isRevealed: boolean;
+  isPending: boolean;
   className?: string;
 }) {
   return (
@@ -16465,7 +16501,28 @@ function SymbolTextPreview({
           onFocusLine();
         }}
       >
-        {symbolText}
+        {isPending ? (
+          <span
+            aria-label="Generating emoji"
+            role="status"
+            className="inline-flex min-h-[1em] items-center gap-1 align-middle text-[var(--workspace-text-faint)]"
+          >
+            <span
+              aria-hidden="true"
+              className="h-1.5 w-1.5 animate-pulse rounded-full bg-current"
+            />
+            <span
+              aria-hidden="true"
+              className="h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:120ms]"
+            />
+            <span
+              aria-hidden="true"
+              className="h-1.5 w-1.5 animate-pulse rounded-full bg-current [animation-delay:240ms]"
+            />
+          </span>
+        ) : (
+          symbolText
+        )}
       </div>
       <div
         className={clsx(
@@ -17478,7 +17535,7 @@ function OutlineNodeEditor({
   const linkPreviewSegments = useMemo(() => {
     return buildLinkPreviewSegments(displayDraft, pagesByTitle, pagesById, nodeTargetsById);
   }, [displayDraft, nodeTargetsById, pagesById, pagesByTitle]);
-  const plannerSymbolText = plannerSymbolLabelsByNodeId.get(node._id as string) ?? "…";
+  const plannerSymbolText = plannerSymbolLabelsByNodeId.get(node._id as string) ?? "";
   const hasPlannerSymbolPreview =
     plannerSymbolModeEnabled &&
     !isFocused &&
@@ -17486,6 +17543,7 @@ function OutlineNodeEditor({
     !isVisualSeparatorLine &&
     !plannerSymbolTextExemptNodeIds.has(node._id as string) &&
     isPlannerSymbolizableText(displayDraft);
+  const isPlannerSymbolPending = hasPlannerSymbolPreview && !plannerSymbolText;
   const linkedShowChildrenTrees = useMemo(
     () =>
       linkPreviewSegments.flatMap((segment) => {
@@ -19703,6 +19761,7 @@ function OutlineNodeEditor({
                   onRevealTouch={revealSymbolTextTemporarily}
                   isDisabled={isDisabled || activeDraggedNodeId !== null}
                   isRevealed={isSymbolTextRevealed}
+                  isPending={isPlannerSymbolPending}
                   className={clsx(
                     previewTypographyClass,
                     completedTextClass,

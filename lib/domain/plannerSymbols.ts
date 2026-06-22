@@ -7,23 +7,25 @@ import {
 } from "./links";
 
 const RAW_NODE_REFERENCE_PATTERN = /^node:([a-zA-Z0-9_-]+)$/;
-const SYMBOL_FALLBACK_PALETTE = [
-  "●",
-  "◆",
-  "✦",
-  "✚",
-  "↗",
-  "◐",
-  "◎",
-  "☉",
-  "◇",
-  "✶",
-  "◌",
-  "⬡",
-  "⚑",
-  "☑",
-  "⌁",
-  "◈",
+export const PLANNER_EMOJI_CACHE_STYLE = "emoji-v1";
+
+const EMOJI_FALLBACK_PALETTE = [
+  "📝",
+  "✅",
+  "📌",
+  "🔥",
+  "⚡️",
+  "🌱",
+  "🧠",
+  "💬",
+  "📚",
+  "🧭",
+  "🎯",
+  "🛠️",
+  "🧩",
+  "📦",
+  "🕒",
+  "✨",
 ];
 
 export type PurePlannerNodeReference = {
@@ -100,12 +102,23 @@ export function normalizeGeneratedPlannerSymbols(value: string) {
     return null;
   }
 
-  const symbols = splitGraphemes(compact).filter((symbol) => symbol.trim().length > 0);
-  if (symbols.length < 1 || symbols.length > 3) {
+  const emojis = splitGraphemes(compact).filter((symbol) => symbol.trim().length > 0);
+  if (emojis.length < 1 || emojis.length > 3) {
     return null;
   }
 
-  return symbols.join("");
+  const allEmoji = emojis.every((emoji) => {
+    if (/[\p{L}\p{N}]/u.test(emoji)) {
+      return false;
+    }
+    return (
+      /\p{Emoji_Presentation}/u.test(emoji) ||
+      /\p{Extended_Pictographic}\uFE0F/u.test(emoji) ||
+      emoji.includes("\uFE0F")
+    );
+  });
+
+  return allEmoji ? emojis.join("") : null;
 }
 
 export function buildDeterministicPlannerSymbols(seedText: string) {
@@ -114,10 +127,10 @@ export function buildDeterministicPlannerSymbols(seedText: string) {
     hash ^= character.codePointAt(0) ?? 0;
     hash = Math.imul(hash, 16777619);
   }
-  const first = SYMBOL_FALLBACK_PALETTE[Math.abs(hash) % SYMBOL_FALLBACK_PALETTE.length]!;
+  const first = EMOJI_FALLBACK_PALETTE[Math.abs(hash) % EMOJI_FALLBACK_PALETTE.length]!;
   const second =
-    SYMBOL_FALLBACK_PALETTE[
-      Math.abs(hash >>> 8) % SYMBOL_FALLBACK_PALETTE.length
+    EMOJI_FALLBACK_PALETTE[
+      Math.abs(hash >>> 8) % EMOJI_FALLBACK_PALETTE.length
     ]!;
   return first === second ? first : `${first}${second}`;
 }

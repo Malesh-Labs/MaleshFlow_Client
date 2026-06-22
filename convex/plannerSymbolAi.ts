@@ -12,6 +12,7 @@ import { assertOwnerKey } from "./lib/auth";
 import {
   buildDeterministicPlannerSymbols,
   normalizeGeneratedPlannerSymbols,
+  PLANNER_EMOJI_CACHE_STYLE,
 } from "../lib/domain/plannerSymbols";
 
 const OPENAI_PLANNER_SYMBOL_TIMEOUT_MS = 9000;
@@ -70,7 +71,9 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
 }
 
 function buildPlannerSymbolContentHash(sourceText: string) {
-  return createHash("sha256").update(sourceText).digest("hex");
+  return createHash("sha256")
+    .update(`${PLANNER_EMOJI_CACHE_STYLE}\n${sourceText}`)
+    .digest("hex");
 }
 
 async function generateBatchWithOpenAI(
@@ -84,7 +87,7 @@ async function generateBatchWithOpenAI(
         {
           role: "system",
           content:
-            "You convert personal planner items into tiny visual labels. For each item, return 1 to 3 emoji or symbolic Unicode characters that make the item recognizable. Do not return words, letters, numbers, punctuation-separated descriptions, markdown, or explanations. Prefer concrete memorable symbols over generic marks.",
+            "You convert personal planner items into tiny visual labels. For each item, return 1 to 3 emoji characters that make the item recognizable. Use emoji only. Do not return symbolic glyphs, words, letters, numbers, punctuation-separated descriptions, markdown, or explanations. Prefer concrete memorable emoji over generic marks.",
         },
         {
           role: "user",
@@ -188,6 +191,7 @@ export const generatePlannerSymbolLabels = action({
               contentHash: node.contentHash,
               sourceText: node.sourceText,
               symbols,
+              style: PLANNER_EMOJI_CACHE_STYLE,
               model: PLANNER_SYMBOL_MODEL,
             }
           : null;
