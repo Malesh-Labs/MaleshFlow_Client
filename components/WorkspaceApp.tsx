@@ -809,7 +809,12 @@ function getPlannerSymbolGenerationErrorMessage(error: unknown) {
     error instanceof Error && error.message.trim()
       ? error.message.trim()
       : "Could not generate planner emojis.";
-  return message.length > 240 ? `${message.slice(0, 237)}...` : message;
+  const displayMessage = message.includes("Server Error Called by client")
+    ? `Convex failed before returning emoji details. ${message}`
+    : message;
+  return displayMessage.length > 240
+    ? `${displayMessage.slice(0, 237)}...`
+    : displayMessage;
 }
 
 // Subscribes to cached planner symbol labels for the given candidate nodes and
@@ -1486,7 +1491,7 @@ function collectPlannerSymbolCandidateNodeIds(
     ...new Set(
       nodes
         .filter((node) => !textExemptNodeIds.has(node._id))
-        .filter((node) => getNodeMeta(node).plannerKind !== "plannerDay")
+        .filter((node) => !isPlannerDayTitleNode(node))
         .filter((node) => typeof getNodeMeta(node).plannerTemplateWeekday !== "string")
         .filter((node) => isPlannerSymbolizableText(node.text))
         .map((node) => node._id as Id<"nodes">),
@@ -1552,6 +1557,16 @@ function getNodeMeta(node: { sourceMeta?: unknown } | null | undefined) {
   }
 
   return node.sourceMeta as Record<string, unknown>;
+}
+
+function isPlannerDayTitleNode(node: { sourceMeta?: unknown } | null | undefined) {
+  const sourceMeta = getNodeMeta(node);
+  return (
+    sourceMeta.plannerKind === "plannerDay" ||
+    (sourceMeta.sourceType === "system" &&
+      sourceMeta.locked === true &&
+      typeof sourceMeta.plannerDate === "number")
+  );
 }
 
 function isPlannerLinkedTaskCopy(node: { sourceMeta?: unknown } | null | undefined) {

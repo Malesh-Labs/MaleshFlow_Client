@@ -14,8 +14,8 @@ import {
   PLANNER_EMOJI_CACHE_STYLE,
 } from "../lib/domain/plannerSymbols";
 
-const OPENAI_PLANNER_SYMBOL_TIMEOUT_MS = 9000;
-const PLANNER_SYMBOL_BATCH_SIZE = 24;
+const OPENAI_PLANNER_SYMBOL_TIMEOUT_MS = 30000;
+const PLANNER_SYMBOL_BATCH_SIZE = 8;
 const PLANNER_SYMBOL_MODEL = process.env.OPENAI_CHAT_MODEL ?? "gpt-5-mini";
 
 const plannerSymbolOutputSchema = z.object({
@@ -57,7 +57,10 @@ function getErrorMessage(error: unknown) {
 
 function buildPlannerSymbolGenerationError(error: unknown) {
   const message = getErrorMessage(error).trim() || "Unknown error";
-  return `OpenAI emoji generation failed: ${message}`;
+  const timeoutHint = message.includes("Timed out after")
+    ? " Try retrying; the app now sends smaller emoji batches with a longer timeout."
+    : "";
+  return `OpenAI emoji generation failed: ${message}.${timeoutHint}`;
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
@@ -144,11 +147,12 @@ export const generatePlannerSymbolLabels = action({
     nodeIds: v.array(v.id("nodes")),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
-    const context = (await ctx.runQuery(getPlannerSymbolGenerationContextRef, {
-      plannerPageId: args.plannerPageId,
-      nodeIds: args.nodeIds,
-    })) as { nodes: PlannerSymbolGenerationNode[] };
+    try {
+      assertOwnerKey(args.ownerKey);
+      const context = (await ctx.runQuery(getPlannerSymbolGenerationContextRef, {
+        plannerPageId: args.plannerPageId,
+        nodeIds: args.nodeIds,
+      })) as { nodes: PlannerSymbolGenerationNode[] };
 
     const nodesWithHashes = context.nodes.map((node) => ({
       ...node,
@@ -239,14 +243,23 @@ export const generatePlannerSymbolLabels = action({
       });
     }
 
-    return {
-      ok: true,
-      labels: labelsToSave.map((label) => ({
-        nodeId: label.nodeId,
-        symbols: label.symbols,
-      })),
-      generatedCount: nodesToGenerate.length,
-      reusedCount,
-    };
+      return {
+        ok: true,
+        labels: labelsToSave.map((label) => ({
+          nodeId: label.nodeId,
+          symbols: label.symbols,
+        })),
+        generatedCount: nodesToGenerate.length,
+        reusedCount,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: buildPlannerSymbolGenerationError(error),
+        labels: [],
+        generatedCount: 0,
+        reusedCount: 0,
+      };
+    }
   },
 });
