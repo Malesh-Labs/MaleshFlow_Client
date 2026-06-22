@@ -7,7 +7,7 @@ import {
 } from "./links";
 
 const RAW_NODE_REFERENCE_PATTERN = /^node:([a-zA-Z0-9_-]+)$/;
-export const PLANNER_EMOJI_CACHE_STYLE = "emoji-v1";
+export const PLANNER_EMOJI_CACHE_STYLE = "emoji-v2";
 
 const EMOJI_FALLBACK_PALETTE = [
   "📝",

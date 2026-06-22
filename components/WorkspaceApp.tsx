@@ -519,6 +519,11 @@ type PlannerSymbolLabelsResult = {
     sourceText: string;
   }>;
 };
+type PlannerSymbolGenerationFailure = {
+  message: string;
+  failedCount: number;
+  keys: string[];
+};
 type PlannerSymbolModeRenderProps = {
   plannerSymbolModeEnabled?: boolean;
   plannerSymbolModePlannerPageId?: Id<"pages"> | null;
@@ -528,6 +533,8 @@ type PlannerSymbolModeRenderProps = {
 type PlannerSymbolLabelState = {
   labelsByNodeId: Map<string, string>;
   pendingCount: number;
+  generationFailure: PlannerSymbolGenerationFailure | null;
+  retryGeneration: () => void;
 };
 type WorkspaceKnowledgeSourceSnapshot = {
   nodeId: string;
@@ -790,6 +797,18 @@ const PageSectionCollapseContext = createContext<{
 const EMPTY_NODE_ID_SET = new Set<string>();
 const EMPTY_SYMBOL_LABELS_BY_NODE_ID = new Map<string, string>();
 
+function getPlannerSymbolRequestKey(entry: { nodeId: Id<"nodes">; sourceText: string }) {
+  return `${entry.nodeId}:${entry.sourceText}`;
+}
+
+function getPlannerSymbolGenerationErrorMessage(error: unknown) {
+  const message =
+    error instanceof Error && error.message.trim()
+      ? error.message.trim()
+      : "Could not generate planner emojis.";
+  return message.length > 240 ? `${message.slice(0, 237)}...` : message;
+}
+
 // Subscribes to cached planner symbol labels for the given candidate nodes and
 // fires generation for any that are missing, de-duplicating in-flight requests
 // by node + source text so the same item is never requested twice. Shared by
@@ -809,6 +828,8 @@ function usePlannerSymbolLabels({
     api.plannerSymbolAi.generatePlannerSymbolLabels,
   );
   const requestedKeysRef = useRef(new Set<string>());
+  const [generationFailure, setGenerationFailure] =
+    useState<PlannerSymbolGenerationFailure | null>(null);
   const result = useQuery(
     api.plannerSymbols.getPlannerSymbolLabels,
     enabled && ownerKey && plannerPageId && candidateNodeIds.length > 0
@@ -825,6 +846,25 @@ function usePlannerSymbolLabels({
       ),
     [result?.labels],
   );
+  const activeGenerationFailure = useMemo(() => {
+    if (!enabled || !generationFailure || result === undefined) {
+      return null;
+    }
+
+    const missingKeys = new Set(result.missing.map((entry) => getPlannerSymbolRequestKey(entry)));
+    const activeKeys = generationFailure.keys.filter((key) => missingKeys.has(key));
+    return activeKeys.length > 0
+      ? {
+          ...generationFailure,
+          failedCount: activeKeys.length,
+          keys: activeKeys,
+        }
+      : null;
+  }, [enabled, generationFailure, result]);
+  const failedKeySet = useMemo(
+    () => new Set(activeGenerationFailure?.keys ?? []),
+    [activeGenerationFailure],
+  );
   const pendingCount = useMemo(() => {
     if (!enabled || candidateNodeIds.length === 0) {
       return 0;
@@ -834,8 +874,13 @@ function usePlannerSymbolLabels({
       return candidateNodeIds.length;
     }
 
-    return result.missing.length;
-  }, [candidateNodeIds.length, enabled, result]);
+    return result.missing.filter((entry) => !failedKeySet.has(getPlannerSymbolRequestKey(entry)))
+      .length;
+  }, [candidateNodeIds.length, enabled, failedKeySet, result]);
+  const retryGeneration = useCallback(() => {
+    requestedKeysRef.current.clear();
+    setGenerationFailure(null);
+  }, []);
   useEffect(() => {
     if (!enabled || !ownerKey || !plannerPageId) {
       requestedKeysRef.current.clear();
@@ -844,30 +889,48 @@ function usePlannerSymbolLabels({
 
     const missing = result?.missing ?? [];
     const missingToGenerate = missing.filter(
-      (entry) => !requestedKeysRef.current.has(`${entry.nodeId}:${entry.sourceText}`),
+      (entry) =>
+        !requestedKeysRef.current.has(getPlannerSymbolRequestKey(entry)) &&
+        !failedKeySet.has(getPlannerSymbolRequestKey(entry)),
     );
     if (missingToGenerate.length === 0) {
       return;
     }
 
     for (const entry of missingToGenerate) {
-      requestedKeysRef.current.add(`${entry.nodeId}:${entry.sourceText}`);
+      requestedKeysRef.current.add(getPlannerSymbolRequestKey(entry));
     }
 
     void generatePlannerSymbolLabels({
       ownerKey,
       plannerPageId,
       nodeIds: missingToGenerate.map((entry) => entry.nodeId),
-    }).catch(() => {
+    }).then(() => {
+      setGenerationFailure(null);
+    }).catch((error: unknown) => {
       for (const entry of missingToGenerate) {
-        requestedKeysRef.current.delete(`${entry.nodeId}:${entry.sourceText}`);
+        requestedKeysRef.current.delete(getPlannerSymbolRequestKey(entry));
       }
+      setGenerationFailure({
+        message: getPlannerSymbolGenerationErrorMessage(error),
+        failedCount: missingToGenerate.length,
+        keys: missingToGenerate.map((entry) => getPlannerSymbolRequestKey(entry)),
+      });
     });
-  }, [enabled, generatePlannerSymbolLabels, ownerKey, plannerPageId, result?.missing]);
+  }, [
+    enabled,
+    failedKeySet,
+    generatePlannerSymbolLabels,
+    ownerKey,
+    plannerPageId,
+    result,
+  ]);
 
   return {
     labelsByNodeId,
     pendingCount,
+    generationFailure: activeGenerationFailure,
+    retryGeneration,
   } satisfies PlannerSymbolLabelState;
 }
 
@@ -1389,6 +1452,7 @@ function collectPlannerSymbolCandidateNodeIds(
     ...new Set(
       nodes
         .filter((node) => !textExemptNodeIds.has(node._id))
+        .filter((node) => typeof getNodeMeta(node).plannerTemplateWeekday !== "string")
         .filter((node) => isPlannerSymbolizableText(node.text))
         .map((node) => node._id as Id<"nodes">),
     ),
@@ -5071,6 +5135,8 @@ function ConfiguredWorkspace({
   });
   const plannerSymbolLabelsByNodeId = plannerSymbolState.labelsByNodeId;
   const plannerSymbolPendingCount = plannerSymbolState.pendingCount;
+  const plannerSymbolGenerationFailure = plannerSymbolState.generationFailure;
+  const retryPlannerSymbolGeneration = plannerSymbolState.retryGeneration;
   const multiPageIncludedVisibleRows =
     pageMeta.pageType === "multiPage"
       ? [
@@ -12611,6 +12677,26 @@ function ConfiguredWorkspace({
                           Generating emojis {plannerSymbolPendingCount}
                         </span>
                       ) : null}
+                      {isPlannerSymbolModeEnabled && plannerSymbolGenerationFailure ? (
+                        <span
+                          className="inline-flex max-w-full flex-wrap items-center gap-2 border border-[var(--workspace-danger)] px-2 py-1 text-xs text-[var(--workspace-danger)]"
+                          role="alert"
+                        >
+                          <span className="font-semibold uppercase tracking-[0.14em]">
+                            Emoji error
+                          </span>
+                          <span className="min-w-0 break-words">
+                            {plannerSymbolGenerationFailure.message}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={retryPlannerSymbolGeneration}
+                            className="border border-current px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] transition hover:bg-[var(--workspace-danger)] hover:text-[var(--workspace-inverse-text)]"
+                          >
+                            Retry
+                          </button>
+                        </span>
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => void handleAppendPlannerDay()}
@@ -17541,6 +17627,7 @@ function OutlineNodeEditor({
     !isFocused &&
     !isVisualEmptyLine &&
     !isVisualSeparatorLine &&
+    !isPlannerTemplateWeekdayRoot &&
     !plannerSymbolTextExemptNodeIds.has(node._id as string) &&
     isPlannerSymbolizableText(displayDraft);
   const isPlannerSymbolPending = hasPlannerSymbolPreview && !plannerSymbolText;

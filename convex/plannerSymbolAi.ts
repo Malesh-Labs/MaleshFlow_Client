@@ -10,7 +10,6 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { assertOwnerKey } from "./lib/auth";
 import {
-  buildDeterministicPlannerSymbols,
   normalizeGeneratedPlannerSymbols,
   PLANNER_EMOJI_CACHE_STYLE,
 } from "../lib/domain/plannerSymbols";
@@ -50,6 +49,10 @@ function getOpenAIClient() {
   return new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
   });
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Unknown error";
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
@@ -107,12 +110,25 @@ async function generateBatchWithOpenAI(
 
   const parsed = response.output_parsed;
   const labelsByNodeId = new Map<string, string>();
+  const expectedNodeIds = new Set(nodes.map((node) => node.nodeId as string));
   for (const label of parsed?.labels ?? []) {
+    if (!expectedNodeIds.has(label.nodeId)) {
+      continue;
+    }
+
     const normalized = normalizeGeneratedPlannerSymbols(label.symbols);
     if (normalized) {
       labelsByNodeId.set(label.nodeId, normalized);
     }
   }
+
+  const missingCount = nodes.filter((node) => !labelsByNodeId.has(node.nodeId)).length;
+  if (missingCount > 0) {
+    throw new Error(
+      `OpenAI returned missing or invalid emoji labels for ${missingCount} planner item${missingCount === 1 ? "" : "s"}.`,
+    );
+  }
+
   return labelsByNodeId;
 }
 
@@ -163,22 +179,23 @@ export const generatePlannerSymbolLabels = action({
 
     const nodesToGenerate = nodesWithHashes.filter((node) => !labels.has(node.nodeId));
     const client = getOpenAIClient();
-    for (let index = 0; index < nodesToGenerate.length; index += PLANNER_SYMBOL_BATCH_SIZE) {
-      const batch = nodesToGenerate.slice(index, index + PLANNER_SYMBOL_BATCH_SIZE);
-      let generated = new Map<string, string>();
-      if (client) {
-        try {
-          generated = await generateBatchWithOpenAI(client, batch);
-        } catch {
-          generated = new Map();
-        }
+    if (nodesToGenerate.length > 0) {
+      if (!client) {
+        throw new Error("OpenAI emoji generation failed: OPENAI_API_KEY is not configured.");
       }
 
-      for (const node of batch) {
-        labels.set(
-          node.nodeId,
-          generated.get(node.nodeId) ?? buildDeterministicPlannerSymbols(node.sourceText),
-        );
+      for (let index = 0; index < nodesToGenerate.length; index += PLANNER_SYMBOL_BATCH_SIZE) {
+        const batch = nodesToGenerate.slice(index, index + PLANNER_SYMBOL_BATCH_SIZE);
+        let generated: Map<string, string>;
+        try {
+          generated = await generateBatchWithOpenAI(client, batch);
+        } catch (error) {
+          throw new Error(`OpenAI emoji generation failed: ${getErrorMessage(error)}`);
+        }
+
+        for (const node of batch) {
+          labels.set(node.nodeId, generated.get(node.nodeId)!);
+        }
       }
     }
 
