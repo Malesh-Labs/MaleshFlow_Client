@@ -122,23 +122,49 @@ async function generateBatchWithOpenAI(
   );
 
   const parsed = response.output_parsed;
-  const labelsByNodeId = new Map<string, string>();
-  const expectedNodeIds = new Set(nodes.map((node) => node.nodeId as string));
+  const rawByNodeId = new Map<string, string>();
   for (const label of parsed?.labels ?? []) {
-    if (!expectedNodeIds.has(label.nodeId)) {
-      continue;
-    }
-
-    const normalized = normalizeGeneratedPlannerSymbols(label.symbols);
-    if (normalized) {
-      labelsByNodeId.set(label.nodeId, normalized);
+    if (typeof label?.nodeId === "string") {
+      rawByNodeId.set(label.nodeId, label.symbols ?? "");
     }
   }
 
-  const missingCount = nodes.filter((node) => !labelsByNodeId.has(node.nodeId)).length;
-  if (missingCount > 0) {
+  const labelsByNodeId = new Map<string, string>();
+  const failures: Array<{ sourceText: string; raw: string | null; reason: string }> = [];
+  for (const node of nodes) {
+    const nodeId = node.nodeId as string;
+    const raw = rawByNodeId.get(nodeId);
+    const normalized = raw === undefined ? null : normalizeGeneratedPlannerSymbols(raw);
+    if (normalized) {
+      labelsByNodeId.set(nodeId, normalized);
+      continue;
+    }
+
+    failures.push({
+      sourceText: node.sourceText,
+      raw: raw ?? null,
+      reason: raw === undefined ? "no label returned" : "not emoji-only (≤3 emoji)",
+    });
+  }
+
+  if (failures.length > 0) {
+    const detail = failures
+      .map((failure) => {
+        const snippet =
+          failure.sourceText.length > 60
+            ? `${failure.sourceText.slice(0, 57)}...`
+            : failure.sourceText;
+        const rawDescription =
+          failure.raw === null ? "no label returned" : `returned ${JSON.stringify(failure.raw)}`;
+        return `"${snippet}" → ${rawDescription} [${failure.reason}]`;
+      })
+      .join("; ");
+    // Surface the exact item + raw model output in Convex logs as well as the
+    // thrown message, so genuine edge cases (e.g. keycap emoji like 3️⃣ that
+    // contain a digit codepoint) are debuggable rather than opaque.
+    console.warn(`[planner-symbols] invalid emoji labels: ${detail}`);
     throw new Error(
-      `OpenAI returned missing or invalid emoji labels for ${missingCount} planner item${missingCount === 1 ? "" : "s"}.`,
+      `OpenAI returned missing or invalid emoji labels for ${failures.length} planner item${failures.length === 1 ? "" : "s"}: ${detail}`,
     );
   }
 
