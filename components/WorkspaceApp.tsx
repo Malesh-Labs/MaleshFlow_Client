@@ -786,6 +786,73 @@ const PageSectionCollapseContext = createContext<{
 const EMPTY_NODE_ID_SET = new Set<string>();
 const EMPTY_SYMBOL_LABELS_BY_NODE_ID = new Map<string, string>();
 
+// Subscribes to cached planner symbol labels for the given candidate nodes and
+// fires generation for any that are missing, de-duplicating in-flight requests
+// by node + source text so the same item is never requested twice. Shared by
+// the main planner outline and each embedded linked-children block.
+function usePlannerSymbolLabels({
+  ownerKey,
+  enabled,
+  plannerPageId,
+  candidateNodeIds,
+}: {
+  ownerKey: string | null;
+  enabled: boolean;
+  plannerPageId: Id<"pages"> | null;
+  candidateNodeIds: Id<"nodes">[];
+}) {
+  const generatePlannerSymbolLabels = useAction(
+    api.plannerSymbolAi.generatePlannerSymbolLabels,
+  );
+  const requestedKeysRef = useRef(new Set<string>());
+  const result = useQuery(
+    api.plannerSymbols.getPlannerSymbolLabels,
+    enabled && ownerKey && plannerPageId && candidateNodeIds.length > 0
+      ? { ownerKey, plannerPageId, nodeIds: candidateNodeIds }
+      : SKIP,
+  ) as PlannerSymbolLabelsResult | undefined;
+  const labelsByNodeId = useMemo(
+    () =>
+      new Map(
+        (result?.labels ?? []).map((label) => [
+          label.nodeId as string,
+          label.symbols,
+        ]),
+      ),
+    [result?.labels],
+  );
+  useEffect(() => {
+    if (!enabled || !ownerKey || !plannerPageId) {
+      requestedKeysRef.current.clear();
+      return;
+    }
+
+    const missing = result?.missing ?? [];
+    const missingToGenerate = missing.filter(
+      (entry) => !requestedKeysRef.current.has(`${entry.nodeId}:${entry.sourceText}`),
+    );
+    if (missingToGenerate.length === 0) {
+      return;
+    }
+
+    for (const entry of missingToGenerate) {
+      requestedKeysRef.current.add(`${entry.nodeId}:${entry.sourceText}`);
+    }
+
+    void generatePlannerSymbolLabels({
+      ownerKey,
+      plannerPageId,
+      nodeIds: missingToGenerate.map((entry) => entry.nodeId),
+    }).catch(() => {
+      for (const entry of missingToGenerate) {
+        requestedKeysRef.current.delete(`${entry.nodeId}:${entry.sourceText}`);
+      }
+    });
+  }, [enabled, generatePlannerSymbolLabels, ownerKey, plannerPageId, result?.missing]);
+
+  return labelsByNodeId;
+}
+
 function useOwnerKey() {
   const ownerKey = useSyncExternalStore(
     (onChange) => {
@@ -4191,9 +4258,6 @@ function ConfiguredWorkspace({
   const suggestRandomPlannerTask = useAction(api.plannerAi.suggestRandomPlannerTask);
   const addRandomPlannerTaskWithAi = useAction(api.plannerAi.addRandomPlannerTaskWithAi);
   const suggestNextPlannerTask = useAction(api.plannerAi.suggestNextPlannerTask);
-  const generatePlannerSymbolLabels = useAction(
-    api.plannerSymbolAi.generatePlannerSymbolLabels,
-  );
   const completePlannerTaskRaw = useMutation(api.planner.completePlannerTask);
   const completePlannerTaskMutation = completePlannerTaskRaw.withOptimisticUpdate(
     (localStore, args) => {
@@ -4232,7 +4296,6 @@ function ConfiguredWorkspace({
   const paletteInputRef = useRef<HTMLInputElement>(null);
   const paletteResultsRef = useRef<HTMLDivElement>(null);
   const lastPaletteModeRef = useRef<PaletteMode>("pages");
-  const requestedPlannerSymbolKeysRef = useRef(new Set<string>());
   const hasResolvedInitialPageSelection = useRef(false);
   const hasRequestedSidebarPage = useRef(false);
   const hasRequestedTaskSidebarSection = useRef(new Set<string>());
@@ -4981,71 +5044,13 @@ function ConfiguredWorkspace({
       plannerSymbolTextExemptNodeIds,
     ],
   );
-  const plannerSymbolLabelsResult = useQuery(
-    api.plannerSymbols.getPlannerSymbolLabels,
-    ownerKey &&
-      selectedPage &&
-      pageMeta.pageType === "planner" &&
-      isPlannerSymbolModeEnabled &&
-      plannerSymbolCandidateNodeIds.length > 0
-      ? {
-          ownerKey,
-          plannerPageId: selectedPage._id,
-          nodeIds: plannerSymbolCandidateNodeIds,
-        }
-      : SKIP,
-  ) as PlannerSymbolLabelsResult | undefined;
-  const plannerSymbolLabelsByNodeId = useMemo(
-    () =>
-      new Map(
-        (plannerSymbolLabelsResult?.labels ?? []).map((label) => [
-          label.nodeId as string,
-          label.symbols,
-        ]),
-      ),
-    [plannerSymbolLabelsResult?.labels],
-  );
-  useEffect(() => {
-    if (
-      !ownerKey ||
-      !selectedPage ||
-      pageMeta.pageType !== "planner" ||
-      !isPlannerSymbolModeEnabled
-    ) {
-      requestedPlannerSymbolKeysRef.current.clear();
-      return;
-    }
-
-    const missing = plannerSymbolLabelsResult?.missing ?? [];
-    const missingToGenerate = missing.filter((entry) => {
-      const requestKey = `${entry.nodeId}:${entry.sourceText}`;
-      return !requestedPlannerSymbolKeysRef.current.has(requestKey);
-    });
-    if (missingToGenerate.length === 0) {
-      return;
-    }
-
-    for (const entry of missingToGenerate) {
-      requestedPlannerSymbolKeysRef.current.add(`${entry.nodeId}:${entry.sourceText}`);
-    }
-
-    void generatePlannerSymbolLabels({
-      ownerKey,
-      plannerPageId: selectedPage._id,
-      nodeIds: missingToGenerate.map((entry) => entry.nodeId),
-    }).catch(() => {
-      for (const entry of missingToGenerate) {
-        requestedPlannerSymbolKeysRef.current.delete(`${entry.nodeId}:${entry.sourceText}`);
-      }
-    });
-  }, [
-    generatePlannerSymbolLabels,
-    isPlannerSymbolModeEnabled,
+  const plannerSymbolLabelsByNodeId = usePlannerSymbolLabels({
     ownerKey,
-    pageMeta.pageType,
-    plannerSymbolLabelsResult?.missing,
-    selectedPage,
-  ]);
+    enabled: pageMeta.pageType === "planner" && isPlannerSymbolModeEnabled,
+    plannerPageId:
+      pageMeta.pageType === "planner" && selectedPage ? selectedPage._id : null,
+    candidateNodeIds: plannerSymbolCandidateNodeIds,
+  });
   const multiPageIncludedVisibleRows =
     pageMeta.pageType === "multiPage"
       ? [
@@ -15701,10 +15706,6 @@ function LinkedNodeChildrenBlock({
   ancestorNodeIds: Set<string>;
 } & PlannerSymbolModeRenderProps) {
   const history = useWorkspaceHistory();
-  const generateLinkedPlannerSymbolLabels = useAction(
-    api.plannerSymbolAi.generatePlannerSymbolLabels,
-  );
-  const requestedLinkedPlannerSymbolKeysRef = useRef(new Set<string>());
   const linkedVisibleNodes = useMemo(
     () => flattenTreeNodes(roots, collapsedNodeIds),
     [collapsedNodeIds, roots],
@@ -15717,70 +15718,15 @@ function LinkedNodeChildrenBlock({
     () => collectPlannerSymbolCandidateNodeIds(linkedVisibleNodes, EMPTY_NODE_ID_SET),
     [linkedVisibleNodes],
   );
-  const linkedSymbolLabelsResult = useQuery(
-    api.plannerSymbols.getPlannerSymbolLabels,
-    ownerKey &&
-      plannerSymbolModeEnabled &&
-      plannerSymbolModePlannerPageId &&
-      linkedSymbolCandidateNodeIds.length > 0
-      ? {
-          ownerKey,
-          plannerPageId: plannerSymbolModePlannerPageId,
-          nodeIds: linkedSymbolCandidateNodeIds,
-        }
-      : SKIP,
-  ) as PlannerSymbolLabelsResult | undefined;
-  const linkedSymbolLabelsByNodeId = useMemo(
-    () =>
-      new Map(
-        (linkedSymbolLabelsResult?.labels ?? []).map((label) => [
-          label.nodeId as string,
-          label.symbols,
-        ]),
-      ),
-    [linkedSymbolLabelsResult?.labels],
-  );
+  const linkedSymbolLabelsByNodeId = usePlannerSymbolLabels({
+    ownerKey,
+    enabled: plannerSymbolModeEnabled,
+    plannerPageId: plannerSymbolModePlannerPageId,
+    candidateNodeIds: linkedSymbolCandidateNodeIds,
+  });
   const sourcePageId = sourcePage._id as Id<"pages">;
   const rootNodeId = rootNode._id as Id<"nodes">;
   const isSourcePageReadOnly = sourcePage.archived;
-
-  useEffect(() => {
-    if (!ownerKey || !plannerSymbolModeEnabled || !plannerSymbolModePlannerPageId) {
-      requestedLinkedPlannerSymbolKeysRef.current.clear();
-      return;
-    }
-
-    const missing = linkedSymbolLabelsResult?.missing ?? [];
-    const missingToGenerate = missing.filter((entry) => {
-      const requestKey = `${entry.nodeId}:${entry.sourceText}`;
-      return !requestedLinkedPlannerSymbolKeysRef.current.has(requestKey);
-    });
-    if (missingToGenerate.length === 0) {
-      return;
-    }
-
-    for (const entry of missingToGenerate) {
-      requestedLinkedPlannerSymbolKeysRef.current.add(`${entry.nodeId}:${entry.sourceText}`);
-    }
-
-    void generateLinkedPlannerSymbolLabels({
-      ownerKey,
-      plannerPageId: plannerSymbolModePlannerPageId,
-      nodeIds: missingToGenerate.map((entry) => entry.nodeId),
-    }).catch(() => {
-      for (const entry of missingToGenerate) {
-        requestedLinkedPlannerSymbolKeysRef.current.delete(
-          `${entry.nodeId}:${entry.sourceText}`,
-        );
-      }
-    });
-  }, [
-    generateLinkedPlannerSymbolLabels,
-    linkedSymbolLabelsResult?.missing,
-    ownerKey,
-    plannerSymbolModeEnabled,
-    plannerSymbolModePlannerPageId,
-  ]);
 
   const selectLinkedNodeRange = useCallback(
     (anchorNodeId: string, currentNodeId: string) => {
