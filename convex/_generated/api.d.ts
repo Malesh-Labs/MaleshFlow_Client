@@ -27,6 +27,8 @@ import type * as migration from "../migration.js";
 import type * as migrationData from "../migrationData.js";
 import type * as planner from "../planner.js";
 import type * as plannerAi from "../plannerAi.js";
+import type * as plannerSymbolAi from "../plannerSymbolAi.js";
+import type * as plannerSymbols from "../plannerSymbols.js";
 import type * as workspace from "../workspace.js";
 
 import type {
@@ -55,6 +57,8 @@ declare const fullApi: ApiFromModules<{
   migrationData: typeof migrationData;
   planner: typeof planner;
   plannerAi: typeof plannerAi;
+  plannerSymbolAi: typeof plannerSymbolAi;
+  plannerSymbols: typeof plannerSymbols;
   workspace: typeof workspace;
 }>;
 

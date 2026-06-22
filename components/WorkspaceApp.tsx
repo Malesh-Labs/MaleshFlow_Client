@@ -95,6 +95,10 @@ import {
   getEffectiveTaskDueDateRange,
 } from "@/lib/domain/planner";
 import {
+  isPlannerSymbolizableText,
+  listFocusSymbolTextExemptNodeIds,
+} from "@/lib/domain/plannerSymbols";
+import {
   applyOptimisticInsertNodeAbove,
   applyOptimisticNodeCreates,
   applyOptimisticNodeBatchUpdates,
@@ -168,6 +172,7 @@ const RECURRING_TASK_COMPLETION_MODE_STORAGE_KEY =
   "maleshflow-recurring-task-completion-mode";
 const PLANNER_RIGHT_SIDEBAR_WIDTH_STORAGE_KEY =
   "maleshflow-planner-right-sidebar-width";
+const PLANNER_SYMBOL_MODE_STORAGE_KEY = "maleshflow-planner-symbol-mode";
 const PLANNER_RIGHT_SIDEBAR_DEFAULT_WIDTH = 272;
 const PLANNER_RIGHT_SIDEBAR_MIN_WIDTH = 220;
 const PLANNER_RIGHT_SIDEBAR_MAX_WIDTH = 560;
@@ -503,6 +508,23 @@ type RenderedPreviewSegment =
       bold: boolean;
       code: boolean;
     });
+type PlannerSymbolLabelsResult = {
+  labels: Array<{
+    nodeId: Id<"nodes">;
+    sourceText: string;
+    symbols: string;
+  }>;
+  missing: Array<{
+    nodeId: Id<"nodes">;
+    sourceText: string;
+  }>;
+};
+type PlannerSymbolModeRenderProps = {
+  plannerSymbolModeEnabled?: boolean;
+  plannerSymbolModePlannerPageId?: Id<"pages"> | null;
+  plannerSymbolLabelsByNodeId?: Map<string, string>;
+  plannerSymbolTextExemptNodeIds?: Set<string>;
+};
 type WorkspaceKnowledgeSourceSnapshot = {
   nodeId: string;
   pageId: string | null;
@@ -762,6 +784,7 @@ const PageSectionCollapseContext = createContext<{
   onToggleSectionCollapsed: () => undefined,
 });
 const EMPTY_NODE_ID_SET = new Set<string>();
+const EMPTY_SYMBOL_LABELS_BY_NODE_ID = new Map<string, string>();
 
 function useOwnerKey() {
   const ownerKey = useSyncExternalStore(
@@ -1271,6 +1294,20 @@ function collectExpandableNodeIds(nodes: TreeNode[]): string[] {
 
 function collectExpandableNodeIdsFromSection(sectionNode: TreeNode | null) {
   return sectionNode ? collectExpandableNodeIds(sectionNode.children) : [];
+}
+
+function collectPlannerSymbolCandidateNodeIds(
+  nodes: TreeNode[],
+  textExemptNodeIds: Set<string>,
+) {
+  return [
+    ...new Set(
+      nodes
+        .filter((node) => !textExemptNodeIds.has(node._id))
+        .filter((node) => isPlannerSymbolizableText(node.text))
+        .map((node) => node._id as Id<"nodes">),
+    ),
+  ];
 }
 
 function collectEmbeddedMultiPagePageExpandableNodeIds(page: PageDoc, tree: TreeNode[]) {
@@ -3286,6 +3323,19 @@ function readStoredBoolean(key: string, defaultValue: boolean) {
   return storedValue === "true";
 }
 
+function readStoredLocalBoolean(key: string, defaultValue: boolean) {
+  if (typeof window === "undefined") {
+    return defaultValue;
+  }
+
+  const storedValue = window.localStorage.getItem(key);
+  if (storedValue === null) {
+    return defaultValue;
+  }
+
+  return storedValue === "true";
+}
+
 function readStoredRecurringCompletionMode(defaultValue: RecurringCompletionMode) {
   if (typeof window === "undefined") {
     return defaultValue;
@@ -3525,6 +3575,9 @@ function ConfiguredWorkspace({
   const [isPlannerCompletingDay, setIsPlannerCompletingDay] = useState(false);
   const [isPlannerAddingRandomTask, setIsPlannerAddingRandomTask] = useState(false);
   const [isPlannerResolvingNextTask, setIsPlannerResolvingNextTask] = useState(false);
+  const [isPlannerSymbolModeEnabled, setIsPlannerSymbolModeEnabled] = useState(() =>
+    readStoredLocalBoolean(PLANNER_SYMBOL_MODE_STORAGE_KEY, false),
+  );
   const [isWorkspaceChatOpen, setIsWorkspaceChatOpen] = useState(() =>
     readStoredBoolean(WORKSPACE_AI_CHAT_OPEN_STORAGE_KEY, false),
   );
@@ -4138,6 +4191,9 @@ function ConfiguredWorkspace({
   const suggestRandomPlannerTask = useAction(api.plannerAi.suggestRandomPlannerTask);
   const addRandomPlannerTaskWithAi = useAction(api.plannerAi.addRandomPlannerTaskWithAi);
   const suggestNextPlannerTask = useAction(api.plannerAi.suggestNextPlannerTask);
+  const generatePlannerSymbolLabels = useAction(
+    api.plannerSymbolAi.generatePlannerSymbolLabels,
+  );
   const completePlannerTaskRaw = useMutation(api.planner.completePlannerTask);
   const completePlannerTaskMutation = completePlannerTaskRaw.withOptimisticUpdate(
     (localStore, args) => {
@@ -4176,6 +4232,7 @@ function ConfiguredWorkspace({
   const paletteInputRef = useRef<HTMLInputElement>(null);
   const paletteResultsRef = useRef<HTMLDivElement>(null);
   const lastPaletteModeRef = useRef<PaletteMode>("pages");
+  const requestedPlannerSymbolKeysRef = useRef(new Set<string>());
   const hasResolvedInitialPageSelection = useRef(false);
   const hasRequestedSidebarPage = useRef(false);
   const hasRequestedTaskSidebarSection = useRef(new Set<string>());
@@ -4894,10 +4951,101 @@ function ConfiguredWorkspace({
           ? flattenTreeNodes([...multiPageVisibleRoots, ...genericRoots], effectiveCollapsedNodeIds)
         : flattenTreeNodes(genericRoots, effectiveCollapsedNodeIds);
   const sidebarVisibleRows = flattenTreeNodes(sidebarNodes, effectiveCollapsedNodeIds);
-  const plannerSidebarVisibleRows =
-    pageMeta.pageType === "planner" && plannerSidebarSection
-      ? flattenTreeNodes(plannerSidebarSection.children, effectiveCollapsedNodeIds)
-      : [];
+  const plannerSidebarVisibleRows = useMemo(
+    () =>
+      pageMeta.pageType === "planner" && plannerSidebarSection
+        ? flattenTreeNodes(plannerSidebarSection.children, effectiveCollapsedNodeIds)
+        : [],
+    [effectiveCollapsedNodeIds, pageMeta.pageType, plannerSidebarSection],
+  );
+  const plannerSymbolTextExemptNodeIds = useMemo(
+    () =>
+      new Set([
+        ...(plannerFocusSection ? [plannerFocusSection._id as string] : []),
+        ...listFocusSymbolTextExemptNodeIds(plannerFocusSection?.children ?? []),
+      ]),
+    [plannerFocusSection],
+  );
+  const plannerSymbolCandidateNodeIds = useMemo(
+    () =>
+      pageMeta.pageType === "planner"
+        ? collectPlannerSymbolCandidateNodeIds(
+            [...pageVisibleRows, ...plannerSidebarVisibleRows],
+            plannerSymbolTextExemptNodeIds,
+          )
+        : [],
+    [
+      pageMeta.pageType,
+      pageVisibleRows,
+      plannerSidebarVisibleRows,
+      plannerSymbolTextExemptNodeIds,
+    ],
+  );
+  const plannerSymbolLabelsResult = useQuery(
+    api.plannerSymbols.getPlannerSymbolLabels,
+    ownerKey &&
+      selectedPage &&
+      pageMeta.pageType === "planner" &&
+      isPlannerSymbolModeEnabled &&
+      plannerSymbolCandidateNodeIds.length > 0
+      ? {
+          ownerKey,
+          plannerPageId: selectedPage._id,
+          nodeIds: plannerSymbolCandidateNodeIds,
+        }
+      : SKIP,
+  ) as PlannerSymbolLabelsResult | undefined;
+  const plannerSymbolLabelsByNodeId = useMemo(
+    () =>
+      new Map(
+        (plannerSymbolLabelsResult?.labels ?? []).map((label) => [
+          label.nodeId as string,
+          label.symbols,
+        ]),
+      ),
+    [plannerSymbolLabelsResult?.labels],
+  );
+  useEffect(() => {
+    if (
+      !ownerKey ||
+      !selectedPage ||
+      pageMeta.pageType !== "planner" ||
+      !isPlannerSymbolModeEnabled
+    ) {
+      requestedPlannerSymbolKeysRef.current.clear();
+      return;
+    }
+
+    const missing = plannerSymbolLabelsResult?.missing ?? [];
+    const missingToGenerate = missing.filter((entry) => {
+      const requestKey = `${entry.nodeId}:${entry.sourceText}`;
+      return !requestedPlannerSymbolKeysRef.current.has(requestKey);
+    });
+    if (missingToGenerate.length === 0) {
+      return;
+    }
+
+    for (const entry of missingToGenerate) {
+      requestedPlannerSymbolKeysRef.current.add(`${entry.nodeId}:${entry.sourceText}`);
+    }
+
+    void generatePlannerSymbolLabels({
+      ownerKey,
+      plannerPageId: selectedPage._id,
+      nodeIds: missingToGenerate.map((entry) => entry.nodeId),
+    }).catch(() => {
+      for (const entry of missingToGenerate) {
+        requestedPlannerSymbolKeysRef.current.delete(`${entry.nodeId}:${entry.sourceText}`);
+      }
+    });
+  }, [
+    generatePlannerSymbolLabels,
+    isPlannerSymbolModeEnabled,
+    ownerKey,
+    pageMeta.pageType,
+    plannerSymbolLabelsResult?.missing,
+    selectedPage,
+  ]);
   const multiPageIncludedVisibleRows =
     pageMeta.pageType === "multiPage"
       ? [
@@ -6012,6 +6160,9 @@ function ConfiguredWorkspace({
       readStoredRecurringCompletionMode("dueDate"),
     );
     setPlannerSidebarWidth(readStoredPlannerSidebarWidth());
+    setIsPlannerSymbolModeEnabled(
+      readStoredLocalBoolean(PLANNER_SYMBOL_MODE_STORAGE_KEY, false),
+    );
     try {
       const storedCollapsedNodeIdsRaw = window.sessionStorage.getItem(COLLAPSED_NODES_STORAGE_KEY);
       const storedCollapsedNodeIds = JSON.parse(storedCollapsedNodeIdsRaw ?? "[]");
@@ -6303,6 +6454,17 @@ function ConfiguredWorkspace({
       `${plannerSidebarWidth}`,
     );
   }, [plannerSidebarWidth]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    window.localStorage.setItem(
+      PLANNER_SYMBOL_MODE_STORAGE_KEY,
+      isPlannerSymbolModeEnabled ? "true" : "false",
+    );
+  }, [isPlannerSymbolModeEnabled]);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -7032,6 +7194,7 @@ function ConfiguredWorkspace({
     window.localStorage.removeItem(COLLAPSED_NODES_STORAGE_KEY);
     window.localStorage.removeItem(RECURRING_TASK_COMPLETION_MODE_STORAGE_KEY);
     window.localStorage.removeItem(PLANNER_RIGHT_SIDEBAR_WIDTH_STORAGE_KEY);
+    window.localStorage.removeItem(PLANNER_SYMBOL_MODE_STORAGE_KEY);
     setSelectedPageId(null);
     setLocationPageId(null);
     setLocationFocusedNodeId(null);
@@ -12314,6 +12477,14 @@ function ConfiguredWorkspace({
                       onToggleNodeFavorite={toggleNodeFavorite}
                       recurringCompletionMode={recurringCompletionMode}
                       completeTaskPageTask={completeTaskPageTask}
+                      plannerSymbolModeEnabled={
+                        pageMeta.pageType === "planner" && isPlannerSymbolModeEnabled
+                      }
+                      plannerSymbolModePlannerPageId={
+                        pageMeta.pageType === "planner" ? selectedPage._id : null
+                      }
+                      plannerSymbolLabelsByNodeId={plannerSymbolLabelsByNodeId}
+                      plannerSymbolTextExemptNodeIds={plannerSymbolTextExemptNodeIds}
                     />
                   </div>
                 ) : pageMeta.pageType === "task" ? (
@@ -12370,6 +12541,38 @@ function ConfiguredWorkspace({
                 ) : pageMeta.pageType === "planner" ? (
                   <div className="space-y-8">
                     <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={isPlannerSymbolModeEnabled}
+                        onClick={() =>
+                          setIsPlannerSymbolModeEnabled((current) => !current)
+                        }
+                        className={clsx(
+                          "inline-flex items-center gap-2 border px-3 py-2 text-xs font-semibold uppercase tracking-[0.18em] transition",
+                          isPlannerSymbolModeEnabled
+                            ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
+                            : "border-[var(--workspace-border)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                        )}
+                        title={
+                          isPlannerSymbolModeEnabled
+                            ? "Turn symbol mode off"
+                            : "Turn symbol mode on"
+                        }
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={clsx(
+                            "inline-flex h-3.5 w-6 items-center border transition",
+                            isPlannerSymbolModeEnabled
+                              ? "justify-end border-[var(--workspace-inverse-text)]"
+                              : "justify-start border-[var(--workspace-border-hover)]",
+                          )}
+                        >
+                          <span className="mx-0.5 h-2 w-2 bg-current" />
+                        </span>
+                        Symbol Mode
+                      </button>
                       <button
                         type="button"
                         onClick={() => void handleAppendPlannerDay()}
@@ -12618,6 +12821,10 @@ function ConfiguredWorkspace({
                           onOpenFindQuery={openFindPaletteForQuery}
                           onToggleNodeFavorite={toggleNodeFavorite}
                           recurringCompletionMode={recurringCompletionMode}
+                          plannerSymbolModeEnabled={isPlannerSymbolModeEnabled}
+                          plannerSymbolModePlannerPageId={selectedPage._id}
+                          plannerSymbolLabelsByNodeId={plannerSymbolLabelsByNodeId}
+                          plannerSymbolTextExemptNodeIds={plannerSymbolTextExemptNodeIds}
                         />
                       </div>
                       <aside className="relative min-w-0 border-t border-[var(--workspace-border-subtle)] pt-6 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
@@ -12700,6 +12907,10 @@ function ConfiguredWorkspace({
                             recurringCompletionMode={recurringCompletionMode}
                             compact
                             showHeader={false}
+                            plannerSymbolModeEnabled={isPlannerSymbolModeEnabled}
+                            plannerSymbolModePlannerPageId={selectedPage._id}
+                            plannerSymbolLabelsByNodeId={plannerSymbolLabelsByNodeId}
+                            plannerSymbolTextExemptNodeIds={plannerSymbolTextExemptNodeIds}
                           />
                         ) : (
                           <div className="text-xs uppercase tracking-[0.22em] text-[var(--workspace-text-faint)]">
@@ -12756,6 +12967,10 @@ function ConfiguredWorkspace({
                       onToggleNodeFavorite={toggleNodeFavorite}
                       recurringCompletionMode={recurringCompletionMode}
                       depthOffset={sectionDepthOffset}
+                      plannerSymbolModeEnabled={isPlannerSymbolModeEnabled}
+                      plannerSymbolModePlannerPageId={selectedPage._id}
+                      plannerSymbolLabelsByNodeId={plannerSymbolLabelsByNodeId}
+                      plannerSymbolTextExemptNodeIds={plannerSymbolTextExemptNodeIds}
                     />
                   </div>
                 ) : pageMeta.pageType === "model" ? (
@@ -14982,6 +15197,10 @@ function PageSection({
   statusMessage = "",
   compact = false,
   showHeader = true,
+  plannerSymbolModeEnabled = false,
+  plannerSymbolModePlannerPageId = null,
+  plannerSymbolLabelsByNodeId = EMPTY_SYMBOL_LABELS_BY_NODE_ID,
+  plannerSymbolTextExemptNodeIds = EMPTY_NODE_ID_SET,
 }: {
   title: string;
   sectionNode: TreeNode | null;
@@ -15042,7 +15261,7 @@ function PageSection({
   statusMessage?: string;
   compact?: boolean;
   showHeader?: boolean;
-}) {
+} & PlannerSymbolModeRenderProps) {
   const { collapsedSectionKeys, onToggleSectionCollapsed } = useContext(
     PageSectionCollapseContext,
   );
@@ -15153,6 +15372,10 @@ function PageSection({
           recurringCompletionMode={recurringCompletionMode}
           completeTaskPageTask={completeTaskPageTask}
           mobileIndentStep={mobileIndentStep}
+          plannerSymbolModeEnabled={plannerSymbolModeEnabled}
+          plannerSymbolModePlannerPageId={plannerSymbolModePlannerPageId}
+          plannerSymbolLabelsByNodeId={plannerSymbolLabelsByNodeId}
+          plannerSymbolTextExemptNodeIds={plannerSymbolTextExemptNodeIds}
         />
       </div>
       ) : null}
@@ -15212,6 +15435,10 @@ function OutlineNodeList({
   mobileIndentStep = OUTLINE_MOBILE_INDENT_STEP,
   showChildrenDepth = 0,
   showChildrenAncestorNodeIds = EMPTY_NODE_ID_SET,
+  plannerSymbolModeEnabled = false,
+  plannerSymbolModePlannerPageId = null,
+  plannerSymbolLabelsByNodeId = EMPTY_SYMBOL_LABELS_BY_NODE_ID,
+  plannerSymbolTextExemptNodeIds = EMPTY_NODE_ID_SET,
 }: {
   nodes: TreeNode[];
   ownerKey: string;
@@ -15269,7 +15496,7 @@ function OutlineNodeList({
   mobileIndentStep?: number;
   showChildrenDepth?: number;
   showChildrenAncestorNodeIds?: Set<string>;
-}) {
+} & PlannerSymbolModeRenderProps) {
   return (
     <>
       {nodes.length === 0 ? (
@@ -15363,6 +15590,10 @@ function OutlineNodeList({
           mobileIndentStep={mobileIndentStep}
           showChildrenDepth={showChildrenDepth}
           showChildrenAncestorNodeIds={showChildrenAncestorNodeIds}
+          plannerSymbolModeEnabled={plannerSymbolModeEnabled}
+          plannerSymbolModePlannerPageId={plannerSymbolModePlannerPageId}
+          plannerSymbolLabelsByNodeId={plannerSymbolLabelsByNodeId}
+          plannerSymbolTextExemptNodeIds={plannerSymbolTextExemptNodeIds}
         />
       ))}
     </>
@@ -15415,6 +15646,8 @@ function LinkedNodeChildrenBlock({
   mobileIndentStep,
   showChildrenDepth,
   ancestorNodeIds,
+  plannerSymbolModeEnabled = false,
+  plannerSymbolModePlannerPageId = null,
 }: {
   sourcePage: PageDoc;
   rootNode: Doc<"nodes">;
@@ -15466,15 +15699,88 @@ function LinkedNodeChildrenBlock({
   mobileIndentStep: number;
   showChildrenDepth: number;
   ancestorNodeIds: Set<string>;
-}) {
+} & PlannerSymbolModeRenderProps) {
   const history = useWorkspaceHistory();
-  const linkedVisibleNodeOrder = useMemo(
-    () => flattenTreeNodes(roots, collapsedNodeIds).map((node) => node._id),
+  const generateLinkedPlannerSymbolLabels = useAction(
+    api.plannerSymbolAi.generatePlannerSymbolLabels,
+  );
+  const requestedLinkedPlannerSymbolKeysRef = useRef(new Set<string>());
+  const linkedVisibleNodes = useMemo(
+    () => flattenTreeNodes(roots, collapsedNodeIds),
     [collapsedNodeIds, roots],
+  );
+  const linkedVisibleNodeOrder = useMemo(
+    () => linkedVisibleNodes.map((node) => node._id),
+    [linkedVisibleNodes],
+  );
+  const linkedSymbolCandidateNodeIds = useMemo(
+    () => collectPlannerSymbolCandidateNodeIds(linkedVisibleNodes, EMPTY_NODE_ID_SET),
+    [linkedVisibleNodes],
+  );
+  const linkedSymbolLabelsResult = useQuery(
+    api.plannerSymbols.getPlannerSymbolLabels,
+    ownerKey &&
+      plannerSymbolModeEnabled &&
+      plannerSymbolModePlannerPageId &&
+      linkedSymbolCandidateNodeIds.length > 0
+      ? {
+          ownerKey,
+          plannerPageId: plannerSymbolModePlannerPageId,
+          nodeIds: linkedSymbolCandidateNodeIds,
+        }
+      : SKIP,
+  ) as PlannerSymbolLabelsResult | undefined;
+  const linkedSymbolLabelsByNodeId = useMemo(
+    () =>
+      new Map(
+        (linkedSymbolLabelsResult?.labels ?? []).map((label) => [
+          label.nodeId as string,
+          label.symbols,
+        ]),
+      ),
+    [linkedSymbolLabelsResult?.labels],
   );
   const sourcePageId = sourcePage._id as Id<"pages">;
   const rootNodeId = rootNode._id as Id<"nodes">;
   const isSourcePageReadOnly = sourcePage.archived;
+
+  useEffect(() => {
+    if (!ownerKey || !plannerSymbolModeEnabled || !plannerSymbolModePlannerPageId) {
+      requestedLinkedPlannerSymbolKeysRef.current.clear();
+      return;
+    }
+
+    const missing = linkedSymbolLabelsResult?.missing ?? [];
+    const missingToGenerate = missing.filter((entry) => {
+      const requestKey = `${entry.nodeId}:${entry.sourceText}`;
+      return !requestedLinkedPlannerSymbolKeysRef.current.has(requestKey);
+    });
+    if (missingToGenerate.length === 0) {
+      return;
+    }
+
+    for (const entry of missingToGenerate) {
+      requestedLinkedPlannerSymbolKeysRef.current.add(`${entry.nodeId}:${entry.sourceText}`);
+    }
+
+    void generateLinkedPlannerSymbolLabels({
+      ownerKey,
+      plannerPageId: plannerSymbolModePlannerPageId,
+      nodeIds: missingToGenerate.map((entry) => entry.nodeId),
+    }).catch(() => {
+      for (const entry of missingToGenerate) {
+        requestedLinkedPlannerSymbolKeysRef.current.delete(
+          `${entry.nodeId}:${entry.sourceText}`,
+        );
+      }
+    });
+  }, [
+    generateLinkedPlannerSymbolLabels,
+    linkedSymbolLabelsResult?.missing,
+    ownerKey,
+    plannerSymbolModeEnabled,
+    plannerSymbolModePlannerPageId,
+  ]);
 
   const selectLinkedNodeRange = useCallback(
     (anchorNodeId: string, currentNodeId: string) => {
@@ -15694,6 +16000,10 @@ function LinkedNodeChildrenBlock({
         mobileIndentStep={mobileIndentStep}
         showChildrenDepth={showChildrenDepth + 1}
         showChildrenAncestorNodeIds={ancestorNodeIds}
+        plannerSymbolModeEnabled={plannerSymbolModeEnabled}
+        plannerSymbolModePlannerPageId={plannerSymbolModePlannerPageId}
+        plannerSymbolLabelsByNodeId={linkedSymbolLabelsByNodeId}
+        plannerSymbolTextExemptNodeIds={EMPTY_NODE_ID_SET}
       />
     </div>
   );
@@ -16161,6 +16471,66 @@ function PlainTextPreview({
           {segment.text}
         </span>
       ))}
+    </div>
+  );
+}
+
+function SymbolTextPreview({
+  symbolText,
+  actualPreview,
+  onFocusLine,
+  onRevealTouch,
+  isDisabled,
+  isRevealed,
+  className,
+}: {
+  symbolText: string;
+  actualPreview: ReactNode;
+  onFocusLine: () => void;
+  onRevealTouch: () => void;
+  isDisabled: boolean;
+  isRevealed: boolean;
+  className?: string;
+}) {
+  return (
+    <div className="absolute inset-0 z-10">
+      <div
+        className={clsx(
+          "absolute inset-0 whitespace-pre-wrap break-words px-0 transition-opacity duration-150 motion-reduce:transition-none",
+          isDisabled ? "cursor-default" : "cursor-text",
+          isRevealed
+            ? "pointer-events-none opacity-0"
+            : "pointer-events-auto opacity-100 group-hover:pointer-events-none group-hover:opacity-0",
+          className,
+        )}
+        onPointerDown={(event) => {
+          if (event.pointerType === "mouse") {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          onRevealTouch();
+        }}
+        onMouseDown={(event) => {
+          if (isDisabled) {
+            return;
+          }
+          event.preventDefault();
+          onFocusLine();
+        }}
+      >
+        {symbolText}
+      </div>
+      <div
+        className={clsx(
+          "absolute inset-0 transition-opacity duration-150 motion-reduce:transition-none",
+          isRevealed
+            ? "pointer-events-auto opacity-100"
+            : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100",
+        )}
+      >
+        {actualPreview}
+      </div>
     </div>
   );
 }
@@ -16967,6 +17337,10 @@ function OutlineNodeEditor({
   mobileIndentStep = OUTLINE_MOBILE_INDENT_STEP,
   showChildrenDepth = 0,
   showChildrenAncestorNodeIds = EMPTY_NODE_ID_SET,
+  plannerSymbolModeEnabled = false,
+  plannerSymbolModePlannerPageId = null,
+  plannerSymbolLabelsByNodeId = EMPTY_SYMBOL_LABELS_BY_NODE_ID,
+  plannerSymbolTextExemptNodeIds = EMPTY_NODE_ID_SET,
 }: {
   node: TreeNode;
   siblings: TreeNode[];
@@ -17029,7 +17403,7 @@ function OutlineNodeEditor({
   mobileIndentStep?: number;
   showChildrenDepth?: number;
   showChildrenAncestorNodeIds?: Set<string>;
-}) {
+} & PlannerSymbolModeRenderProps) {
   const history = useWorkspaceHistory();
   const onZoomIntoNode = useContext(NodeZoomContext);
   const isMobileLayout = useIsMobileLayout();
@@ -17044,12 +17418,14 @@ function OutlineNodeEditor({
   const [caretPosition, setCaretPosition] = useState<number | null>(null);
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
   const [dropTarget, setDropTarget] = useState<NodeDropTarget | null>(null);
+  const [isSymbolTextRevealed, setIsSymbolTextRevealed] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewMeasureRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef(draft);
   const markerHoldTimeoutRef = useRef<number | null>(null);
   const markerLongPressTriggeredRef = useRef(false);
   const childrenAnimationFrameRef = useRef<number | null>(null);
+  const symbolRevealTimeoutRef = useRef<number | null>(null);
 
   const nodeMeta = getNodeMeta(node);
   const isNoteCompleted = node.kind === "note" && nodeMeta.noteCompleted === true;
@@ -17156,6 +17532,14 @@ function OutlineNodeEditor({
   const linkPreviewSegments = useMemo(() => {
     return buildLinkPreviewSegments(displayDraft, pagesByTitle, pagesById, nodeTargetsById);
   }, [displayDraft, nodeTargetsById, pagesById, pagesByTitle]);
+  const plannerSymbolText = plannerSymbolLabelsByNodeId.get(node._id as string) ?? "…";
+  const hasPlannerSymbolPreview =
+    plannerSymbolModeEnabled &&
+    !isFocused &&
+    !isVisualEmptyLine &&
+    !isVisualSeparatorLine &&
+    !plannerSymbolTextExemptNodeIds.has(node._id as string) &&
+    isPlannerSymbolizableText(displayDraft);
   const linkedShowChildrenTrees = useMemo(
     () =>
       linkPreviewSegments.flatMap((segment) => {
@@ -17204,8 +17588,9 @@ function OutlineNodeEditor({
     !isVisualEmptyLine &&
     !isVisualSeparatorLine &&
     (isDimmedLine || isHeadingLine || hasInlineFormattingPreview) &&
-    !hasPageLinkPreview;
-  const hasDisplayPreview = hasPageLinkPreview || hasPlainTextPreview;
+    !hasPageLinkPreview &&
+    !hasPlannerSymbolPreview;
+  const hasDisplayPreview = hasPlannerSymbolPreview || hasPageLinkPreview || hasPlainTextPreview;
   const completedTextClass = isCompleted
     ? "text-[var(--workspace-text-faint)] line-through"
     : isDimmedByCompletedAncestor
@@ -17367,6 +17752,9 @@ function OutlineNodeEditor({
       if (markerHoldTimeoutRef.current !== null) {
         window.clearTimeout(markerHoldTimeoutRef.current);
       }
+      if (symbolRevealTimeoutRef.current !== null) {
+        window.clearTimeout(symbolRevealTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -17443,6 +17831,17 @@ function OutlineNodeEditor({
   const focusLineEditor = () => {
     onBeginTextEditing();
     focusElementAtEnd(textareaRef.current);
+  };
+
+  const revealSymbolTextTemporarily = () => {
+    setIsSymbolTextRevealed(true);
+    if (symbolRevealTimeoutRef.current !== null) {
+      window.clearTimeout(symbolRevealTimeoutRef.current);
+    }
+    symbolRevealTimeoutRef.current = window.setTimeout(() => {
+      symbolRevealTimeoutRef.current = null;
+      setIsSymbolTextRevealed(false);
+    }, 1800);
   };
 
   const restoreEditorSelection = (
@@ -19341,7 +19740,7 @@ function OutlineNodeEditor({
                     completedTextClass,
                   )}
                 />
-              ) : hasPlainTextPreview ? (
+              ) : hasPlainTextPreview || hasPlannerSymbolPreview ? (
                 <PlainTextMeasure
                   measureRef={previewMeasureRef}
                   text={displayDraft}
@@ -19351,7 +19750,46 @@ function OutlineNodeEditor({
                   )}
                 />
               ) : null}
-              {hasPageLinkPreview ? (
+              {hasPlannerSymbolPreview ? (
+                <SymbolTextPreview
+                  symbolText={plannerSymbolText}
+                  onFocusLine={focusLineEditor}
+                  onRevealTouch={revealSymbolTextTemporarily}
+                  isDisabled={isDisabled || activeDraggedNodeId !== null}
+                  isRevealed={isSymbolTextRevealed}
+                  className={clsx(
+                    previewTypographyClass,
+                    completedTextClass,
+                  )}
+                  actualPreview={
+                    hasPageLinkPreview ? (
+                      <LinkedTextPreview
+                        segments={linkPreviewSegments}
+                        onFocusLine={focusLineEditor}
+                        onOpenPage={onOpenPage}
+                        onOpenNode={onOpenNode}
+                        onOpenTag={onOpenTag}
+                        isDisabled={isDisabled || activeDraggedNodeId !== null}
+                        isCompleted={isCompleted}
+                        className={clsx(
+                          previewTypographyClass,
+                          completedTextClass,
+                        )}
+                      />
+                    ) : (
+                      <PlainTextPreview
+                        text={displayDraft}
+                        onFocusLine={focusLineEditor}
+                        isDisabled={isDisabled || activeDraggedNodeId !== null}
+                        className={clsx(
+                          previewTypographyClass,
+                          completedTextClass,
+                        )}
+                      />
+                    )
+                  }
+                />
+              ) : hasPageLinkPreview ? (
                 <LinkedTextPreview
                   segments={linkPreviewSegments}
                   onFocusLine={focusLineEditor}
@@ -19586,6 +20024,8 @@ function OutlineNodeEditor({
                     linkedTree.rootNode._id as string,
                   ])
                 }
+                plannerSymbolModeEnabled={plannerSymbolModeEnabled}
+                plannerSymbolModePlannerPageId={plannerSymbolModePlannerPageId}
               />
             ))}
           </div>
@@ -19664,6 +20104,10 @@ function OutlineNodeEditor({
               mobileIndentStep={mobileIndentStep}
               showChildrenDepth={showChildrenDepth}
               showChildrenAncestorNodeIds={showChildrenAncestorNodeIds}
+              plannerSymbolModeEnabled={plannerSymbolModeEnabled}
+              plannerSymbolModePlannerPageId={plannerSymbolModePlannerPageId}
+              plannerSymbolLabelsByNodeId={plannerSymbolLabelsByNodeId}
+              plannerSymbolTextExemptNodeIds={plannerSymbolTextExemptNodeIds}
             />
           </div>
         </div>

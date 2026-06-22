@@ -382,4 +382,16 @@ export default defineSchema({
       dimensions: 1536,
       filterFields: ["pageId"],
     }),
+
+  nodeSymbolCaches: defineTable({
+    nodeId: v.id("nodes"),
+    contentHash: v.string(),
+    sourceText: v.string(),
+    symbols: v.string(),
+    model: v.string(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_node", ["nodeId"])
+    .index("by_content_hash", ["contentHash"]),
 });

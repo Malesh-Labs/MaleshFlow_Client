@@ -92,6 +92,13 @@ import {
   plannerDayMatchesDueDateBoundary,
 } from "../lib/domain/planner";
 import {
+  buildDeterministicPlannerSymbols,
+  listFocusSymbolTextExemptNodeIds,
+  normalizeGeneratedPlannerSymbols,
+  normalizePlannerSymbolSourceText,
+  parsePurePlannerNodeReference,
+} from "../lib/domain/plannerSymbols";
+import {
   buildPlannerLinkedTaskCopyText,
   findExistingPlannerDayForSidebarSourceTask,
   listEligiblePlannerSidebarSourceTasksFromNodes,
@@ -759,6 +766,81 @@ test("replaceLinkMarkupWithLabels consumes trailing parent node link options", (
   assert.equal(
     replaceLinkMarkupWithLabels("See [[Custom label|node:node_456]]?hideTags&showChildren now."),
     "See Custom label now.",
+  );
+});
+
+test("planner symbol helpers parse pure node references", () => {
+  assert.deepEqual(parsePurePlannerNodeReference("[[node:node_123]]"), {
+    nodeId: "node_123",
+    explicitLabel: "",
+  });
+  assert.deepEqual(parsePurePlannerNodeReference("[[node:node_123]]?showChildren"), {
+    nodeId: "node_123",
+    explicitLabel: "",
+  });
+  assert.deepEqual(parsePurePlannerNodeReference("[[Custom label|node:node_456?hideTags]]"), {
+    nodeId: "node_456",
+    explicitLabel: "Custom label",
+  });
+  assert.deepEqual(parsePurePlannerNodeReference("((node_789))"), {
+    nodeId: "node_789",
+    explicitLabel: "",
+  });
+  assert.deepEqual(parsePurePlannerNodeReference("node:node_raw"), {
+    nodeId: "node_raw",
+    explicitLabel: "",
+  });
+  assert.equal(parsePurePlannerNodeReference("Before [[node:node_123]]"), null);
+});
+
+test("planner symbol helpers normalize source text without mutating links", () => {
+  assert.equal(
+    normalizePlannerSymbolSourceText("### **Review** [[Launch|page:page_1]] #work"),
+    "Review Launch #work",
+  );
+  assert.equal(
+    normalizePlannerSymbolSourceText("__Call__ [[Sam|node:node_1]]?hideTags"),
+    "Call Sam",
+  );
+});
+
+test("planner symbol helpers validate generated labels and deterministic fallback", () => {
+  assert.equal(normalizeGeneratedPlannerSymbols(" ⚑ ✦ "), "⚑✦");
+  assert.equal(normalizeGeneratedPlannerSymbols("🧾✨"), "🧾✨");
+  assert.equal(normalizeGeneratedPlannerSymbols("work"), null);
+  assert.equal(normalizeGeneratedPlannerSymbols("1"), null);
+  assert.equal(normalizeGeneratedPlannerSymbols("⚑✦◆◎"), null);
+  assert.equal(
+    buildDeterministicPlannerSymbols("Call Sam"),
+    buildDeterministicPlannerSymbols("Call Sam"),
+  );
+  assert.notEqual(
+    buildDeterministicPlannerSymbols("Call Sam"),
+    buildDeterministicPlannerSymbols("Write proposal"),
+  );
+});
+
+test("planner symbol helpers exempt direct focus children before the first separator", () => {
+  const focusChildren = [
+    { _id: "a", text: "Morning routine" },
+    { _id: "b", text: "Top priority" },
+    { _id: "sep", text: "---" },
+    { _id: "c", text: "Later task" },
+  ];
+  assert.deepEqual(listFocusSymbolTextExemptNodeIds(focusChildren), ["a", "b"]);
+  assert.deepEqual(
+    listFocusSymbolTextExemptNodeIds([
+      { _id: "a", text: "Pinned" },
+      { _id: "b", text: "Still text" },
+    ]),
+    ["a", "b"],
+  );
+  assert.deepEqual(
+    listFocusSymbolTextExemptNodeIds([
+      { _id: "sep", text: " --- " },
+      { _id: "a", text: "Symbolified" },
+    ]),
+    [],
   );
 });
 
