@@ -810,6 +810,9 @@ test("planner symbol helpers validate generated emoji labels and deterministic f
   assert.equal(normalizeGeneratedPlannerSymbols("work"), null);
   assert.equal(normalizeGeneratedPlannerSymbols("1"), null);
   assert.equal(normalizeGeneratedPlannerSymbols("⚑✦◆◎"), null);
+  // All-emoji output longer than the cap is truncated to the first three
+  // rather than rejected (the model over-produces for compound items).
+  assert.equal(normalizeGeneratedPlannerSymbols("🍱🚶🚰💊"), "🍱🚶🚰");
   // Keycap emoji embed an ASCII digit/# /* codepoint but are valid emoji.
   assert.equal(
     normalizeGeneratedPlannerSymbols("1️⃣"),

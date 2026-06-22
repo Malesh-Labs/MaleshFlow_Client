@@ -123,11 +123,14 @@ export function normalizeGeneratedPlannerSymbols(value: string) {
   }
 
   const emojis = splitGraphemes(compact).filter((symbol) => symbol.trim().length > 0);
-  if (emojis.length < 1 || emojis.length > 3) {
+  // Require every grapheme to be an emoji (rejecting words/glyphs/text), but
+  // tolerate the model over-producing for compound items by keeping the first
+  // three rather than failing the whole batch.
+  if (emojis.length < 1 || !emojis.every(isEmojiGrapheme)) {
     return null;
   }
 
-  return emojis.every(isEmojiGrapheme) ? emojis.join("") : null;
+  return emojis.slice(0, 3).join("");
 }
 
 export function buildDeterministicPlannerSymbols(seedText: string) {
