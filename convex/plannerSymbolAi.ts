@@ -94,6 +94,11 @@ async function generateBatchWithOpenAI(
   const response = await withTimeout(
     client.responses.parse({
       model: PLANNER_SYMBOL_MODEL,
+      // Picking an emoji is a trivial classification task that does not benefit
+      // from reasoning. gpt-5* models default to "medium" effort, which spends
+      // many seconds reasoning per call and was causing the 30s timeouts; the
+      // minimal tier returns in ~1-3s. ("none" is not supported before gpt-5.1.)
+      reasoning: { effort: "minimal" },
       input: [
         {
           role: "system",
