@@ -810,6 +810,18 @@ test("planner symbol helpers validate generated emoji labels and deterministic f
   assert.equal(normalizeGeneratedPlannerSymbols("work"), null);
   assert.equal(normalizeGeneratedPlannerSymbols("1"), null);
   assert.equal(normalizeGeneratedPlannerSymbols("⚑✦◆◎"), null);
+  // Keycap emoji embed an ASCII digit/# /* codepoint but are valid emoji.
+  assert.equal(
+    normalizeGeneratedPlannerSymbols("1️⃣"),
+    "1️⃣",
+  );
+  assert.equal(
+    normalizeGeneratedPlannerSymbols("📌1️⃣"),
+    "📌1️⃣",
+  );
+  assert.equal(normalizeGeneratedPlannerSymbols("#️⃣"), "#️⃣");
+  // A bare digit keycap base without the enclosing mark is still rejected.
+  assert.equal(normalizeGeneratedPlannerSymbols("1️"), null);
   assert.match(buildDeterministicPlannerSymbols("Call Sam"), /\p{Emoji}/u);
   assert.equal(
     buildDeterministicPlannerSymbols("Call Sam"),

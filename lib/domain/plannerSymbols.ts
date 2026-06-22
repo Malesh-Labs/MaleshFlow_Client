@@ -96,9 +96,29 @@ export function listFocusSymbolTextExemptNodeIds<T extends { _id: string; text: 
   return exemptNodeIds;
 }
 
+// Keycap emoji (0-9, #, * each followed by U+FE0F U+20E3 -- e.g. the
+// keycap "1" the model returns for a "1st" item) embed an ASCII digit
+// codepoint, so they trip the \p{N} guard below and must be allowed
+// explicitly instead of being rejected as "contains a digit".
+const KEYCAP_EMOJI_PATTERN = /^[#*0-9]\uFE0F?\u20E3$/;
+
+function isEmojiGrapheme(grapheme: string) {
+  if (KEYCAP_EMOJI_PATTERN.test(grapheme)) {
+    return true;
+  }
+  if (/[\p{L}\p{N}]/u.test(grapheme)) {
+    return false;
+  }
+  return (
+    /\p{Emoji_Presentation}/u.test(grapheme) ||
+    /\p{Extended_Pictographic}\uFE0F/u.test(grapheme) ||
+    grapheme.includes("\uFE0F")
+  );
+}
+
 export function normalizeGeneratedPlannerSymbols(value: string) {
   const compact = value.replace(/\s+/g, "").trim();
-  if (!compact || /[\p{L}\p{N}]/u.test(compact)) {
+  if (!compact) {
     return null;
   }
 
@@ -107,18 +127,7 @@ export function normalizeGeneratedPlannerSymbols(value: string) {
     return null;
   }
 
-  const allEmoji = emojis.every((emoji) => {
-    if (/[\p{L}\p{N}]/u.test(emoji)) {
-      return false;
-    }
-    return (
-      /\p{Emoji_Presentation}/u.test(emoji) ||
-      /\p{Extended_Pictographic}\uFE0F/u.test(emoji) ||
-      emoji.includes("\uFE0F")
-    );
-  });
-
-  return allEmoji ? emojis.join("") : null;
+  return emojis.every(isEmojiGrapheme) ? emojis.join("") : null;
 }
 
 export function buildDeterministicPlannerSymbols(seedText: string) {
