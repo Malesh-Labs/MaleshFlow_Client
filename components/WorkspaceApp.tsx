@@ -19133,7 +19133,13 @@ function OutlineNodeEditor({
           event.preventDefault();
           onSelectionStart(node._id);
         }}
-        onMouseEnter={() => onSelectionExtend(node._id)}
+        onMouseEnter={(event) => {
+          if ((event.buttons & 1) !== 1) {
+            return;
+          }
+
+          onSelectionExtend(node._id);
+        }}
         onDragEnter={handleDragOver}
         onDragOver={handleDragOver}
         onDragLeave={(event) => {
