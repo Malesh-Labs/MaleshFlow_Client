@@ -55,6 +55,11 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unknown error";
 }
 
+function buildPlannerSymbolGenerationError(error: unknown) {
+  const message = getErrorMessage(error).trim() || "Unknown error";
+  return `OpenAI emoji generation failed: ${message}`;
+}
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   try {
@@ -151,6 +156,7 @@ export const generatePlannerSymbolLabels = action({
     }));
     if (nodesWithHashes.length === 0) {
       return {
+        ok: true,
         labels: [],
         generatedCount: 0,
         reusedCount: 0,
@@ -181,7 +187,13 @@ export const generatePlannerSymbolLabels = action({
     const client = getOpenAIClient();
     if (nodesToGenerate.length > 0) {
       if (!client) {
-        throw new Error("OpenAI emoji generation failed: OPENAI_API_KEY is not configured.");
+        return {
+          ok: false,
+          error: "OpenAI emoji generation failed: OPENAI_API_KEY is not configured.",
+          labels: [],
+          generatedCount: 0,
+          reusedCount,
+        };
       }
 
       for (let index = 0; index < nodesToGenerate.length; index += PLANNER_SYMBOL_BATCH_SIZE) {
@@ -190,7 +202,13 @@ export const generatePlannerSymbolLabels = action({
         try {
           generated = await generateBatchWithOpenAI(client, batch);
         } catch (error) {
-          throw new Error(`OpenAI emoji generation failed: ${getErrorMessage(error)}`);
+          return {
+            ok: false,
+            error: buildPlannerSymbolGenerationError(error),
+            labels: [],
+            generatedCount: 0,
+            reusedCount,
+          };
         }
 
         for (const node of batch) {
@@ -222,6 +240,7 @@ export const generatePlannerSymbolLabels = action({
     }
 
     return {
+      ok: true,
       labels: labelsToSave.map((label) => ({
         nodeId: label.nodeId,
         symbols: label.symbols,

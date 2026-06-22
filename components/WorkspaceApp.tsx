@@ -919,19 +919,37 @@ function usePlannerSymbolLabels({
       ownerKey,
       plannerPageId,
       nodeIds: missingToGenerate.map((entry) => entry.nodeId),
-    }).then(() => {
-      setGenerationFailure(null);
-    }).catch((error: unknown) => {
-      for (const entry of missingToGenerate) {
-        requestedKeysRef.current.delete(getPlannerSymbolRequestKey(entry));
-      }
-      setGenerationFailure({
-        message: getPlannerSymbolGenerationErrorMessage(error),
-        failedCount: missingToGenerate.length,
-        keys: missingToGenerate.map((entry) => getPlannerSymbolRequestKey(entry)),
-        nodeIds: missingToGenerate.map((entry) => entry.nodeId as string),
+    })
+      .then((actionResult) => {
+        if (actionResult && actionResult.ok === false) {
+          for (const entry of missingToGenerate) {
+            requestedKeysRef.current.delete(getPlannerSymbolRequestKey(entry));
+          }
+          setGenerationFailure({
+            message:
+              typeof actionResult.error === "string"
+                ? actionResult.error
+                : "Could not generate planner emojis.",
+            failedCount: missingToGenerate.length,
+            keys: missingToGenerate.map((entry) => getPlannerSymbolRequestKey(entry)),
+            nodeIds: missingToGenerate.map((entry) => entry.nodeId as string),
+          });
+          return;
+        }
+
+        setGenerationFailure(null);
+      })
+      .catch((error: unknown) => {
+        for (const entry of missingToGenerate) {
+          requestedKeysRef.current.delete(getPlannerSymbolRequestKey(entry));
+        }
+        setGenerationFailure({
+          message: getPlannerSymbolGenerationErrorMessage(error),
+          failedCount: missingToGenerate.length,
+          keys: missingToGenerate.map((entry) => getPlannerSymbolRequestKey(entry)),
+          nodeIds: missingToGenerate.map((entry) => entry.nodeId as string),
+        });
       });
-    });
   }, [
     enabled,
     failedKeySet,
@@ -1468,6 +1486,7 @@ function collectPlannerSymbolCandidateNodeIds(
     ...new Set(
       nodes
         .filter((node) => !textExemptNodeIds.has(node._id))
+        .filter((node) => getNodeMeta(node).plannerKind !== "plannerDay")
         .filter((node) => typeof getNodeMeta(node).plannerTemplateWeekday !== "string")
         .filter((node) => isPlannerSymbolizableText(node.text))
         .map((node) => node._id as Id<"nodes">),
@@ -17573,7 +17592,7 @@ function OutlineNodeEditor({
   const isPlannerFocusRoot =
     sectionSlot === "plannerFocus" && node.parentNodeId === null;
   const isPlannerDayRoot =
-    nodeMeta.plannerKind === "plannerDay" && node.parentNodeId === null;
+    nodeMeta.plannerKind === "plannerDay";
   const isDisabled = isLocked || isPageReadOnly;
   const editorId = getNodeEditorId(node._id as Id<"nodes">);
   const editorTarget = useMemo(
@@ -17668,6 +17687,7 @@ function OutlineNodeEditor({
     !isVisualEmptyLine &&
     !isVisualSeparatorLine &&
     !isPlannerTemplateWeekdayRoot &&
+    !isPlannerDayRoot &&
     !plannerSymbolFailedNodeIds.has(node._id as string) &&
     !plannerSymbolTextExemptNodeIds.has(node._id as string) &&
     isPlannerSymbolizableText(displayDraft);
