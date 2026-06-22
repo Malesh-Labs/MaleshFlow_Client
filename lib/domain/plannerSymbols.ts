@@ -86,7 +86,20 @@ export function isPlannerSymbolizableText(value: string) {
   return trimmed.length > 0 && trimmed !== "." && !isSeparatorLineText(trimmed);
 }
 
-export function listFocusSymbolTextExemptNodeIds<T extends { _id: string; text: string }>(
+type FocusSymbolTextExemptNode = {
+  _id: string;
+  text: string;
+  children?: FocusSymbolTextExemptNode[];
+};
+
+function collectNodeAndDescendantIds(node: FocusSymbolTextExemptNode): string[] {
+  return [
+    node._id,
+    ...(node.children ?? []).flatMap((child) => collectNodeAndDescendantIds(child)),
+  ];
+}
+
+export function listFocusSymbolTextExemptNodeIds<T extends FocusSymbolTextExemptNode>(
   focusChildren: T[],
 ) {
   const exemptNodeIds: string[] = [];
@@ -94,7 +107,7 @@ export function listFocusSymbolTextExemptNodeIds<T extends { _id: string; text: 
     if (isSeparatorLineText(child.text.trim())) {
       break;
     }
-    exemptNodeIds.push(child._id);
+    exemptNodeIds.push(...collectNodeAndDescendantIds(child));
   }
   return exemptNodeIds;
 }

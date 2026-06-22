@@ -838,14 +838,28 @@ test("planner symbol helpers validate generated emoji labels and deterministic f
   );
 });
 
-test("planner symbol helpers exempt direct focus children before the first separator", () => {
+test("planner symbol helpers exempt focus child subtrees before the first separator", () => {
   const focusChildren = [
-    { _id: "a", text: "Morning routine" },
-    { _id: "b", text: "Top priority" },
+    {
+      _id: "a",
+      text: "Morning routine",
+      children: [
+        { _id: "a1", text: "Stretch" },
+        { _id: "a2", text: "Coffee", children: [{ _id: "a2a", text: "Grind beans" }] },
+      ],
+    },
+    { _id: "b", text: "Top priority", children: [{ _id: "b1", text: "Open draft" }] },
     { _id: "sep", text: "---" },
-    { _id: "c", text: "Later task" },
+    { _id: "c", text: "Later task", children: [{ _id: "c1", text: "Still symbolified" }] },
   ];
-  assert.deepEqual(listFocusSymbolTextExemptNodeIds(focusChildren), ["a", "b"]);
+  assert.deepEqual(listFocusSymbolTextExemptNodeIds(focusChildren), [
+    "a",
+    "a1",
+    "a2",
+    "a2a",
+    "b",
+    "b1",
+  ]);
   assert.deepEqual(
     listFocusSymbolTextExemptNodeIds([
       { _id: "a", text: "Pinned" },
