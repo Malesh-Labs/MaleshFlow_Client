@@ -8,6 +8,9 @@ import {
 
 const RAW_NODE_REFERENCE_PATTERN = /^node:([a-zA-Z0-9_-]+)$/;
 export const PLANNER_EMOJI_CACHE_STYLE = "emoji-v2";
+// Maximum number of emoji a single planner label may render. Shared by the
+// validator, the generation prompt, and the diagnostic error message.
+export const MAX_PLANNER_SYMBOL_COUNT = 5;
 
 const EMOJI_FALLBACK_PALETTE = [
   "📝",
@@ -125,12 +128,12 @@ export function normalizeGeneratedPlannerSymbols(value: string) {
   const emojis = splitGraphemes(compact).filter((symbol) => symbol.trim().length > 0);
   // Require every grapheme to be an emoji (rejecting words/glyphs/text), but
   // tolerate the model over-producing for compound items by keeping the first
-  // three rather than failing the whole batch.
+  // MAX_PLANNER_SYMBOL_COUNT rather than failing the whole batch.
   if (emojis.length < 1 || !emojis.every(isEmojiGrapheme)) {
     return null;
   }
 
-  return emojis.slice(0, 3).join("");
+  return emojis.slice(0, MAX_PLANNER_SYMBOL_COUNT).join("");
 }
 
 export function buildDeterministicPlannerSymbols(seedText: string) {

@@ -10,6 +10,7 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { assertOwnerKey } from "./lib/auth";
 import {
+  MAX_PLANNER_SYMBOL_COUNT,
   normalizeGeneratedPlannerSymbols,
   PLANNER_EMOJI_CACHE_STYLE,
 } from "../lib/domain/plannerSymbols";
@@ -103,7 +104,7 @@ async function generateBatchWithOpenAI(
         {
           role: "system",
           content:
-            "You convert personal planner items into tiny visual labels. For each item, return 1 to 3 emoji characters that make the item recognizable. Use emoji only. Do not return symbolic glyphs, words, letters, numbers, punctuation-separated descriptions, markdown, or explanations. Prefer concrete memorable emoji over generic marks.",
+            `You convert personal planner items into tiny visual labels. For each item, return 1 to ${MAX_PLANNER_SYMBOL_COUNT} emoji characters that make the item recognizable. Use emoji only. Do not return symbolic glyphs, words, letters, numbers, punctuation-separated descriptions, markdown, or explanations. Prefer concrete memorable emoji over generic marks.`,
         },
         {
           role: "user",
@@ -143,7 +144,10 @@ async function generateBatchWithOpenAI(
     failures.push({
       sourceText: node.sourceText,
       raw: raw ?? null,
-      reason: raw === undefined ? "no label returned" : "not emoji-only (≤3 emoji)",
+      reason:
+        raw === undefined
+          ? "no label returned"
+          : `not emoji-only (≤${MAX_PLANNER_SYMBOL_COUNT} emoji)`,
     });
   }
 
