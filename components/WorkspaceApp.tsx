@@ -782,6 +782,16 @@ type TreeNode = OutlineTreeNode<{
   archived: boolean;
   sourceMeta?: Record<string, unknown> | null;
 }>;
+type SchedulePaletteNode = {
+  _id: string;
+  pageId: string;
+  text: string;
+  kind: "note" | "task";
+  taskStatus: "todo" | "in_progress" | "done" | "cancelled" | null;
+  dueAt: number | null;
+  dueEndAt?: number | null;
+  sourceMeta?: Record<string, unknown> | null;
+};
 type FocusedOutlineContextValue = {
   roots: TreeNode[];
   focusedNode: TreeNode | null;
@@ -790,6 +800,13 @@ type FocusedOutlineContextValue = {
 };
 
 const NodeZoomContext = createContext<(nodeId: string) => void>(() => undefined);
+const NodeScheduleActionContext = createContext<{
+  openTaskSchedule: (nodeId: string, node?: SchedulePaletteNode | null) => void;
+  openNoteDate: (nodeId: string, node?: SchedulePaletteNode | null) => void;
+}>({
+  openTaskSchedule: () => undefined,
+  openNoteDate: () => undefined,
+});
 const PageSectionCollapseContext = createContext<{
   collapsedSectionKeys: Set<string>;
   onToggleSectionCollapsed: (sectionKey: string) => void;
@@ -797,6 +814,23 @@ const PageSectionCollapseContext = createContext<{
   collapsedSectionKeys: new Set(),
   onToggleSectionCollapsed: () => undefined,
 });
+
+function toSchedulePaletteNode(node: TreeNode): SchedulePaletteNode | null {
+  if (node.kind !== "note" && node.kind !== "task") {
+    return null;
+  }
+
+  return {
+    _id: node._id,
+    pageId: node.pageId,
+    text: node.text,
+    kind: node.kind,
+    taskStatus: isValidClipboardTaskStatus(node.taskStatus) ? node.taskStatus : null,
+    dueAt: node.dueAt ?? null,
+    dueEndAt: node.dueEndAt ?? null,
+    sourceMeta: node.sourceMeta ?? null,
+  };
+}
 const EMPTY_NODE_ID_SET = new Set<string>();
 const EMPTY_SYMBOL_LABELS_BY_NODE_ID = new Map<string, string>();
 
@@ -3843,6 +3877,8 @@ function ConfiguredWorkspace({
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(new Set());
   const [collapsedNodeIds, setCollapsedNodeIds] = useState<Set<string>>(new Set());
   const [actionContextNodeId, setActionContextNodeId] = useState<string | null>(null);
+  const [directSchedulePaletteNode, setDirectSchedulePaletteNode] =
+    useState<SchedulePaletteNode | null>(null);
   const [recurringCompletionMode, setRecurringCompletionMode] =
     useState<RecurringCompletionMode>("dueDate");
   const [plannerSidebarWidth, setPlannerSidebarWidth] = useState(
@@ -4526,6 +4562,7 @@ function ConfiguredWorkspace({
 
   const openPalette = useCallback((mode: PaletteMode) => {
     const selectedNodeSnapshot = [...selectedNodeIds];
+    setDirectSchedulePaletteNode(null);
     if (mode === "actions") {
       setActionContextSelectedNodeIds(selectedNodeSnapshot);
     } else {
@@ -4548,10 +4585,14 @@ function ConfiguredWorkspace({
     setPaletteOpen(true);
   }, [clearNodeSelection, selectedNodeIds, switchPaletteMode]);
 
-  const openTaskSchedulePalette = useCallback((nodeId: string | null) => {
+  const openTaskSchedulePalette = useCallback((
+    nodeId: string | null,
+    node: SchedulePaletteNode | null = null,
+  ) => {
     if (selectedNodeIds.size > 1) {
       clearNodeSelection();
     }
+    setDirectSchedulePaletteNode(node);
     setActionContextSelectedNodeIds([]);
     setActionContextNodeId(nodeId);
     setPaletteMode("taskSchedule");
@@ -4562,10 +4603,14 @@ function ConfiguredWorkspace({
     setPaletteOpen(true);
   }, [clearNodeSelection, selectedNodeIds]);
 
-  const openNoteDatePalette = useCallback((nodeId: string | null) => {
+  const openNoteDatePalette = useCallback((
+    nodeId: string | null,
+    node: SchedulePaletteNode | null = null,
+  ) => {
     if (selectedNodeIds.size > 1) {
       clearNodeSelection();
     }
+    setDirectSchedulePaletteNode(node);
     setActionContextSelectedNodeIds([]);
     setActionContextNodeId(nodeId);
     setPaletteMode("noteDate");
@@ -5421,7 +5466,10 @@ function ConfiguredWorkspace({
       return null;
     }
 
-    const node = workspaceNodeMap.get(paletteContextNodeId) ?? null;
+    const node =
+      directSchedulePaletteNode?._id === paletteContextNodeId
+        ? directSchedulePaletteNode
+        : workspaceNodeMap.get(paletteContextNodeId) ?? null;
     if (!node || node.kind !== "task" || getNodeMeta(node).locked === true) {
       return null;
     }
@@ -5432,13 +5480,16 @@ function ConfiguredWorkspace({
     }
 
     return node;
-  }, [paletteContextNodeId, pagesById, workspaceNodeMap]);
+  }, [directSchedulePaletteNode, paletteContextNodeId, pagesById, workspaceNodeMap]);
   const noteDateTargetNode = useMemo(() => {
     if (!paletteContextNodeId) {
       return null;
     }
 
-    const node = workspaceNodeMap.get(paletteContextNodeId) ?? null;
+    const node =
+      directSchedulePaletteNode?._id === paletteContextNodeId
+        ? directSchedulePaletteNode
+        : workspaceNodeMap.get(paletteContextNodeId) ?? null;
     if (!node || node.kind !== "note" || getNodeMeta(node).locked === true) {
       return null;
     }
@@ -5449,7 +5500,7 @@ function ConfiguredWorkspace({
     }
 
     return node;
-  }, [paletteContextNodeId, pagesById, workspaceNodeMap]);
+  }, [directSchedulePaletteNode, paletteContextNodeId, pagesById, workspaceNodeMap]);
   const favoriteTargetNode = useMemo(() => {
     if (!paletteContextNodeId) {
       return null;
@@ -7496,7 +7547,7 @@ function ConfiguredWorkspace({
 
     await updateNode({
       ownerKey,
-      nodeId: node._id,
+      nodeId: node._id as Id<"nodes">,
       text: afterSnapshot.text,
       kind: "task",
       taskStatus: afterSnapshot.taskStatus,
@@ -7550,7 +7601,7 @@ function ConfiguredWorkspace({
 
     await updateNode({
       ownerKey,
-      nodeId: node._id,
+      nodeId: node._id as Id<"nodes">,
       text: afterSnapshot.text,
       kind: "note",
       taskStatus: null,
@@ -11375,6 +11426,14 @@ function ConfiguredWorkspace({
     );
   };
 
+  const nodeScheduleActionContextValue = useMemo(
+    () => ({
+      openTaskSchedule: openTaskSchedulePalette,
+      openNoteDate: openNoteDatePalette,
+    }),
+    [openNoteDatePalette, openTaskSchedulePalette],
+  );
+
   const dataDumpProgressPercent =
     dataDumpExportProgress?.total && dataDumpExportProgress.total > 0
       ? Math.max(
@@ -11391,6 +11450,7 @@ function ConfiguredWorkspace({
   return (
     <WorkspaceHistoryProvider value={history}>
       <NodeZoomContext.Provider value={handleZoomIntoNode}>
+      <NodeScheduleActionContext.Provider value={nodeScheduleActionContextValue}>
       <PageSectionCollapseContext.Provider value={pageSectionCollapseContextValue}>
       <main
         className="relative min-h-screen bg-[var(--workspace-bg)] text-[var(--workspace-text)]"
@@ -14652,6 +14712,7 @@ function ConfiguredWorkspace({
       ) : null}
       </main>
       </PageSectionCollapseContext.Provider>
+      </NodeScheduleActionContext.Provider>
       </NodeZoomContext.Provider>
     </WorkspaceHistoryProvider>
   );
@@ -17569,6 +17630,7 @@ function OutlineNodeEditor({
 } & PlannerSymbolModeRenderProps) {
   const history = useWorkspaceHistory();
   const onZoomIntoNode = useContext(NodeZoomContext);
+  const { openTaskSchedule, openNoteDate } = useContext(NodeScheduleActionContext);
   const isMobileLayout = useIsMobileLayout();
   const completePlannerTaskRaw = useMutation(api.planner.completePlannerTask);
   const completePlannerTaskMutation = completePlannerTaskRaw.withOptimisticUpdate(
@@ -17609,6 +17671,26 @@ function OutlineNodeEditor({
   const isPlannerDayRoot =
     nodeMeta.plannerKind === "plannerDay";
   const isDisabled = isLocked || isPageReadOnly;
+  const handleTaskDueBadgeClick = () => {
+    if (isDisabled) {
+      return;
+    }
+    const scheduleNode = toSchedulePaletteNode(node);
+    if (!scheduleNode) {
+      return;
+    }
+    openTaskSchedule(scheduleNode._id, scheduleNode);
+  };
+  const handleNoteDateBadgeClick = () => {
+    if (isDisabled) {
+      return;
+    }
+    const scheduleNode = toSchedulePaletteNode(node);
+    if (!scheduleNode) {
+      return;
+    }
+    openNoteDate(scheduleNode._id, scheduleNode);
+  };
   const editorId = getNodeEditorId(node._id as Id<"nodes">);
   const editorTarget = useMemo(
     () =>
@@ -20009,29 +20091,64 @@ function OutlineNodeEditor({
             (node.kind === "note" && node.dueAt) ? (
               <div className="mt-2 flex flex-wrap items-center gap-1 text-[10px] leading-none">
                 {node.kind === "task" && effectiveDueRange.dueAt ? (
-                  <span
-                    className={clsx(
-                      "rounded-full border px-1.5 py-1 text-[var(--workspace-text-faint)] break-words",
-                      isOverdueTask
-                        ? "border-[var(--workspace-danger)]/50 text-[var(--workspace-danger)]"
-                        : "border-[var(--workspace-border)]",
-                      isCompleted ? "opacity-70" : "",
-                    )}
-                    title={isOverdueTask ? `Overdue since ${dueDateFullLabel}` : `Due ${dueDateFullLabel}`}
-                  >
-                    {dueDateLabel}
-                  </span>
+                  isDisabled ? (
+                    <span
+                      className={clsx(
+                        "rounded-full border px-1.5 py-1 text-[var(--workspace-text-faint)] break-words",
+                        isOverdueTask
+                          ? "border-[var(--workspace-danger)]/50 text-[var(--workspace-danger)]"
+                          : "border-[var(--workspace-border)]",
+                        isCompleted ? "opacity-70" : "",
+                      )}
+                      title={isOverdueTask ? `Overdue since ${dueDateFullLabel}` : `Due ${dueDateFullLabel}`}
+                    >
+                      {dueDateLabel}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={handleTaskDueBadgeClick}
+                      className={clsx(
+                        "rounded-full border px-1.5 py-1 text-[var(--workspace-text-faint)] break-words transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--workspace-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--workspace-bg)]",
+                        isOverdueTask
+                          ? "border-[var(--workspace-danger)]/50 text-[var(--workspace-danger)]"
+                          : "border-[var(--workspace-border)]",
+                        isCompleted ? "opacity-70" : "",
+                      )}
+                      title={`Edit task schedule: ${dueDateFullLabel}`}
+                      aria-label={`Edit task schedule for ${dueDateFullLabel}`}
+                    >
+                      {dueDateLabel}
+                    </button>
+                  )
                 ) : null}
                 {node.kind === "note" && node.dueAt ? (
-                  <span
-                    className={clsx(
-                      "rounded-full border border-[var(--workspace-border)] px-1.5 py-1 text-[var(--workspace-text-faint)] break-words",
-                      isCompleted ? "opacity-70" : "",
-                    )}
-                    title={`Dated ${noteDateFullLabel}`}
-                  >
-                    {noteDateLabel}
-                  </span>
+                  isDisabled ? (
+                    <span
+                      className={clsx(
+                        "rounded-full border border-[var(--workspace-border)] px-1.5 py-1 text-[var(--workspace-text-faint)] break-words",
+                        isCompleted ? "opacity-70" : "",
+                      )}
+                      title={`Dated ${noteDateFullLabel}`}
+                    >
+                      {noteDateLabel}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={handleNoteDateBadgeClick}
+                      className={clsx(
+                        "rounded-full border border-[var(--workspace-border)] px-1.5 py-1 text-[var(--workspace-text-faint)] break-words transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--workspace-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--workspace-bg)]",
+                        isCompleted ? "opacity-70" : "",
+                      )}
+                      title={`Edit note date: ${noteDateFullLabel}`}
+                      aria-label={`Edit note date for ${noteDateFullLabel}`}
+                    >
+                      {noteDateLabel}
+                    </button>
+                  )
                 ) : null}
                 {node.kind === "task" && recurrenceFrequency ? (
                   <span
