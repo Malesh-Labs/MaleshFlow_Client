@@ -16391,6 +16391,8 @@ function LinkedTextPreview({
   onOpenPage,
   onOpenNode,
   onOpenTag,
+  showChildrenCollapsedKeys = EMPTY_NODE_ID_SET,
+  onToggleShowChildren = () => undefined,
   isDisabled,
   isCompleted,
   className,
@@ -16400,6 +16402,8 @@ function LinkedTextPreview({
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   onOpenTag: (tag: string) => void;
+  showChildrenCollapsedKeys?: Set<string>;
+  onToggleShowChildren?: (segmentKey: string) => void;
   isDisabled: boolean;
   isCompleted: boolean;
   className?: string;
@@ -16498,33 +16502,72 @@ function LinkedTextPreview({
               {segment.text}
             </a>
           ) : segment.pageId !== null ? (
-            <button
+            <span
               key={segment.key}
-              type="button"
-              data-inline-preview-interactive="true"
-              onMouseDown={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-              }}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (segment.linkKind === "node" && segment.nodeId) {
-                  onOpenNode(segment.pageId!, segment.nodeId);
-                  return;
-                }
-                onOpenPage(segment.pageId!);
-              }}
-              className={clsx(
-                "inline-flex max-w-full align-top cursor-pointer items-start gap-1 text-left transition",
-                getLinkPreviewTextClass({
-                  isCompleted,
-                  isDimmed: segment.isDimmed,
-                  interactive: true,
-                }),
-                segment.archived ? "opacity-75" : "",
-              )}
+              className="inline-flex max-w-full align-top items-start gap-0.5"
             >
+              {segment.linkKind === "node" && segment.showChildren ? (
+                <button
+                  type="button"
+                  data-inline-preview-interactive="true"
+                  aria-expanded={!showChildrenCollapsedKeys.has(segment.key)}
+                  aria-label={
+                    showChildrenCollapsedKeys.has(segment.key)
+                      ? "Expand linked children"
+                      : "Collapse linked children"
+                  }
+                  title={
+                    showChildrenCollapsedKeys.has(segment.key)
+                      ? "Expand linked children"
+                      : "Collapse linked children"
+                  }
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onToggleShowChildren(segment.key);
+                  }}
+                  className="mt-[2px] inline-flex h-4 w-4 flex-none items-center justify-center text-[10px] leading-none text-[var(--workspace-text-faint)] transition hover:text-[var(--workspace-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--workspace-accent)] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--workspace-bg)]"
+                >
+                  <span
+                    className={clsx(
+                      "inline-flex transition-transform",
+                      showChildrenCollapsedKeys.has(segment.key) ? "" : "rotate-90",
+                    )}
+                  >
+                    ▸
+                  </span>
+                </button>
+              ) : null}
+              <button
+                type="button"
+                data-inline-preview-interactive="true"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                }}
+                onClick={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (segment.linkKind === "node" && segment.nodeId) {
+                    onOpenNode(segment.pageId!, segment.nodeId);
+                    return;
+                  }
+                  onOpenPage(segment.pageId!);
+                }}
+                className={clsx(
+                  "inline-flex max-w-full cursor-pointer items-start gap-1 text-left transition",
+                  getLinkPreviewTextClass({
+                    isCompleted,
+                    isDimmed: segment.isDimmed,
+                    interactive: true,
+                  }),
+                  segment.archived ? "opacity-75" : "",
+                )}
+              >
               <LinkPreviewLeadingTags
                 tags={segment.leadingTags}
                 isCompleted={isCompleted}
@@ -16562,7 +16605,8 @@ function LinkedTextPreview({
                   {segment.pageTypeBadge}
                 </span>
               ) : null}
-            </button>
+              </button>
+            </span>
           ) : (
             <span
               key={segment.key}
@@ -16812,7 +16856,7 @@ function LinkPreviewMeasure({
           <span
             key={segment.key}
             className={clsx(
-              "inline-flex max-w-full align-top items-start gap-1 text-left",
+              "inline-flex max-w-full align-top items-start gap-0.5 text-left",
               getLinkPreviewTextClass({
                 isCompleted,
                 isDimmed: segment.isDimmed,
@@ -16822,6 +16866,11 @@ function LinkPreviewMeasure({
               !segment.resolved ? "opacity-80" : "",
             )}
           >
+            {segment.linkKind === "node" && segment.showChildren ? (
+              <span className="mt-[2px] inline-flex h-4 w-4 flex-none items-center justify-center text-[10px] leading-none">
+                ▸
+              </span>
+            ) : null}
             <LinkPreviewLeadingTags
               tags={segment.leadingTags}
               isCompleted={isCompleted}
@@ -17644,6 +17693,9 @@ function OutlineNodeEditor({
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
   const [dropTarget, setDropTarget] = useState<NodeDropTarget | null>(null);
   const [isSymbolTextRevealed, setIsSymbolTextRevealed] = useState(false);
+  const [collapsedShowChildrenLinkKeys, setCollapsedShowChildrenLinkKeys] = useState<
+    Set<string>
+  >(new Set());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewMeasureRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef(draft);
@@ -17816,6 +17868,7 @@ function OutlineNodeEditor({
         return [
           {
             key: `${segment.key}:show-children`,
+            isCollapsed: collapsedShowChildrenLinkKeys.has(segment.key),
             sourcePage: childTree.sourcePage,
             rootNode: childTree.rootNode,
             roots: rootTreeNode?.children ?? [],
@@ -17825,8 +17878,22 @@ function OutlineNodeEditor({
           },
         ];
       }),
-    [linkPreviewSegments, nodeTargetsById],
+    [collapsedShowChildrenLinkKeys, linkPreviewSegments, nodeTargetsById],
   );
+  const hasExpandedLinkedShowChildrenTrees = linkedShowChildrenTrees.some(
+    (linkedTree) => !linkedTree.isCollapsed,
+  );
+  const toggleLinkedShowChildrenCollapse = useCallback((segmentKey: string) => {
+    setCollapsedShowChildrenLinkKeys((current) => {
+      const next = new Set(current);
+      if (next.has(segmentKey)) {
+        next.delete(segmentKey);
+      } else {
+        next.add(segmentKey);
+      }
+      return next;
+    });
+  }, []);
   const hasPageLinkPreview =
     !isFocused &&
     !isVisualEmptyLine &&
@@ -20019,6 +20086,8 @@ function OutlineNodeEditor({
                         onOpenPage={onOpenPage}
                         onOpenNode={onOpenNode}
                         onOpenTag={onOpenTag}
+                        showChildrenCollapsedKeys={collapsedShowChildrenLinkKeys}
+                        onToggleShowChildren={toggleLinkedShowChildrenCollapse}
                         isDisabled={isDisabled || activeDraggedNodeId !== null}
                         isCompleted={isCompleted}
                         className={clsx(
@@ -20046,6 +20115,8 @@ function OutlineNodeEditor({
                   onOpenPage={onOpenPage}
                   onOpenNode={onOpenNode}
                   onOpenTag={onOpenTag}
+                  showChildrenCollapsedKeys={collapsedShowChildrenLinkKeys}
+                  onToggleShowChildren={toggleLinkedShowChildrenCollapse}
                   isDisabled={isDisabled || activeDraggedNodeId !== null}
                   isCompleted={isCompleted}
                   className={clsx(
@@ -20253,9 +20324,10 @@ function OutlineNodeEditor({
         {isPlannerDayRoot ? (
           <div className="mx-1 mt-3 mb-5 border-t border-[color-mix(in_srgb,var(--workspace-brand)_20%,var(--workspace-border))]" />
         ) : null}
-        {!isFocused && linkedShowChildrenTrees.length > 0 ? (
+        {!isFocused && hasExpandedLinkedShowChildrenTrees ? (
           <div className="space-y-2">
-            {linkedShowChildrenTrees.map((linkedTree) => (
+            {linkedShowChildrenTrees.map((linkedTree) =>
+              linkedTree.isCollapsed ? null : (
               <LinkedNodeChildrenBlock
                 key={linkedTree.key}
                 sourcePage={linkedTree.sourcePage}
@@ -20312,7 +20384,8 @@ function OutlineNodeEditor({
                 plannerSymbolModeEnabled={plannerSymbolModeEnabled}
                 plannerSymbolModePlannerPageId={plannerSymbolModePlannerPageId}
               />
-            ))}
+              ),
+            )}
           </div>
         ) : null}
       </div>
