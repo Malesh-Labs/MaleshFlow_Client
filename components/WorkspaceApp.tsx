@@ -16391,8 +16391,6 @@ function LinkedTextPreview({
   onOpenPage,
   onOpenNode,
   onOpenTag,
-  showChildrenCollapsedKeys = EMPTY_NODE_ID_SET,
-  onToggleShowChildren = () => undefined,
   isDisabled,
   isCompleted,
   className,
@@ -16402,8 +16400,6 @@ function LinkedTextPreview({
   onOpenPage: (pageId: Id<"pages">) => void;
   onOpenNode: (pageId: Id<"pages">, nodeId: Id<"nodes">) => void;
   onOpenTag: (tag: string) => void;
-  showChildrenCollapsedKeys?: Set<string>;
-  onToggleShowChildren?: (segmentKey: string) => void;
   isDisabled: boolean;
   isCompleted: boolean;
   className?: string;
@@ -16504,44 +16500,8 @@ function LinkedTextPreview({
           ) : segment.pageId !== null ? (
             <span
               key={segment.key}
-              className="inline-flex max-w-full align-top items-start gap-0.5"
+              className="inline-flex max-w-full align-top items-start"
             >
-              {segment.linkKind === "node" && segment.showChildren ? (
-                <button
-                  type="button"
-                  data-inline-preview-interactive="true"
-                  aria-expanded={!showChildrenCollapsedKeys.has(segment.key)}
-                  aria-label={
-                    showChildrenCollapsedKeys.has(segment.key)
-                      ? "Expand linked children"
-                      : "Collapse linked children"
-                  }
-                  title={
-                    showChildrenCollapsedKeys.has(segment.key)
-                      ? "Expand linked children"
-                      : "Collapse linked children"
-                  }
-                  onMouseDown={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                  }}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onToggleShowChildren(segment.key);
-                  }}
-                  className="mt-[2px] inline-flex h-4 w-4 flex-none items-center justify-center text-[10px] leading-none text-[var(--workspace-text-faint)] transition hover:text-[var(--workspace-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--workspace-accent)] focus-visible:ring-offset-1 focus-visible:ring-offset-[var(--workspace-bg)]"
-                >
-                  <span
-                    className={clsx(
-                      "inline-flex transition-transform",
-                      showChildrenCollapsedKeys.has(segment.key) ? "" : "rotate-90",
-                    )}
-                  >
-                    ▸
-                  </span>
-                </button>
-              ) : null}
               <button
                 type="button"
                 data-inline-preview-interactive="true"
@@ -16856,7 +16816,7 @@ function LinkPreviewMeasure({
           <span
             key={segment.key}
             className={clsx(
-              "inline-flex max-w-full align-top items-start gap-0.5 text-left",
+              "inline-flex max-w-full align-top items-start gap-1 text-left",
               getLinkPreviewTextClass({
                 isCompleted,
                 isDimmed: segment.isDimmed,
@@ -16866,11 +16826,6 @@ function LinkPreviewMeasure({
               !segment.resolved ? "opacity-80" : "",
             )}
           >
-            {segment.linkKind === "node" && segment.showChildren ? (
-              <span className="mt-[2px] inline-flex h-4 w-4 flex-none items-center justify-center text-[10px] leading-none">
-                ▸
-              </span>
-            ) : null}
             <LinkPreviewLeadingTags
               tags={segment.leadingTags}
               isCompleted={isCompleted}
@@ -17868,6 +17823,7 @@ function OutlineNodeEditor({
         return [
           {
             key: `${segment.key}:show-children`,
+            segmentKey: segment.key,
             isCollapsed: collapsedShowChildrenLinkKeys.has(segment.key),
             sourcePage: childTree.sourcePage,
             rootNode: childTree.rootNode,
@@ -17883,17 +17839,24 @@ function OutlineNodeEditor({
   const hasExpandedLinkedShowChildrenTrees = linkedShowChildrenTrees.some(
     (linkedTree) => !linkedTree.isCollapsed,
   );
-  const toggleLinkedShowChildrenCollapse = useCallback((segmentKey: string) => {
+  const hasLinkedShowChildrenTrees = linkedShowChildrenTrees.length > 0;
+  const isLinkedShowChildrenCollapsed =
+    hasLinkedShowChildrenTrees && !hasExpandedLinkedShowChildrenTrees;
+  const toggleLinkedShowChildrenCollapse = useCallback(() => {
     setCollapsedShowChildrenLinkKeys((current) => {
       const next = new Set(current);
-      if (next.has(segmentKey)) {
-        next.delete(segmentKey);
+      if (hasExpandedLinkedShowChildrenTrees) {
+        for (const linkedTree of linkedShowChildrenTrees) {
+          next.add(linkedTree.segmentKey);
+        }
       } else {
-        next.add(segmentKey);
+        for (const linkedTree of linkedShowChildrenTrees) {
+          next.delete(linkedTree.segmentKey);
+        }
       }
       return next;
     });
-  }, []);
+  }, [hasExpandedLinkedShowChildrenTrees, linkedShowChildrenTrees]);
   const hasPageLinkPreview =
     !isFocused &&
     !isVisualEmptyLine &&
@@ -18280,6 +18243,17 @@ function OutlineNodeEditor({
     }
 
     handleToggleCollapsed();
+  };
+
+  const handleLinkedShowChildrenCollapseClick = (
+    event: ReactMouseEvent<HTMLButtonElement>,
+  ) => {
+    if (event.detail > 1) {
+      event.preventDefault();
+      return;
+    }
+
+    toggleLinkedShowChildrenCollapse();
   };
 
   const setCollapsedState = (nextCollapsed: boolean) => {
@@ -20086,8 +20060,6 @@ function OutlineNodeEditor({
                         onOpenPage={onOpenPage}
                         onOpenNode={onOpenNode}
                         onOpenTag={onOpenTag}
-                        showChildrenCollapsedKeys={collapsedShowChildrenLinkKeys}
-                        onToggleShowChildren={toggleLinkedShowChildrenCollapse}
                         isDisabled={isDisabled || activeDraggedNodeId !== null}
                         isCompleted={isCompleted}
                         className={clsx(
@@ -20115,8 +20087,6 @@ function OutlineNodeEditor({
                   onOpenPage={onOpenPage}
                   onOpenNode={onOpenNode}
                   onOpenTag={onOpenTag}
-                  showChildrenCollapsedKeys={collapsedShowChildrenLinkKeys}
-                  onToggleShowChildren={toggleLinkedShowChildrenCollapse}
                   isDisabled={isDisabled || activeDraggedNodeId !== null}
                   isCompleted={isCompleted}
                   className={clsx(
@@ -20285,40 +20255,72 @@ function OutlineNodeEditor({
                 {nodeBacklinkCount}
               </button>
             ) : null}
-            <button
-              type="button"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={handleCollapseClick}
-              disabled={!hasChildren}
-              title={hasChildren ? (isCollapsed ? "Expand nested items" : "Collapse nested items") : undefined}
-              aria-label={isCollapsed ? "Expand nested items" : "Collapse nested items"}
-              className={clsx(
-                "flex flex-none items-center justify-center leading-none transition",
-                hasChildren ? "h-7 w-6 text-sm" : "h-4 w-6 text-xs",
-                hasChildren
-                  ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text)]"
-                  : "cursor-default text-transparent",
-              )}
-            >
-              <span
+            {hasLinkedShowChildrenTrees ? (
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={handleLinkedShowChildrenCollapseClick}
+                title={
+                  isLinkedShowChildrenCollapsed
+                    ? "Expand linked children"
+                    : "Collapse linked children"
+                }
+                aria-label={
+                  isLinkedShowChildrenCollapsed
+                    ? "Expand linked children"
+                    : "Collapse linked children"
+                }
+                aria-expanded={!isLinkedShowChildrenCollapsed}
                 className={clsx(
-                  "inline-flex items-center justify-center rounded-full transition-transform",
-                  hasChildren ? "h-4 w-4" : "h-3 w-3",
-                  hasNestedGrandchildren
-                    ? "border border-[var(--workspace-border-hover)]"
-                    : "",
-                  isCollapsed ? "rotate-0" : "rotate-90",
+                  "flex h-7 w-6 flex-none items-center justify-center text-sm leading-none text-[var(--workspace-text-faint)] transition hover:text-[var(--workspace-text)]",
                 )}
               >
                 <span
-                  className={
-                    hasNestedGrandchildren ? "-translate-x-px -translate-y-px" : ""
-                  }
+                  className={clsx(
+                    "inline-flex h-4 w-4 items-center justify-center rounded-full transition-transform",
+                    isLinkedShowChildrenCollapsed ? "rotate-0" : "rotate-90",
+                  )}
                 >
                   ▸
                 </span>
-              </span>
-            </button>
+              </button>
+            ) : null}
+            {hasChildren || !hasLinkedShowChildrenTrees ? (
+              <button
+                type="button"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={handleCollapseClick}
+                disabled={!hasChildren}
+                title={hasChildren ? (isCollapsed ? "Expand nested items" : "Collapse nested items") : undefined}
+                aria-label={isCollapsed ? "Expand nested items" : "Collapse nested items"}
+                className={clsx(
+                  "flex flex-none items-center justify-center leading-none transition",
+                  hasChildren ? "h-7 w-6 text-sm" : "h-4 w-6 text-xs",
+                  hasChildren
+                    ? "text-[var(--workspace-text-faint)] hover:text-[var(--workspace-text)]"
+                    : "cursor-default text-transparent",
+                )}
+              >
+                <span
+                  className={clsx(
+                    "inline-flex items-center justify-center rounded-full transition-transform",
+                    hasChildren ? "h-4 w-4" : "h-3 w-3",
+                    hasNestedGrandchildren
+                      ? "border border-[var(--workspace-border-hover)]"
+                      : "",
+                    isCollapsed ? "rotate-0" : "rotate-90",
+                  )}
+                >
+                  <span
+                    className={
+                      hasNestedGrandchildren ? "-translate-x-px -translate-y-px" : ""
+                    }
+                  >
+                    ▸
+                  </span>
+                </span>
+              </button>
+            ) : null}
           </div>
         </div>
         {isPlannerDayRoot ? (
