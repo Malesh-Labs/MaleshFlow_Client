@@ -4069,6 +4069,58 @@ export const listTasks = query({
   },
 });
 
+export const listOverdueTasks = query({
+  args: {
+    ownerKey: v.string(),
+    overdueBefore: v.number(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const tasks = await ctx.db
+      .query("nodes")
+      .withIndex("by_kind_status", (query) => query.eq("kind", "task"))
+      .collect();
+
+    let overdueTasks = tasks
+      .filter((task) => !task.archived)
+      .filter((task) => task.taskStatus !== "done" && task.taskStatus !== "cancelled")
+      .filter((task) => {
+        const dueTimestamp = task.dueEndAt ?? task.dueAt;
+        return typeof dueTimestamp === "number" && dueTimestamp < args.overdueBefore;
+      })
+      .sort((left, right) => {
+        const leftDue = left.dueEndAt ?? left.dueAt ?? Number.POSITIVE_INFINITY;
+        const rightDue = right.dueEndAt ?? right.dueAt ?? Number.POSITIVE_INFINITY;
+        if (leftDue !== rightDue) {
+          return leftDue - rightDue;
+        }
+        return right.updatedAt - left.updatedAt;
+      });
+    if (typeof args.limit === "number") {
+      const limit = Math.min(Math.max(args.limit, 1), 300);
+      overdueTasks = overdueTasks.slice(0, limit);
+    }
+
+    const results = await Promise.all(
+      overdueTasks.map(async (task) => {
+        const page = await ctx.db.get(task.pageId);
+        if (!page || page.archived) {
+          return null;
+        }
+        const parentNode = task.parentNodeId ? await ctx.db.get(task.parentNodeId) : null;
+        return {
+          node: task,
+          page,
+          parentNode: parentNode && !parentNode.archived ? parentNode : null,
+        };
+      }),
+    );
+
+    return results.filter((result): result is NonNullable<typeof result> => result !== null);
+  },
+});
+
 async function buildPageTreeResult(
   ctx: QueryCtx,
   page: Doc<"pages">,

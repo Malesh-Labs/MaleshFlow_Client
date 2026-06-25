@@ -67,6 +67,7 @@ import {
   formatDueDateRange,
   getCompactRecurrenceLabel,
   getRecurrenceLabel,
+  getTodayReferenceDate,
   isOverdueDueDateRange,
   parseRecurrenceFrequency,
   type RecurrenceFrequency,
@@ -362,6 +363,7 @@ type PaletteMode =
   | "legacyUpload"
   | "legacySearch"
   | "legacyViewer"
+  | "overdueTasks"
   | "taskSchedule"
   | "noteDate";
 const PALETTE_MODE_ORDER: PaletteMode[] = [
@@ -4015,6 +4017,13 @@ function ConfiguredWorkspace({
     api.workspace.getSidebarTree,
     ownerKey && isOwnerKeyValid ? { ownerKey } : SKIP,
   ) as SidebarTreeResult | null | undefined;
+  const overdueTaskCutoff = getTodayReferenceDate().getTime();
+  const overdueTaskQueryResults = useQuery(
+    api.workspace.listOverdueTasks,
+    ownerKey && isOwnerKeyValid && paletteOpen && paletteMode === "overdueTasks"
+      ? { ownerKey, overdueBefore: overdueTaskCutoff }
+      : SKIP,
+  ) as NodeSearchResult[] | undefined;
 
   const recomputePendingSyncSnapshot = useCallback(() => {
     const nodeIds = new Set<string>();
@@ -6147,6 +6156,24 @@ function ConfiguredWorkspace({
       ...filterPagesForCommandPalette(pageEntries, paletteQuery, 14),
     ].slice(0, 14);
   }, [pages, pagesById, paletteQuery, sidebarFavorites]);
+  const overdueTaskResults = useMemo(() => {
+    const results = overdueTaskQueryResults ?? [];
+    const normalizedQuery = paletteQuery.trim().toLowerCase();
+    if (normalizedQuery.length === 0) {
+      return results;
+    }
+
+    return results.filter((result) => {
+      const dueLabel = formatDueDateRange(result.node.dueAt, result.node.dueEndAt ?? null);
+      return [
+        result.node.text,
+        normalizeNodeLinkPreviewDisplay(result.node.text).text,
+        result.page?.title ?? "",
+        result.parentNode?.text ?? "",
+        dueLabel,
+      ].some((value) => value.toLowerCase().includes(normalizedQuery));
+    });
+  }, [overdueTaskQueryResults, paletteQuery]);
   const workspaceChatMessages = workspaceKnowledgeThread?.messages ?? [];
   const embeddingProgressLabel = useMemo(() => {
     if (!embeddingRebuildProgress) {
@@ -8007,6 +8034,16 @@ function ConfiguredWorkspace({
         },
       },
       {
+        key: "view-overdue-tasks",
+        title: "View Past Due Tasks",
+        subtitle: "See every incomplete task whose due date is before today.",
+        keywords: ["task", "tasks", "past due", "overdue", "late", "due", "review"],
+        actionLabel: "Open",
+        onSelect: () => {
+          switchPaletteMode("overdueTasks");
+        },
+      },
+      {
         key: "task-schedule",
         title: "Set Task Schedule",
         subtitle: taskScheduleTargetNode
@@ -8207,6 +8244,8 @@ function ConfiguredWorkspace({
         ? textSearchResults.length
       : paletteMode === "nodes"
         ? nodeSearchResults.length
+      : paletteMode === "overdueTasks"
+        ? overdueTaskResults.length
         : paletteMode === "actions"
             ? actionResults.length
             : 0;
@@ -11408,6 +11447,14 @@ function ConfiguredWorkspace({
         return;
       }
 
+      if (paletteMode === "overdueTasks") {
+        const highlighted = overdueTaskResults[paletteHighlightIndex];
+        if (highlighted) {
+          handleSelectNodeSearchResult(highlighted);
+        }
+        return;
+      }
+
       const highlighted =
         paletteMode === "find"
           ? textSearchResults[paletteHighlightIndex]
@@ -14030,6 +14077,17 @@ function ConfiguredWorkspace({
                 >
                   Semantic
                 </button>
+                {paletteMode === "overdueTasks" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      switchPaletteMode("overdueTasks");
+                    }}
+                    className="border border-[var(--workspace-brand)] bg-[var(--workspace-brand)] px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--workspace-inverse-text)] transition"
+                  >
+                    Past Due
+                  </button>
+                ) : null}
                 {paletteMode === "archive" ? (
                   <button
                     type="button"
@@ -14180,8 +14238,10 @@ function ConfiguredWorkspace({
                           : "Search pages and favorites..."
                         : paletteMode === "find"
                           ? "Find exact text in notes and tasks... Use || for OR"
-                          : paletteMode === "nodes"
+                        : paletteMode === "nodes"
                             ? "Search notes and tasks semantically across the workspace..."
+                            : paletteMode === "overdueTasks"
+                              ? "Filter past due tasks..."
                               : "Run a workspace action..."
                     }
                     className="w-full border-0 bg-transparent p-0 text-lg outline-none"
@@ -14323,6 +14383,62 @@ function ConfiguredWorkspace({
                       </span>
                       <span className="flex items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
                         <span>{result.node.kind === "task" ? "Task" : "Note"}</span>
+                      </span>
+                    </button>
+                  );
+                })
+              ) : paletteMode === "overdueTasks" ? typeof overdueTaskQueryResults === "undefined" ? (
+                <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">
+                  Loading past due tasks...
+                </p>
+              ) : overdueTaskResults.length === 0 ? (
+                <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">
+                  {paletteQuery.trim().length > 0
+                    ? "No matching past due tasks."
+                    : "No past due tasks."}
+                </p>
+              ) : (
+                overdueTaskResults.map((result, index) => {
+                  const dueLabel = formatCompactDueDateRange(
+                    result.node.dueAt,
+                    result.node.dueEndAt ?? null,
+                  );
+                  const dueFullLabel = formatDueDateRange(
+                    result.node.dueAt,
+                    result.node.dueEndAt ?? null,
+                  );
+                  const taskTitle =
+                    normalizeNodeLinkPreviewDisplay(result.node.text).text ||
+                    result.node.text ||
+                    "(empty task)";
+
+                  return (
+                    <button
+                      key={`${result.node._id}:${result.page?._id ?? "page"}:overdue`}
+                      type="button"
+                      data-palette-item-index={index}
+                      onMouseEnter={() => setPaletteHighlightIndex(index)}
+                      onClick={() => handleSelectNodeSearchResult(result)}
+                      className={clsx(
+                        "flex w-full items-start justify-between gap-3 px-5 py-3 text-left transition",
+                        index === paletteHighlightIndex
+                          ? "bg-[var(--workspace-sidebar-bg)]"
+                          : "hover:bg-[var(--workspace-surface-hover)]",
+                      )}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
+                          {taskTitle}
+                        </span>
+                        <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                          {getNodeSearchResultSubtitle(result)}
+                        </span>
+                      </span>
+                      <span
+                        className="shrink-0 rounded-full border border-[var(--workspace-danger)]/50 px-2 py-1 text-[11px] uppercase tracking-[0.14em] text-[var(--workspace-danger)]"
+                        title={`Overdue since ${dueFullLabel}`}
+                      >
+                        {dueLabel}
                       </span>
                     </button>
                   );
