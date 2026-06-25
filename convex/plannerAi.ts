@@ -96,6 +96,7 @@ export const completePlannerDayWithAi = action({
     focusSectionId: Id<"nodes">;
     movedCount: number;
     archivedDuplicateCount: number;
+    archivedDuplicateTexts: string[];
   }> => {
     assertOwnerKey(args.ownerKey);
     return await ctx.runMutation(api.planner.completePlannerDay, {

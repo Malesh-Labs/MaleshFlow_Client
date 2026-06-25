@@ -52,6 +52,17 @@ function normalizePlannerSuggestionText(text: string) {
   return stripInlineFormattingMarkers(replaceLinkMarkupWithLabels(text)).trim();
 }
 
+function getPlannerMergeDuplicateStatusText(node: Pick<Doc<"nodes">, "text">) {
+  const readableText = normalizePlannerSuggestionText(node.text).replace(/\s+/g, " ").trim();
+  const rawText = stripInlineFormattingMarkers(node.text).replace(/\s+/g, " ").trim();
+  const text =
+    rawText.includes("[[") && readableText.length < Math.min(12, rawText.length / 2)
+      ? rawText
+      : readableText || rawText || "(empty item)";
+
+  return text.length > 140 ? `${text.slice(0, 137)}...` : text;
+}
+
 async function resolvePlannerSuggestionText(db: DatabaseReader, text: string) {
   const trimmed = text.trim();
   const wikiMatch = trimmed.match(PURE_NODE_WIKI_LINK_PATTERN);
@@ -803,6 +814,7 @@ export const completePlannerDay = mutation({
       .sort((left, right) => left.position - right.position);
     let movedCount = 0;
     let archivedDuplicateCount = 0;
+    const archivedDuplicateTexts: string[] = [];
     let keptCarryChildren: Doc<"nodes">[] = [];
     let duplicateCandidates: PlannerMergeDuplicateCandidate[] = focusDirectChildren.map(
       (node) => ({
@@ -883,6 +895,10 @@ export const completePlannerDay = mutation({
       }
 
       if (duplicateMatch) {
+        const archivedDuplicateNode =
+          duplicateMatch.keep === "incoming" ? duplicateMatch.candidate.node : child;
+        archivedDuplicateTexts.push(getPlannerMergeDuplicateStatusText(archivedDuplicateNode));
+
         if (duplicateMatch.keep === "incoming") {
           await moveDirectPlannerMergeChildren(ctx, {
             fromParentId: duplicateMatch.candidate.node._id,
@@ -936,6 +952,7 @@ export const completePlannerDay = mutation({
       focusSectionId: focusSection._id,
       movedCount,
       archivedDuplicateCount,
+      archivedDuplicateTexts,
     };
   },
 });

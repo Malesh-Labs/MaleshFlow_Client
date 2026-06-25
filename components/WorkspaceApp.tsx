@@ -11185,10 +11185,22 @@ function ConfiguredWorkspace({
         typeof result?.archivedDuplicateCount === "number"
           ? result.archivedDuplicateCount
           : 0;
+      const duplicateTexts = Array.isArray(result?.archivedDuplicateTexts)
+        ? result.archivedDuplicateTexts.filter(
+            (text): text is string => typeof text === "string" && text.trim().length > 0,
+          )
+        : [];
       const parts = [`Completed the top day and moved ${movedCount} item${movedCount === 1 ? "" : "s"} into Focus.`];
       if (duplicateCount > 0) {
+        const listedDuplicateTexts = duplicateTexts.slice(0, 5);
+        const remainingDuplicateCount = Math.max(0, duplicateCount - listedDuplicateTexts.length);
+        const duplicateList = listedDuplicateTexts.join("; ");
         parts.push(
-          `Removed ${duplicateCount} duplicate item${duplicateCount === 1 ? "" : "s"} while merging.`,
+          `Removed ${duplicateCount} duplicate item${duplicateCount === 1 ? "" : "s"} while merging${
+            duplicateList
+              ? `: ${duplicateList}${remainingDuplicateCount > 0 ? `; and ${remainingDuplicateCount} more` : ""}.`
+              : "."
+          }`,
         );
       }
       setPlannerStatus(parts.join(" "));
