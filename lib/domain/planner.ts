@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { formatDueDate, getTodayReferenceDate, isOverdueDueDateRange } from "./recurrence";
+import { extractLinkMatches } from "./links";
+import { stripInlineFormattingMarkers } from "./inlineFormatting";
 
 export const PLANNER_WEEKDAY_NAMES = [
   "Monday",
@@ -64,6 +66,145 @@ export type TaskDueInheritanceNode = {
   dueAt: number | null;
   dueEndAt?: number | null;
 };
+
+export type PlannerMergeDuplicateResolution =
+  | {
+      duplicate: false;
+    }
+  | {
+      duplicate: true;
+      keep: "left" | "right";
+      reason: "exact" | "prefix";
+    };
+
+type PlannerMergeDuplicateFingerprint = {
+  canonicalText: string;
+  tokens: string[];
+  linkTokenCount: number;
+  wordTokenCount: number;
+  alphanumericLength: number;
+};
+
+function normalizePlannerMergePlainText(value: string) {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .match(/[a-z0-9]+/g) ?? [];
+}
+
+function getPlannerMergeLinkToken(match: ReturnType<typeof extractLinkMatches>[number]) {
+  if (match.link.kind === "node") {
+    return `node:${match.link.targetNodeRef.toLowerCase()}`;
+  }
+  if (match.link.kind === "page" && match.link.targetPageRef) {
+    return `page:${match.link.targetPageRef.toLowerCase()}`;
+  }
+  return null;
+}
+
+function buildPlannerMergeDuplicateFingerprint(text: string): PlannerMergeDuplicateFingerprint {
+  const strippedText = stripInlineFormattingMarkers(text);
+  const matches = extractLinkMatches(strippedText).sort(
+    (left, right) => left.start - right.start,
+  );
+  const tokens: string[] = [];
+  let cursor = 0;
+
+  for (const match of matches) {
+    if (match.start > cursor) {
+      tokens.push(...normalizePlannerMergePlainText(strippedText.slice(cursor, match.start)));
+    }
+
+    const linkToken = getPlannerMergeLinkToken(match);
+    if (linkToken) {
+      tokens.push(linkToken);
+    } else if (match.link.kind === "page" && match.link.targetPageTitle) {
+      tokens.push(...normalizePlannerMergePlainText(match.link.targetPageTitle));
+    } else if (match.link.kind === "external") {
+      tokens.push(...normalizePlannerMergePlainText(match.link.text));
+    }
+    cursor = match.end;
+  }
+
+  if (cursor < strippedText.length) {
+    tokens.push(...normalizePlannerMergePlainText(strippedText.slice(cursor)));
+  }
+
+  const linkTokenCount = tokens.filter((token) => token.includes(":")).length;
+  const wordTokens = tokens.filter((token) => !token.includes(":"));
+
+  return {
+    canonicalText: tokens.join(" "),
+    tokens,
+    linkTokenCount,
+    wordTokenCount: wordTokens.length,
+    alphanumericLength: wordTokens.join("").length,
+  };
+}
+
+function isSubstantialPlannerMergeDuplicateBase(
+  fingerprint: PlannerMergeDuplicateFingerprint,
+) {
+  return (
+    fingerprint.linkTokenCount > 0 ||
+    fingerprint.wordTokenCount >= 2 ||
+    fingerprint.alphanumericLength >= 8
+  );
+}
+
+function isSubstantialPlannerMergePrefixBase(
+  fingerprint: PlannerMergeDuplicateFingerprint,
+) {
+  return (
+    fingerprint.linkTokenCount > 0 ||
+    fingerprint.wordTokenCount >= 4 ||
+    fingerprint.alphanumericLength >= 24
+  );
+}
+
+function tokensStartWith(left: string[], right: string[]) {
+  if (left.length > right.length) {
+    return false;
+  }
+  return left.every((token, index) => token === right[index]);
+}
+
+export function getPlannerMergeItemRichnessScore(text: string) {
+  return stripInlineFormattingMarkers(text).replace(/\s+/g, " ").trim().length;
+}
+
+export function getPlannerMergeDuplicateResolution(
+  leftText: string,
+  rightText: string,
+): PlannerMergeDuplicateResolution {
+  const left = buildPlannerMergeDuplicateFingerprint(leftText);
+  const right = buildPlannerMergeDuplicateFingerprint(rightText);
+  if (!left.canonicalText || !right.canonicalText) {
+    return { duplicate: false };
+  }
+
+  const leftScore = getPlannerMergeItemRichnessScore(leftText);
+  const rightScore = getPlannerMergeItemRichnessScore(rightText);
+  const keep = rightScore > leftScore ? "right" : "left";
+
+  if (left.canonicalText === right.canonicalText) {
+    return isSubstantialPlannerMergeDuplicateBase(left)
+      ? { duplicate: true, keep, reason: "exact" }
+      : { duplicate: false };
+  }
+
+  const shorter = left.tokens.length <= right.tokens.length ? left : right;
+  const longer = shorter === left ? right : left;
+  if (!isSubstantialPlannerMergePrefixBase(shorter)) {
+    return { duplicate: false };
+  }
+  if (!tokensStartWith(shorter.tokens, longer.tokens)) {
+    return { duplicate: false };
+  }
+
+  return { duplicate: true, keep, reason: "prefix" };
+}
 
 function getPlannerDayDate(timestamp: number) {
   const date = new Date(timestamp);

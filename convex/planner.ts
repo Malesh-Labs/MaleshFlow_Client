@@ -34,6 +34,8 @@ import {
 import {
   comparePlannerTaskOrder,
   getEffectiveTaskDueDateRange,
+  getPlannerMergeDuplicateResolution,
+  getPlannerMergeItemRichnessScore,
 } from "../lib/domain/planner";
 import { getAppendPosition } from "../lib/domain/positions";
 import {
@@ -140,6 +142,91 @@ async function updateMovedPlannerSubtreeDate(
       updatedAt: now,
     });
   }
+}
+
+type PlannerMergeDuplicateCandidate = {
+  node: Doc<"nodes">;
+  location: "focus" | "carry";
+};
+
+async function moveDirectPlannerMergeChildren(
+  ctx: MutationCtx,
+  args: {
+    fromParentId: Id<"nodes">;
+    toParentId: Id<"nodes">;
+    now: number;
+    plannerDate?: number | null;
+  },
+) {
+  const fromParent = await ctx.db.get(args.fromParentId);
+  const toParent = await ctx.db.get(args.toParentId);
+  if (!fromParent || !toParent || fromParent.archived || toParent.archived) {
+    return 0;
+  }
+
+  const children = (
+    await ctx.db
+      .query("nodes")
+      .withIndex("by_page_parent_position", (query) =>
+        query.eq("pageId", fromParent.pageId).eq("parentNodeId", fromParent._id),
+      )
+      .collect()
+  )
+    .filter((node) => !node.archived)
+    .sort((left, right) => left.position - right.position);
+  if (children.length === 0) {
+    return 0;
+  }
+
+  const targetChildren = (
+    await ctx.db
+      .query("nodes")
+      .withIndex("by_page_parent_position", (query) =>
+        query.eq("pageId", toParent.pageId).eq("parentNodeId", toParent._id),
+      )
+      .collect()
+  )
+    .filter((node) => !node.archived)
+    .sort((left, right) => left.position - right.position);
+  let afterNodeId = targetChildren[targetChildren.length - 1]?._id ?? null;
+  let movedCount = 0;
+
+  for (const child of children) {
+    const nextPosition = await computeNodePosition(
+      ctx.db,
+      toParent.pageId,
+      toParent._id,
+      afterNodeId,
+    );
+    await ctx.db.patch(child._id, {
+      pageId: toParent.pageId,
+      parentNodeId: toParent._id,
+      position: nextPosition,
+      updatedAt: args.now,
+    });
+
+    if (child.pageId !== toParent.pageId) {
+      const subtree = await collectNodeTree(ctx.db, child._id);
+      for (const descendant of subtree) {
+        if (descendant._id === child._id) {
+          continue;
+        }
+        await ctx.db.patch(descendant._id, {
+          pageId: toParent.pageId,
+          updatedAt: args.now,
+        });
+      }
+    }
+
+    if (typeof args.plannerDate === "number") {
+      await updateMovedPlannerSubtreeDate(ctx, child._id, args.plannerDate, args.now);
+    }
+
+    afterNodeId = child._id;
+    movedCount += 1;
+  }
+
+  return movedCount;
 }
 
 export const ensurePlannerPageSections = mutation({
@@ -711,31 +798,118 @@ export const completePlannerDay = mutation({
       .filter((node) => node.parentNodeId === topDay._id && !node.archived)
       .sort((left, right) => left.position - right.position);
     const focusTree = await collectNodeTree(ctx.db, focusSection._id);
-    const existingLinkedSourceIds = new Set(
-      focusTree
-        .map((node) => getPlannerLinkedSourceTaskId(node))
-        .filter((value): value is Id<"nodes"> => value !== null)
-        .map((value) => value as string),
-    );
-
     const focusDirectChildren = focusTree
       .filter((node) => node.parentNodeId === focusSection._id && !node.archived)
       .sort((left, right) => left.position - right.position);
     let movedCount = 0;
     let archivedDuplicateCount = 0;
-    const keptCarryChildren: Doc<"nodes">[] = [];
+    let keptCarryChildren: Doc<"nodes">[] = [];
+    let duplicateCandidates: PlannerMergeDuplicateCandidate[] = focusDirectChildren.map(
+      (node) => ({
+        node,
+        location: "focus" as const,
+      }),
+    );
+    const linkedSourceCandidates = new Map<string, Doc<"nodes">>();
+
+    const removeDuplicateCandidate = (nodeId: Id<"nodes">) => {
+      duplicateCandidates = duplicateCandidates.filter(
+        (candidate) => candidate.node._id !== nodeId,
+      );
+      for (const [sourceTaskId, candidate] of linkedSourceCandidates) {
+        if (candidate._id === nodeId) {
+          linkedSourceCandidates.delete(sourceTaskId);
+          break;
+        }
+      }
+    };
+
+    const addDuplicateCandidate = (
+      node: Doc<"nodes">,
+      location: PlannerMergeDuplicateCandidate["location"],
+    ) => {
+      duplicateCandidates.push({ node, location });
+      const linkedSourceTaskId = getPlannerLinkedSourceTaskId(node);
+      if (linkedSourceTaskId && !linkedSourceCandidates.has(linkedSourceTaskId as string)) {
+        linkedSourceCandidates.set(linkedSourceTaskId as string, node);
+      }
+    };
+
+    for (const node of focusTree) {
+      if (node.archived) {
+        continue;
+      }
+      const linkedSourceTaskId = getPlannerLinkedSourceTaskId(node);
+      if (linkedSourceTaskId && !linkedSourceCandidates.has(linkedSourceTaskId as string)) {
+        linkedSourceCandidates.set(linkedSourceTaskId as string, node);
+      }
+    }
 
     for (const child of topDayChildren) {
       const linkedSourceTaskId = getPlannerLinkedSourceTaskId(child);
-      if (linkedSourceTaskId && existingLinkedSourceIds.has(linkedSourceTaskId as string)) {
-        await setNodeTreeArchivedState(ctx.db, child._id, true, now);
+      let duplicateMatch:
+        | {
+            candidate: PlannerMergeDuplicateCandidate;
+            keep: "candidate" | "incoming";
+          }
+        | null = null;
+
+      for (const candidate of duplicateCandidates) {
+        const resolution = getPlannerMergeDuplicateResolution(candidate.node.text, child.text);
+        if (resolution.duplicate) {
+          duplicateMatch = {
+            candidate,
+            keep: resolution.keep === "right" ? "incoming" : "candidate",
+          };
+          break;
+        }
+      }
+
+      if (!duplicateMatch && linkedSourceTaskId) {
+        const sourceCandidate = linkedSourceCandidates.get(linkedSourceTaskId as string) ?? null;
+        if (sourceCandidate) {
+          duplicateMatch = {
+            candidate: {
+              node: sourceCandidate,
+              location: "focus",
+            },
+            keep:
+              getPlannerMergeItemRichnessScore(child.text) >
+              getPlannerMergeItemRichnessScore(sourceCandidate.text)
+                ? "incoming"
+                : "candidate",
+          };
+        }
+      }
+
+      if (duplicateMatch) {
+        if (duplicateMatch.keep === "incoming") {
+          await moveDirectPlannerMergeChildren(ctx, {
+            fromParentId: duplicateMatch.candidate.node._id,
+            toParentId: child._id,
+            now,
+          });
+          await setNodeTreeArchivedState(ctx.db, duplicateMatch.candidate.node._id, true, now);
+          keptCarryChildren = keptCarryChildren.filter(
+            (node) => node._id !== duplicateMatch.candidate.node._id,
+          );
+          removeDuplicateCandidate(duplicateMatch.candidate.node._id);
+          keptCarryChildren.push(child);
+          addDuplicateCandidate(child, "carry");
+        } else {
+          await moveDirectPlannerMergeChildren(ctx, {
+            fromParentId: child._id,
+            toParentId: duplicateMatch.candidate.node._id,
+            now,
+            plannerDate: topDayDate,
+          });
+          await setNodeTreeArchivedState(ctx.db, child._id, true, now);
+        }
         archivedDuplicateCount += 1;
         continue;
       }
       keptCarryChildren.push(child);
-      if (linkedSourceTaskId) {
-        existingLinkedSourceIds.add(linkedSourceTaskId as string);
-      }
+      addDuplicateCandidate(child, "carry");
     }
 
     const orderedCarryChildren = [...keptCarryChildren];

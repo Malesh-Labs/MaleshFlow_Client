@@ -88,6 +88,7 @@ import {
 import { parseImportedTextToOutlineNodes } from "../lib/domain/importer";
 import {
   getEffectiveTaskDueDateRange,
+  getPlannerMergeDuplicateResolution,
   getPlannerDateRangeBoundary,
   plannerDayMatchesDueDateBoundary,
 } from "../lib/domain/planner";
@@ -802,6 +803,53 @@ test("planner symbol helpers normalize source text without mutating links", () =
     normalizePlannerSymbolSourceText("__Call__ [[Sam|node:node_1]]?hideTags"),
     "Call Sam",
   );
+});
+
+test("planner day merge duplicate matching keeps richer linked variants", () => {
+  assert.deepEqual(
+    getPlannerMergeDuplicateResolution(
+      "[[🧘‍♂️🧘‍♂️🧘‍♂️ MEDITATE 🧘‍♂️🧘‍♂️🧘‍♂️|node:k17175rntarp6nnt56fv819301847mmb]]",
+      "[[🧘‍♂️🧘‍♂️🧘‍♂️ MEDITATE 🧘‍♂️🧘‍♂️🧘‍♂️|node:k17175rntarp6nnt56fv819301847mmb]]",
+    ),
+    {
+      duplicate: true,
+      keep: "left",
+      reason: "exact",
+    },
+  );
+
+  assert.deepEqual(
+    getPlannerMergeDuplicateResolution(
+      "~~[[page:k5741azmeexr9qz4kd9ecqfa4s83y2mj]]~~",
+      "~~[[page:k5741azmeexr9qz4kd9ecqfa4s83y2mj]]~~ (Alora)",
+    ),
+    {
+      duplicate: true,
+      keep: "right",
+      reason: "prefix",
+    },
+  );
+
+  assert.deepEqual(
+    getPlannerMergeDuplicateResolution(
+      "do [[night routine|node:k17dq9cnatce01nyrdz843cxxh848yjt]] ([[fin|node:k17bwmmnj0w8m4qdmyj9f5m2xh84cp3q]])",
+      "do [[night routine|node:k17dq9cnatce01nyrdz843cxxh848yjt]] ([[fin|node:k17bwmmnj0w8m4qdmyj9f5m2xh84cp3q]]+body wash+moisturize body+[[retinol|node:k17anp44khbmk01wz0g6hh22g1848zqd]])",
+    ),
+    {
+      duplicate: true,
+      keep: "right",
+      reason: "prefix",
+    },
+  );
+});
+
+test("planner day merge duplicate matching rejects tiny shared prefixes", () => {
+  assert.deepEqual(getPlannerMergeDuplicateResolution("do", "do laundry"), {
+    duplicate: false,
+  });
+  assert.deepEqual(getPlannerMergeDuplicateResolution("go", "go outside"), {
+    duplicate: false,
+  });
 });
 
 test("planner symbol helpers validate generated emoji labels and deterministic fallback", () => {

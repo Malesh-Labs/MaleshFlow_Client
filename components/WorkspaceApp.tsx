@@ -11188,7 +11188,7 @@ function ConfiguredWorkspace({
       const parts = [`Completed the top day and moved ${movedCount} item${movedCount === 1 ? "" : "s"} into Focus.`];
       if (duplicateCount > 0) {
         parts.push(
-          `${duplicateCount} linked duplicate${duplicateCount === 1 ? " was" : "s were"} skipped because it already existed in Focus.`,
+          `Removed ${duplicateCount} duplicate item${duplicateCount === 1 ? "" : "s"} while merging.`,
         );
       }
       setPlannerStatus(parts.join(" "));
