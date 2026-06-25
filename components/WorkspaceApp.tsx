@@ -16086,6 +16086,89 @@ function OutlineNodeList({
   );
 }
 
+function AnimatedLinkedNodeChildrenBlock({
+  isCollapsed,
+  children,
+}: {
+  isCollapsed: boolean;
+  children: ReactNode;
+}) {
+  const [shouldRender, setShouldRender] = useState(!isCollapsed);
+  const [isExpanded, setIsExpanded] = useState(!isCollapsed);
+  const animationFrameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (animationFrameRef.current !== null) {
+        window.cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (animationFrameRef.current !== null) {
+      window.cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+
+    if (isCollapsed) {
+      if (isExpanded) {
+        animationFrameRef.current = window.requestAnimationFrame(() => {
+          setIsExpanded(false);
+          animationFrameRef.current = null;
+        });
+      }
+      return;
+    }
+
+    if (!shouldRender || !isExpanded) {
+      animationFrameRef.current = window.requestAnimationFrame(() => {
+        setShouldRender(true);
+        setIsExpanded(true);
+        animationFrameRef.current = null;
+      });
+    }
+
+    return () => {
+      if (animationFrameRef.current !== null) {
+        window.cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
+  }, [isCollapsed, isExpanded, shouldRender]);
+
+  if (!shouldRender && isCollapsed) {
+    return null;
+  }
+
+  return (
+    <div
+      className={clsx(
+        "grid transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none",
+        isExpanded
+          ? "grid-rows-[1fr] opacity-100"
+          : "pointer-events-none grid-rows-[0fr] opacity-0",
+      )}
+      onTransitionEnd={(event) => {
+        if (event.target !== event.currentTarget) {
+          return;
+        }
+
+        if (!isCollapsed || isExpanded) {
+          return;
+        }
+
+        setShouldRender(false);
+      }}
+    >
+      <div aria-hidden={!isExpanded} className="min-h-0 overflow-hidden">
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function LinkedNodeChildrenBlock({
   sourcePage,
   rootNode,
@@ -17878,9 +17961,6 @@ function OutlineNodeEditor({
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
   const [dropTarget, setDropTarget] = useState<NodeDropTarget | null>(null);
   const [isSymbolTextRevealed, setIsSymbolTextRevealed] = useState(false);
-  const [collapsedShowChildrenLinkKeys, setCollapsedShowChildrenLinkKeys] = useState<
-    Set<string>
-  >(new Set());
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewMeasureRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef(draft);
@@ -18049,12 +18129,13 @@ function OutlineNodeEditor({
           findTreeNodeById(childTreeNodes, childTree.rootNode._id as string) ??
           childTreeNodes[0] ??
           null;
+        const collapseKey = `node-link-show-children:${node._id as string}:${childTree.rootNode._id as string}`;
 
         return [
           {
             key: `${segment.key}:show-children`,
-            segmentKey: segment.key,
-            isCollapsed: collapsedShowChildrenLinkKeys.has(segment.key),
+            collapseKey,
+            isCollapsed: collapsedNodeIds.has(collapseKey),
             sourcePage: childTree.sourcePage,
             rootNode: childTree.rootNode,
             roots: rootTreeNode?.children ?? [],
@@ -18064,7 +18145,7 @@ function OutlineNodeEditor({
           },
         ];
       }),
-    [collapsedShowChildrenLinkKeys, linkPreviewSegments, nodeTargetsById],
+    [collapsedNodeIds, linkPreviewSegments, node._id, nodeTargetsById],
   );
   const hasExpandedLinkedShowChildrenTrees = linkedShowChildrenTrees.some(
     (linkedTree) => !linkedTree.isCollapsed,
@@ -18073,20 +18154,25 @@ function OutlineNodeEditor({
   const isLinkedShowChildrenCollapsed =
     hasLinkedShowChildrenTrees && !hasExpandedLinkedShowChildrenTrees;
   const toggleLinkedShowChildrenCollapse = useCallback(() => {
-    setCollapsedShowChildrenLinkKeys((current) => {
-      const next = new Set(current);
-      if (hasExpandedLinkedShowChildrenTrees) {
-        for (const linkedTree of linkedShowChildrenTrees) {
-          next.add(linkedTree.segmentKey);
-        }
-      } else {
-        for (const linkedTree of linkedShowChildrenTrees) {
-          next.delete(linkedTree.segmentKey);
+    const collapseKeysToToggle = new Set<string>();
+    if (hasExpandedLinkedShowChildrenTrees) {
+      for (const linkedTree of linkedShowChildrenTrees) {
+        if (!linkedTree.isCollapsed) {
+          collapseKeysToToggle.add(linkedTree.collapseKey);
         }
       }
-      return next;
-    });
-  }, [hasExpandedLinkedShowChildrenTrees, linkedShowChildrenTrees]);
+    } else {
+      for (const linkedTree of linkedShowChildrenTrees) {
+        if (linkedTree.isCollapsed) {
+          collapseKeysToToggle.add(linkedTree.collapseKey);
+        }
+      }
+    }
+
+    for (const collapseKey of collapseKeysToToggle) {
+      onToggleNodeCollapsed(collapseKey);
+    }
+  }, [hasExpandedLinkedShowChildrenTrees, linkedShowChildrenTrees, onToggleNodeCollapsed]);
   const hasPageLinkPreview =
     !isFocused &&
     !isVisualEmptyLine &&
@@ -20556,68 +20642,70 @@ function OutlineNodeEditor({
         {isPlannerDayRoot ? (
           <div className="mx-1 mt-3 mb-5 border-t border-[color-mix(in_srgb,var(--workspace-brand)_20%,var(--workspace-border))]" />
         ) : null}
-        {!isFocused && hasExpandedLinkedShowChildrenTrees ? (
+        {!isFocused && hasLinkedShowChildrenTrees ? (
           <div className="space-y-2">
-            {linkedShowChildrenTrees.map((linkedTree) =>
-              linkedTree.isCollapsed ? null : (
-              <LinkedNodeChildrenBlock
+            {linkedShowChildrenTrees.map((linkedTree) => (
+              <AnimatedLinkedNodeChildrenBlock
                 key={linkedTree.key}
-                sourcePage={linkedTree.sourcePage}
-                rootNode={linkedTree.rootNode}
-                roots={linkedTree.roots}
-                nodeMap={linkedTree.nodeMap}
-                nodeBacklinkCounts={linkedTree.nodeBacklinkCounts}
-                loadWarning={linkedTree.loadWarning}
-                ownerKey={ownerKey}
-                createNodesBatch={createNodesBatch}
-                insertOutlineClipboardNodes={insertOutlineClipboardNodes}
-                updateNode={updateNode}
-                moveNode={moveNode}
-                insertNodeAbove={insertNodeAbove}
-                splitNode={splitNode}
-                replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
-                setNodeTreeArchived={setNodeTreeArchived}
-                collapsedNodeIds={collapsedNodeIds}
-                pendingSyncNodeIds={pendingSyncNodeIds}
-                selectedNodeIds={selectedNodeIds}
-                selectionAnchorNodeId={selectionAnchorNodeId}
-                onToggleNodeCollapsed={onToggleNodeCollapsed}
-                onSelectSingleNode={onSelectSingleNode}
-                onSuppressTextEditingSelectionClear={onSuppressTextEditingSelectionClear}
-                pendingInsertedComposer={pendingInsertedComposer}
-                onOpenInsertedComposer={onOpenInsertedComposer}
-                onClearInsertedComposer={onClearInsertedComposer}
-                onBeginTextEditing={onBeginTextEditing}
-                activeDraggedNodeId={activeDraggedNodeId}
-                activeDraggedNodePayload={activeDraggedNodePayload}
-                onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
-                onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
-                onSetSelectedNodeIds={onSetSelectedNodeIds}
-                availableTags={availableTags}
-                pagesByTitle={pagesByTitle}
-                pagesById={pagesById}
-                favoritedNodeIds={favoritedNodeIds}
-                onOpenPage={onOpenPage}
-                onOpenNode={onOpenNode}
-                onOpenTag={onOpenTag}
-                onOpenFindQuery={onOpenFindQuery}
-                onToggleNodeFavorite={onToggleNodeFavorite}
-                recurringCompletionMode={recurringCompletionMode}
-                completeTaskPageTask={completeTaskPageTask}
-                mobileIndentStep={mobileIndentStep}
-                showChildrenDepth={showChildrenDepth}
-                ancestorNodeIds={
-                  new Set([
-                    ...showChildrenAncestorNodeIds,
-                    node._id as string,
-                    linkedTree.rootNode._id as string,
-                  ])
-                }
-                plannerSymbolModeEnabled={plannerSymbolModeEnabled}
-                plannerSymbolModePlannerPageId={plannerSymbolModePlannerPageId}
-              />
-              ),
-            )}
+                isCollapsed={linkedTree.isCollapsed}
+              >
+                <LinkedNodeChildrenBlock
+                  sourcePage={linkedTree.sourcePage}
+                  rootNode={linkedTree.rootNode}
+                  roots={linkedTree.roots}
+                  nodeMap={linkedTree.nodeMap}
+                  nodeBacklinkCounts={linkedTree.nodeBacklinkCounts}
+                  loadWarning={linkedTree.loadWarning}
+                  ownerKey={ownerKey}
+                  createNodesBatch={createNodesBatch}
+                  insertOutlineClipboardNodes={insertOutlineClipboardNodes}
+                  updateNode={updateNode}
+                  moveNode={moveNode}
+                  insertNodeAbove={insertNodeAbove}
+                  splitNode={splitNode}
+                  replaceNodeAndInsertSiblings={replaceNodeAndInsertSiblings}
+                  setNodeTreeArchived={setNodeTreeArchived}
+                  collapsedNodeIds={collapsedNodeIds}
+                  pendingSyncNodeIds={pendingSyncNodeIds}
+                  selectedNodeIds={selectedNodeIds}
+                  selectionAnchorNodeId={selectionAnchorNodeId}
+                  onToggleNodeCollapsed={onToggleNodeCollapsed}
+                  onSelectSingleNode={onSelectSingleNode}
+                  onSuppressTextEditingSelectionClear={onSuppressTextEditingSelectionClear}
+                  pendingInsertedComposer={pendingInsertedComposer}
+                  onOpenInsertedComposer={onOpenInsertedComposer}
+                  onClearInsertedComposer={onClearInsertedComposer}
+                  onBeginTextEditing={onBeginTextEditing}
+                  activeDraggedNodeId={activeDraggedNodeId}
+                  activeDraggedNodePayload={activeDraggedNodePayload}
+                  onSetActiveDraggedNodeId={onSetActiveDraggedNodeId}
+                  onSetActiveDraggedNodePayload={onSetActiveDraggedNodePayload}
+                  onSetSelectedNodeIds={onSetSelectedNodeIds}
+                  availableTags={availableTags}
+                  pagesByTitle={pagesByTitle}
+                  pagesById={pagesById}
+                  favoritedNodeIds={favoritedNodeIds}
+                  onOpenPage={onOpenPage}
+                  onOpenNode={onOpenNode}
+                  onOpenTag={onOpenTag}
+                  onOpenFindQuery={onOpenFindQuery}
+                  onToggleNodeFavorite={onToggleNodeFavorite}
+                  recurringCompletionMode={recurringCompletionMode}
+                  completeTaskPageTask={completeTaskPageTask}
+                  mobileIndentStep={mobileIndentStep}
+                  showChildrenDepth={showChildrenDepth}
+                  ancestorNodeIds={
+                    new Set([
+                      ...showChildrenAncestorNodeIds,
+                      node._id as string,
+                      linkedTree.rootNode._id as string,
+                    ])
+                  }
+                  plannerSymbolModeEnabled={plannerSymbolModeEnabled}
+                  plannerSymbolModePlannerPageId={plannerSymbolModePlannerPageId}
+                />
+              </AnimatedLinkedNodeChildrenBlock>
+            ))}
           </div>
         ) : null}
       </div>
