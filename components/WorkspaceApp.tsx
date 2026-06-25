@@ -166,6 +166,7 @@ const FAVORITES_SECTION_COLLAPSE_STORAGE_KEY =
 const ALL_PAGE_TYPE_SECTIONS_COLLAPSE_STORAGE_KEY =
   "maleshflow-all-page-type-sections-collapsed";
 const PINNED_ALL_PAGES_STORAGE_KEY = "maleshflow-pinned-all-pages";
+const PINNED_COMMAND_ACTIONS_STORAGE_KEY = "maleshflow-pinned-command-actions";
 const TAGS_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-tags-section-collapsed";
 const ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-archive-section-collapsed";
 const LEGACY_SECTION_COLLAPSE_STORAGE_KEY = "maleshflow-legacy-section-collapsed";
@@ -1969,6 +1970,23 @@ function getNodeSearchResultSubtitle(result: NodeSearchResult) {
   return parts.filter((part) => part.trim().length > 0).join(" • ");
 }
 
+function CommandActionPinIcon({ pinned }: { pinned: boolean }) {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="h-4 w-4"
+      fill={pinned ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="1.8"
+    >
+      <path d="M14.5 4.5 19.5 9.5 16 10.7 12.2 14.5 12.7 19.3 10.8 21.2 8.9 16.4 4 15.2 5.9 13.3 10.8 13.8 14.5 10 14.5 4.5Z" />
+    </svg>
+  );
+}
+
 function sanitizeLinkLabel(value: string) {
   return sanitizeGeneratedWikiLinkLabel(stripInlineFormattingMarkers(value));
 }
@@ -3571,6 +3589,22 @@ function readStoredLocalBoolean(key: string, defaultValue: boolean) {
   return storedValue === "true";
 }
 
+function readStoredStringSet(key: string) {
+  if (typeof window === "undefined") {
+    return new Set<string>();
+  }
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+    if (!Array.isArray(parsed)) {
+      return new Set<string>();
+    }
+    return new Set(parsed.filter((value): value is string => typeof value === "string"));
+  } catch {
+    return new Set<string>();
+  }
+}
+
 function readStoredRecurringCompletionMode(defaultValue: RecurringCompletionMode) {
   if (typeof window === "undefined") {
     return defaultValue;
@@ -3840,6 +3874,9 @@ function ConfiguredWorkspace({
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("pages");
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteHighlightIndex, setPaletteHighlightIndex] = useState(0);
+  const [pinnedActionKeys, setPinnedActionKeys] = useState<Set<string>>(() =>
+    readStoredStringSet(PINNED_COMMAND_ACTIONS_STORAGE_KEY),
+  );
   const [pendingPalettePageAction, setPendingPalettePageAction] =
     useState<PendingPalettePageAction>(null);
   const [actionContextSelectedNodeIds, setActionContextSelectedNodeIds] = useState<string[]>([]);
@@ -4656,6 +4693,18 @@ function ConfiguredWorkspace({
     setNodeSearchResults([]);
     setPaletteOpen(true);
   }, [clearNodeSelection, selectedNodeIds]);
+
+  const togglePinnedAction = useCallback((actionKey: string) => {
+    setPinnedActionKeys((current) => {
+      const next = new Set(current);
+      if (next.has(actionKey)) {
+        next.delete(actionKey);
+      } else {
+        next.add(actionKey);
+      }
+      return next;
+    });
+  }, []);
 
   const toggleWorkspaceChat = useCallback(() => {
     setWorkspaceChatError("");
@@ -6703,6 +6752,17 @@ function ConfiguredWorkspace({
       return;
     }
 
+    window.localStorage.setItem(
+      PINNED_COMMAND_ACTIONS_STORAGE_KEY,
+      JSON.stringify([...pinnedActionKeys]),
+    );
+  }, [pinnedActionKeys]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
     const handleResize = () => {
       setPlannerSidebarWidth((current) => clampPlannerSidebarWidth(current));
     };
@@ -7407,6 +7467,7 @@ function ConfiguredWorkspace({
     window.sessionStorage.removeItem(ALL_PAGE_TYPE_SECTIONS_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(PAGE_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(PINNED_ALL_PAGES_STORAGE_KEY);
+    window.sessionStorage.removeItem(PINNED_COMMAND_ACTIONS_STORAGE_KEY);
     window.sessionStorage.removeItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
     window.sessionStorage.removeItem(LEGACY_SECTION_COLLAPSE_STORAGE_KEY);
@@ -7420,6 +7481,7 @@ function ConfiguredWorkspace({
     window.localStorage.removeItem(ALL_PAGE_TYPE_SECTIONS_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(PAGE_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(PINNED_ALL_PAGES_STORAGE_KEY);
+    window.localStorage.removeItem(PINNED_COMMAND_ACTIONS_STORAGE_KEY);
     window.localStorage.removeItem(TAGS_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(ARCHIVE_SECTION_COLLAPSE_STORAGE_KEY);
     window.localStorage.removeItem(LEGACY_SECTION_COLLAPSE_STORAGE_KEY);
@@ -8184,15 +8246,26 @@ function ConfiguredWorkspace({
     ];
 
     const normalizedQuery = paletteQuery.trim().toLowerCase();
-    if (normalizedQuery.length === 0) {
-      return results;
-    }
+    const matchingResults =
+      normalizedQuery.length === 0
+        ? results
+        : results.filter((result) =>
+            [result.title, result.subtitle, ...result.keywords].some((value) =>
+              value.toLowerCase().includes(normalizedQuery),
+            ),
+          );
 
-    return results.filter((result) =>
-      [result.title, result.subtitle, ...result.keywords].some((value) =>
-        value.toLowerCase().includes(normalizedQuery),
-      ),
-    );
+    return matchingResults
+      .map((result, index) => ({ result, index }))
+      .sort((left, right) => {
+        const leftPinned = pinnedActionKeys.has(left.result.key);
+        const rightPinned = pinnedActionKeys.has(right.result.key);
+        if (leftPinned !== rightPinned) {
+          return leftPinned ? -1 : 1;
+        }
+        return left.index - right.index;
+      })
+      .map(({ result }) => result);
   }, [
     collapseAllNodesOnSelectedPage,
     collapsiblePageNodeIds.length,
@@ -8225,6 +8298,7 @@ function ConfiguredWorkspace({
     openNoteDatePalette,
     openTaskSchedulePalette,
     paletteQuery,
+    pinnedActionKeys,
     setOwnerKey,
     setNodeChildrenLinkAutocompleteHidden,
     setNodeDataDumpExcluded,
@@ -14450,37 +14524,65 @@ function ConfiguredWorkspace({
                   </p>
                 ) : (
                   <div className="grid min-h-full auto-rows-[minmax(6rem,1fr)]">
-                    {actionResults.map((result, index) => (
-                      <button
-                        key={result.key}
-                        type="button"
-                        data-palette-item-index={index}
-                        disabled={result.disabled}
-                        onMouseEnter={() => setPaletteHighlightIndex(index)}
-                        onClick={() => {
-                          void result.onSelect();
-                        }}
-                        className={clsx(
-                          "flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition",
-                          result.disabled ? "cursor-wait opacity-70" : "",
-                          index === paletteHighlightIndex
-                            ? "bg-[var(--workspace-sidebar-bg)]"
-                            : "hover:bg-[var(--workspace-surface-hover)]",
-                        )}
-                      >
-                        <span className="min-w-0">
-                          <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
-                            {result.title}
-                          </span>
-                          <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
-                            {result.subtitle}
-                          </span>
-                        </span>
-                        <span className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
-                          {result.actionLabel}
-                        </span>
-                      </button>
-                    ))}
+                    {actionResults.map((result, index) => {
+                      const isPinnedAction = pinnedActionKeys.has(result.key);
+
+                      return (
+                        <div
+                          key={result.key}
+                          data-palette-item-index={index}
+                          onMouseEnter={() => setPaletteHighlightIndex(index)}
+                          className={clsx(
+                            "flex w-full items-center gap-2 transition",
+                            index === paletteHighlightIndex
+                              ? "bg-[var(--workspace-sidebar-bg)]"
+                              : "hover:bg-[var(--workspace-surface-hover)]",
+                          )}
+                        >
+                          <button
+                            type="button"
+                            disabled={result.disabled}
+                            onClick={() => {
+                              void result.onSelect();
+                            }}
+                            className={clsx(
+                              "flex min-w-0 flex-1 items-center justify-between gap-3 py-3 pl-5 pr-2 text-left transition",
+                              result.disabled ? "cursor-wait opacity-70" : "",
+                            )}
+                          >
+                            <span className="min-w-0">
+                              <span className="block truncate text-sm font-medium text-[var(--workspace-text)]">
+                                {result.title}
+                              </span>
+                              <span className="mt-1 block text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
+                                {result.subtitle}
+                              </span>
+                            </span>
+                            <span className="flex shrink-0 items-center gap-2 text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
+                              <span>{result.actionLabel}</span>
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            aria-pressed={isPinnedAction}
+                            aria-label={`${isPinnedAction ? "Unpin" : "Pin"} ${result.title}`}
+                            title={`${isPinnedAction ? "Unpin" : "Pin"} action`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              togglePinnedAction(result.key);
+                            }}
+                            className={clsx(
+                              "mr-5 flex h-9 w-9 shrink-0 items-center justify-center border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--workspace-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--workspace-bg)]",
+                              isPinnedAction
+                                ? "border-[var(--workspace-brand)] bg-[var(--workspace-brand)] text-[var(--workspace-inverse-text)]"
+                                : "border-[var(--workspace-border)] text-[var(--workspace-text-faint)] hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)]",
+                            )}
+                          >
+                            <CommandActionPinIcon pinned={isPinnedAction} />
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 )
               ) : paletteMode === "replace" ? (
