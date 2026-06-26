@@ -102,6 +102,7 @@ import {
 import {
   buildPlannerLinkedTaskCopyText,
   findExistingPlannerDayForSidebarSourceTask,
+  getPlannerLinkedSourceTaskRef,
   listEligiblePlannerSidebarSourceTasksFromNodes,
   shouldSyncPlannerLinkedRecurringSourceTaskCompletion,
 } from "../convex/lib/planner";
@@ -1913,6 +1914,59 @@ test("planner linked recurring source completion syncs once", () => {
       } as never,
       {
         dueAt: null,
+        sourceMeta: {
+          recurrenceFrequency: "weekly",
+        },
+      } as never,
+    ),
+    false,
+  );
+});
+
+test("planner linked recurring source completion can infer a single node-link source", () => {
+  const dueAt = dateInputValueToTimestamp("2026-05-14");
+  assert.ok(dueAt);
+
+  assert.equal(
+    getPlannerLinkedSourceTaskRef({
+      text: "[[node:source-task]]",
+      sourceMeta: {},
+    } as never),
+    "source-task",
+  );
+
+  assert.equal(
+    shouldSyncPlannerLinkedRecurringSourceTaskCompletion(
+      {
+        text: "[[node:source-task]]?hideTags",
+        sourceMeta: {},
+      } as never,
+      {
+        dueAt,
+        sourceMeta: {
+          recurrenceFrequency: "weekly",
+        },
+      } as never,
+    ),
+    true,
+  );
+
+  assert.equal(
+    getPlannerLinkedSourceTaskRef({
+      text: "do [[node:first-task]] then [[node:second-task]]",
+      sourceMeta: {},
+    } as never),
+    null,
+  );
+
+  assert.equal(
+    shouldSyncPlannerLinkedRecurringSourceTaskCompletion(
+      {
+        text: "do [[node:first-task]] then [[node:second-task]]",
+        sourceMeta: {},
+      } as never,
+      {
+        dueAt,
         sourceMeta: {
           recurrenceFrequency: "weekly",
         },

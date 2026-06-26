@@ -24,6 +24,7 @@ import {
   parseRecurrenceFrequency,
   type RecurringCompletionMode,
 } from "../../lib/domain/recurrence";
+import { extractLinkMatches } from "../../lib/domain/links";
 
 export const PLANNER_SIDEBAR_SLOT = "plannerSidebar";
 export const PLANNER_TEMPLATE_SLOT = "plannerTemplate";
@@ -138,6 +139,28 @@ export function getPlannerLinkedSourceTaskId(
     : null;
 }
 
+function getSingleNodeLinkTargetRef(text: string | null | undefined) {
+  if (!text) {
+    return null;
+  }
+
+  const nodeRefs = [
+    ...new Set(
+      extractLinkMatches(text)
+        .filter((match) => match.link.kind === "node")
+        .map((match) => (match.link.kind === "node" ? match.link.targetNodeRef : null))
+        .filter((value): value is string => typeof value === "string" && value.length > 0),
+    ),
+  ];
+  return nodeRefs.length === 1 ? nodeRefs[0]! : null;
+}
+
+export function getPlannerLinkedSourceTaskRef(
+  node: (Pick<Doc<"nodes">, "sourceMeta"> & { text?: string }) | null | undefined,
+) {
+  return getPlannerLinkedSourceTaskId(node) ?? getSingleNodeLinkTargetRef(node?.text);
+}
+
 export function isPlannerLinkedSourceTaskCompletionSynced(
   node: Pick<Doc<"nodes">, "sourceMeta"> | null | undefined,
 ) {
@@ -145,11 +168,11 @@ export function isPlannerLinkedSourceTaskCompletionSynced(
 }
 
 export function shouldSyncPlannerLinkedRecurringSourceTaskCompletion(
-  plannerNode: Pick<Doc<"nodes">, "sourceMeta"> | null | undefined,
+  plannerNode: (Pick<Doc<"nodes">, "sourceMeta"> & { text?: string }) | null | undefined,
   sourceTask: Pick<Doc<"nodes">, "dueAt" | "sourceMeta"> | null | undefined,
 ) {
   if (
-    !getPlannerLinkedSourceTaskId(plannerNode) ||
+    !getPlannerLinkedSourceTaskRef(plannerNode) ||
     isPlannerLinkedSourceTaskCompletionSynced(plannerNode)
   ) {
     return false;
@@ -340,7 +363,11 @@ async function syncPlannerLinkedSourceTaskCompletion(
   const touchedPageIds = new Set<string>();
 
   for (const plannerNode of plannerNodes) {
-    const sourceTaskId = getPlannerLinkedSourceTaskId(plannerNode);
+    const explicitSourceTaskId = getPlannerLinkedSourceTaskId(plannerNode);
+    const sourceTaskRef = explicitSourceTaskId ?? getSingleNodeLinkTargetRef(plannerNode.text);
+    const sourceTaskId = sourceTaskRef
+      ? ctx.db.normalizeId("nodes", sourceTaskRef)
+      : null;
     if (
       !sourceTaskId ||
       syncedSourceTaskIds.has(sourceTaskId as string) ||
@@ -358,6 +385,10 @@ async function syncPlannerLinkedSourceTaskCompletion(
     const recurrenceFrequency = parseRecurrenceFrequency(
       getNodeSourceMeta(sourceTask).recurrenceFrequency,
     );
+    if (!explicitSourceTaskId && (!recurrenceFrequency || !sourceTask.dueAt)) {
+      continue;
+    }
+
     if (recurrenceFrequency && sourceTask.dueAt) {
       const nextRange = advanceRecurringDueDateRange({
         dueAt: sourceTask.dueAt,
@@ -405,7 +436,8 @@ async function syncPlannerLinkedRecurringSourceTaskCompletionIfReady(
   completionMode: RecurringCompletionMode,
   now: number,
 ) {
-  const sourceTaskId = getPlannerLinkedSourceTaskId(plannerNode);
+  const sourceTaskRef = getPlannerLinkedSourceTaskRef(plannerNode);
+  const sourceTaskId = sourceTaskRef ? ctx.db.normalizeId("nodes", sourceTaskRef) : null;
   if (!sourceTaskId || isPlannerLinkedSourceTaskCompletionSynced(plannerNode)) {
     return false;
   }
