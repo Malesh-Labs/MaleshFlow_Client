@@ -237,6 +237,29 @@ export async function enqueueNodeEmbeddingRefresh(
   await ctx.scheduler.runAfter(0, internal.ai.generateEmbeddingForNode, { nodeId });
 }
 
+export async function enqueueContainingRootEmbeddingRefresh(
+  ctx: MutationCtx,
+  node: Pick<Doc<"nodes">, "_id" | "parentNodeId">,
+) {
+  let currentNode: Pick<Doc<"nodes">, "_id" | "parentNodeId"> | null = node;
+  const visited = new Set<string>();
+
+  while (currentNode.parentNodeId) {
+    const parentNodeId = currentNode.parentNodeId as string;
+    if (visited.has(parentNodeId)) {
+      return;
+    }
+    visited.add(parentNodeId);
+
+    currentNode = await ctx.db.get(currentNode.parentNodeId);
+    if (!currentNode) {
+      return;
+    }
+  }
+
+  await enqueueNodeEmbeddingRefresh(ctx, currentNode._id);
+}
+
 export async function enqueuePageRootEmbeddingRefresh(
   ctx: MutationCtx,
   pageId: Id<"pages">,

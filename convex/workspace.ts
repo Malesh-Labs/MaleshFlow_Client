@@ -18,6 +18,7 @@ import {
   collectNodeTree,
   computeNodePosition,
   deleteNodeTree,
+  enqueueContainingRootEmbeddingRefresh,
   enqueueNodeEmbeddingRefresh,
   enqueueNodeAiWork,
   enqueuePageRootEmbeddingRefresh,
@@ -1141,8 +1142,7 @@ async function archiveTaskPageSubtreeToDone(
 
   await deleteSidebarFavoritesForNodes(ctx.db, taskSubtree);
   await setNodeTreeArchivedState(ctx.db, taskRootNode._id, true, now);
-  await enqueuePageRootEmbeddingRefresh(ctx, taskRootNode.pageId);
-  await enqueuePageRootEmbeddingRefresh(ctx, donePage._id);
+  await enqueueContainingRootEmbeddingRefresh(ctx, taskRootNode);
 }
 
 async function deleteSidebarFavoritesForNodes(

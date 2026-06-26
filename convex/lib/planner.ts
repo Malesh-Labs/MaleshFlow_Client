@@ -5,6 +5,7 @@ import {
   collectNodeTree,
   computeAppendNodePosition,
   computeNodePosition,
+  enqueueContainingRootEmbeddingRefresh,
   enqueueNodeAiWork,
   enqueuePageRootEmbeddingRefresh,
   listPageNodes,
@@ -556,8 +557,7 @@ async function archivePlannerSubtreeToPastWeeks(
   });
 
   await setNodeTreeArchivedState(ctx.db, plannerRootNode._id, true, now);
-  await enqueuePageRootEmbeddingRefresh(ctx, plannerRootNode.pageId);
-  await enqueuePageRootEmbeddingRefresh(ctx, pastWeeksPage._id);
+  await enqueueContainingRootEmbeddingRefresh(ctx, plannerRootNode);
 }
 
 export async function clonePlannerSubtree(
