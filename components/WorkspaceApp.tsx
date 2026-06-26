@@ -862,6 +862,14 @@ function getPlannerSymbolGenerationErrorMessage(error: unknown) {
     : displayMessage;
 }
 
+function getNodeActionErrorMessage(error: unknown, fallbackMessage: string) {
+  const message =
+    error instanceof Error && error.message.trim()
+      ? error.message.trim()
+      : fallbackMessage;
+  return message.length > 260 ? `${message.slice(0, 257)}...` : message;
+}
+
 // Subscribes to cached planner symbol labels for the given candidate nodes and
 // fires generation for any that are missing, de-duplicating in-flight requests
 // by node + source text so the same item is never requested twice. Shared by
@@ -17977,6 +17985,7 @@ function OutlineNodeEditor({
   const [linkHighlightIndex, setLinkHighlightIndex] = useState(0);
   const [dropTarget, setDropTarget] = useState<NodeDropTarget | null>(null);
   const [isSymbolTextRevealed, setIsSymbolTextRevealed] = useState(false);
+  const [nodeActionError, setNodeActionError] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewMeasureRef = useRef<HTMLDivElement>(null);
   const draftRef = useRef(draft);
@@ -18714,6 +18723,19 @@ function OutlineNodeEditor({
     return true;
   };
 
+  const runNodeAction = async (
+    operation: () => Promise<unknown>,
+    fallbackMessage: string,
+  ) => {
+    setNodeActionError("");
+    try {
+      return await operation();
+    } catch (error) {
+      setNodeActionError(getNodeActionErrorMessage(error, fallbackMessage));
+      throw error;
+    }
+  };
+
   const handleMarkerClick = (event: ReactMouseEvent<HTMLButtonElement>) => {
     if (consumeMarkerLongPress()) {
       event.preventDefault();
@@ -18722,15 +18744,24 @@ function OutlineNodeEditor({
 
     if (node.kind === "task") {
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-        void handleToggleNodeKind().catch(() => undefined);
+        void runNodeAction(
+          handleToggleNodeKind,
+          "Could not update that item.",
+        ).catch(() => undefined);
         return;
       }
 
-      void handleToggleTask().catch(() => undefined);
+      void runNodeAction(
+        handleToggleTask,
+        "Could not complete that task.",
+      ).catch(() => undefined);
       return;
     }
 
-    void handleToggleNodeKind().catch(() => undefined);
+    void runNodeAction(
+      handleToggleNodeKind,
+      "Could not update that item.",
+    ).catch(() => undefined);
   };
 
   const handleMobileMoveUp = async () => {
@@ -20336,6 +20367,9 @@ function OutlineNodeEditor({
                 }}
                 onChange={(event) => {
                   onBeginTextEditing();
+                  if (nodeActionError) {
+                    setNodeActionError("");
+                  }
                   setDraft(event.target.value);
                   history.updateDraftValue(editorId, editorTarget, event.target.value);
                   setCaretPosition(event.target.selectionStart ?? event.target.value.length);
@@ -20347,7 +20381,10 @@ function OutlineNodeEditor({
                 }}
                 onBlur={() => {
                   setIsFocused(false);
-                  void handleSave().catch(() => undefined);
+                  void runNodeAction(
+                    handleSave,
+                    "Could not save changes.",
+                  ).catch(() => undefined);
                 }}
                 onSelect={(event) => {
                   setCaretPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length);
@@ -20559,6 +20596,14 @@ function OutlineNodeEditor({
                   </span>
                 ) : null}
               </div>
+            ) : null}
+            {nodeActionError ? (
+              <p
+                role="alert"
+                className="mt-2 text-xs leading-5 text-[var(--workspace-danger)]"
+              >
+                {nodeActionError}
+              </p>
             ) : null}
           </div>
           <div
