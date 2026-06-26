@@ -101,6 +101,7 @@ import {
 } from "../lib/domain/plannerSymbols";
 import {
   buildPlannerLinkedTaskCopyText,
+  findPlannerCompletionNodeForSourceTask,
   findExistingPlannerDayForSidebarSourceTask,
   getPlannerLinkedSourceTaskRef,
   listEligiblePlannerSidebarSourceTasksFromNodes,
@@ -1973,6 +1974,87 @@ test("planner linked recurring source completion can infer a single node-link so
       } as never,
     ),
     false,
+  );
+});
+
+test("planner source completion finds planned node-link copies", () => {
+  const plannerDate = dateInputValueToTimestamp("2026-05-14");
+  assert.ok(plannerDate);
+
+  const sourceTask = {
+    _id: "source-task",
+    pageId: "planner",
+    parentNodeId: "sidebar",
+    position: 1024,
+    text: "Recurring source",
+    kind: "task",
+    taskStatus: "todo",
+    priority: null,
+    dueAt: plannerDate,
+    dueEndAt: null,
+    archived: false,
+    sourceMeta: { recurrenceFrequency: "daily" },
+    createdAt: 1,
+    updatedAt: 1,
+  };
+  const plannedCopy = {
+    _id: "planned-copy",
+    pageId: "planner",
+    parentNodeId: "day",
+    position: 1024,
+    text: "[[source label|node:source-task]]",
+    kind: "task",
+    taskStatus: "todo",
+    priority: null,
+    dueAt: null,
+    dueEndAt: null,
+    archived: false,
+    sourceMeta: {},
+    createdAt: 1,
+    updatedAt: 1,
+  };
+
+  assert.equal(
+    findPlannerCompletionNodeForSourceTask(
+      [
+        {
+          _id: "sidebar",
+          pageId: "planner",
+          parentNodeId: null,
+          position: 1024,
+          text: "Sidebar",
+          kind: "note",
+          taskStatus: null,
+          priority: null,
+          dueAt: null,
+          dueEndAt: null,
+          archived: false,
+          sourceMeta: { sectionSlot: "plannerSidebar" },
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        sourceTask,
+        {
+          _id: "day",
+          pageId: "planner",
+          parentNodeId: null,
+          position: 2048,
+          text: "Thursday",
+          kind: "note",
+          taskStatus: null,
+          priority: null,
+          dueAt: null,
+          dueEndAt: null,
+          archived: false,
+          sourceMeta: { plannerKind: "plannerDay", plannerDate },
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        plannedCopy,
+      ] as never,
+      "source-task" as never,
+    )?._id,
+    "planned-copy",
   );
 });
 

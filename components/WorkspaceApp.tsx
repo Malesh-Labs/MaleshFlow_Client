@@ -683,6 +683,9 @@ type SplitNodeArgs = Parameters<ReturnType<typeof useMutation<typeof api.workspa
 type CompleteTaskPageTaskArgs = Parameters<
   ReturnType<typeof useMutation<typeof api.workspace.completeTaskPageTask>>
 >[0];
+type CompletePlannerSourceTaskArgs = Parameters<
+  ReturnType<typeof useMutation<typeof api.planner.completePlannerSourceTask>>
+>[0];
 type MoveNodeTreesToPageArgs = Parameters<
   ReturnType<typeof useMutation<typeof api.workspace.moveNodeTreesToPage>>
 >[0];
@@ -695,6 +698,11 @@ type InsertNodeAboveMutation = (args: InsertNodeAboveArgs) => Promise<{
 type MoveNodeMutation = (args: MoveNodeArgs) => Promise<unknown>;
 type SplitNodeMutation = (args: SplitNodeArgs) => Promise<unknown>;
 type CompleteTaskPageTaskMutation = (args: CompleteTaskPageTaskArgs) => Promise<unknown>;
+type CompletePlannerSourceTaskMutation = (
+  args: CompletePlannerSourceTaskArgs,
+) => Promise<{
+  completedPlannerNodeId: Id<"nodes"> | null;
+}>;
 type ReplaceNodeAndInsertSiblingsMutation = ReturnType<
   typeof useMutation<typeof api.workspace.replaceNodeAndInsertSiblings>
 >;
@@ -15919,6 +15927,7 @@ function OutlineNodeList({
   mobileIndentStep = OUTLINE_MOBILE_INDENT_STEP,
   showChildrenDepth = 0,
   showChildrenAncestorNodeIds = EMPTY_NODE_ID_SET,
+  plannerLinkedSourceCompletionPageId = null,
   plannerSymbolModeEnabled = false,
   plannerSymbolModePlannerPageId = null,
   plannerSymbolLabelsByNodeId = EMPTY_SYMBOL_LABELS_BY_NODE_ID,
@@ -15981,6 +15990,7 @@ function OutlineNodeList({
   mobileIndentStep?: number;
   showChildrenDepth?: number;
   showChildrenAncestorNodeIds?: Set<string>;
+  plannerLinkedSourceCompletionPageId?: Id<"pages"> | null;
 } & PlannerSymbolModeRenderProps) {
   return (
     <>
@@ -16075,6 +16085,7 @@ function OutlineNodeList({
           mobileIndentStep={mobileIndentStep}
           showChildrenDepth={showChildrenDepth}
           showChildrenAncestorNodeIds={showChildrenAncestorNodeIds}
+          plannerLinkedSourceCompletionPageId={plannerLinkedSourceCompletionPageId}
           plannerSymbolModeEnabled={plannerSymbolModeEnabled}
           plannerSymbolModePlannerPageId={plannerSymbolModePlannerPageId}
           plannerSymbolLabelsByNodeId={plannerSymbolLabelsByNodeId}
@@ -16512,6 +16523,7 @@ function LinkedNodeChildrenBlock({
         mobileIndentStep={mobileIndentStep}
         showChildrenDepth={showChildrenDepth + 1}
         showChildrenAncestorNodeIds={ancestorNodeIds}
+        plannerLinkedSourceCompletionPageId={plannerSymbolModePlannerPageId}
         plannerSymbolModeEnabled={plannerSymbolModeEnabled}
         plannerSymbolModePlannerPageId={plannerSymbolModePlannerPageId}
         plannerSymbolLabelsByNodeId={linkedSymbolLabelsByNodeId}
@@ -17877,6 +17889,7 @@ function OutlineNodeEditor({
   mobileIndentStep = OUTLINE_MOBILE_INDENT_STEP,
   showChildrenDepth = 0,
   showChildrenAncestorNodeIds = EMPTY_NODE_ID_SET,
+  plannerLinkedSourceCompletionPageId = null,
   plannerSymbolModeEnabled = false,
   plannerSymbolModePlannerPageId = null,
   plannerSymbolLabelsByNodeId = EMPTY_SYMBOL_LABELS_BY_NODE_ID,
@@ -17944,12 +17957,15 @@ function OutlineNodeEditor({
   mobileIndentStep?: number;
   showChildrenDepth?: number;
   showChildrenAncestorNodeIds?: Set<string>;
+  plannerLinkedSourceCompletionPageId?: Id<"pages"> | null;
 } & PlannerSymbolModeRenderProps) {
   const history = useWorkspaceHistory();
   const onZoomIntoNode = useContext(NodeZoomContext);
   const { openTaskSchedule, openNoteDate } = useContext(NodeScheduleActionContext);
   const isMobileLayout = useIsMobileLayout();
   const completePlannerTaskRaw = useMutation(api.planner.completePlannerTask);
+  const completePlannerSourceTask =
+    useMutation(api.planner.completePlannerSourceTask) as CompletePlannerSourceTaskMutation;
   const completePlannerTaskMutation = completePlannerTaskRaw.withOptimisticUpdate(
     (localStore, args) => {
       applyOptimisticPlannerTaskCompletion(localStore, args);
@@ -18970,6 +18986,24 @@ function OutlineNodeEditor({
     return result;
   };
 
+  const completePlannedSourceTaskIfAvailable = async () => {
+    if (!plannerLinkedSourceCompletionPageId) {
+      return false;
+    }
+
+    if (node.kind !== "task") {
+      return false;
+    }
+
+    const result = await completePlannerSourceTask({
+      ownerKey,
+      plannerPageId: plannerLinkedSourceCompletionPageId,
+      sourceTaskNodeId: node._id as Id<"nodes">,
+      completionMode: recurringCompletionMode,
+    });
+    return result.completedPlannerNodeId !== null;
+  };
+
   const handleToggleTask = async () => {
     if (node.kind !== "task" || isDisabled) {
       return;
@@ -18986,6 +19020,12 @@ function OutlineNodeEditor({
         plannerNodeId: node._id as Id<"nodes">,
         completionMode: recurringCompletionMode,
       });
+      history.resetTrackedValue(editorId, editorTarget, saveResult.parsed.text);
+      setDraft(saveResult.parsed.text);
+      return;
+    }
+
+    if (await completePlannedSourceTaskIfAvailable()) {
       history.resetTrackedValue(editorId, editorTarget, saveResult.parsed.text);
       setDraft(saveResult.parsed.text);
       return;
@@ -20782,6 +20822,7 @@ function OutlineNodeEditor({
               mobileIndentStep={mobileIndentStep}
               showChildrenDepth={showChildrenDepth}
               showChildrenAncestorNodeIds={showChildrenAncestorNodeIds}
+              plannerLinkedSourceCompletionPageId={plannerLinkedSourceCompletionPageId}
               plannerSymbolModeEnabled={plannerSymbolModeEnabled}
               plannerSymbolModePlannerPageId={plannerSymbolModePlannerPageId}
               plannerSymbolLabelsByNodeId={plannerSymbolLabelsByNodeId}

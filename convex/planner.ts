@@ -22,6 +22,7 @@ import {
   isPlannerPage,
   listEligiblePlannerSourceTasks,
   completePlannerLinkedTask,
+  completePlannerSourceTaskInstance,
   getNodeSourceMeta,
 } from "./lib/planner";
 import {
@@ -764,6 +765,23 @@ export const completePlannerTask = mutation({
     assertOwnerKey(args.ownerKey);
     await completePlannerLinkedTask(ctx, {
       plannerNodeId: args.plannerNodeId,
+      completionMode: args.completionMode,
+    });
+  },
+});
+
+export const completePlannerSourceTask = mutation({
+  args: {
+    ownerKey: v.string(),
+    plannerPageId: v.id("pages"),
+    sourceTaskNodeId: v.id("nodes"),
+    completionMode: v.union(v.literal("dueDate"), v.literal("today")),
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    return await completePlannerSourceTaskInstance(ctx, {
+      plannerPageId: args.plannerPageId,
+      sourceTaskNodeId: args.sourceTaskNodeId,
       completionMode: args.completionMode,
     });
   },

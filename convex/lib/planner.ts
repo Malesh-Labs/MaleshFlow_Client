@@ -353,6 +353,37 @@ function findPlannerLinkedCompletionRoot(
   return null;
 }
 
+export function findPlannerCompletionNodeForSourceTask(
+  nodes: Doc<"nodes">[],
+  sourceTaskNodeId: Id<"nodes">,
+) {
+  const sourceTaskNodeKey = sourceTaskNodeId as string;
+  const nodeMap = buildNodeMap(nodes);
+  const candidates = nodes
+    .filter((node) => {
+      if (node.archived || node._id === sourceTaskNodeId) {
+        return false;
+      }
+
+      if (getPlannerLinkedSourceTaskRef(node) !== sourceTaskNodeKey) {
+        return false;
+      }
+
+      return hasPlannerArchiveBoundaryAncestor(node, nodeMap);
+    })
+    .sort((left, right) => {
+      const leftCompleted = isPlannerNodeCompleted(left);
+      const rightCompleted = isPlannerNodeCompleted(right);
+      if (leftCompleted !== rightCompleted) {
+        return leftCompleted ? 1 : -1;
+      }
+
+      return left.position - right.position;
+    });
+
+  return candidates[0] ?? null;
+}
+
 async function syncPlannerLinkedSourceTaskCompletion(
   ctx: MutationCtx,
   plannerNodes: Doc<"nodes">[],
@@ -1202,6 +1233,45 @@ export async function completePlannerLinkedTask(
   }
 
   await archivePlannerSubtreeToPastWeeks(ctx, archivableRoot, args.completionMode, now);
+}
+
+export async function completePlannerSourceTaskInstance(
+  ctx: MutationCtx,
+  args: {
+    plannerPageId: Id<"pages">;
+    sourceTaskNodeId: Id<"nodes">;
+    completionMode: RecurringCompletionMode;
+  },
+) {
+  const plannerPage = await ctx.db.get(args.plannerPageId);
+  if (!plannerPage || plannerPage.archived || !isPlannerPage(plannerPage)) {
+    throw new Error("Planner page not found.");
+  }
+
+  const sourceTask = await ctx.db.get(args.sourceTaskNodeId);
+  if (!sourceTask || sourceTask.archived || sourceTask.kind !== "task") {
+    throw new Error("Source task not found.");
+  }
+
+  const plannerNodes = await listPageNodes(ctx.db, plannerPage._id);
+  const plannerNode = findPlannerCompletionNodeForSourceTask(
+    plannerNodes,
+    sourceTask._id,
+  );
+  if (!plannerNode) {
+    return {
+      completedPlannerNodeId: null as Id<"nodes"> | null,
+    };
+  }
+
+  await completePlannerLinkedTask(ctx, {
+    plannerNodeId: plannerNode._id,
+    completionMode: args.completionMode,
+  });
+
+  return {
+    completedPlannerNodeId: plannerNode._id as Id<"nodes"> | null,
+  };
 }
 
 export function buildPlannerChatPromptContext(args: {
