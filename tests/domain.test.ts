@@ -100,6 +100,7 @@ import {
   parsePurePlannerNodeReference,
 } from "../lib/domain/plannerSymbols";
 import {
+  buildPlannerLinkedSourceCompletionMeta,
   buildPlannerLinkedTaskCopyText,
   findPlannerCompletionNodeForSourceTask,
   findExistingPlannerDayForSidebarSourceTask,
@@ -1974,6 +1975,37 @@ test("planner linked recurring source completion can infer a single node-link so
       } as never,
     ),
     false,
+  );
+});
+
+test("planner linked recurring source completion promotes inferred links to linked metadata", () => {
+  const now = dateInputValueToTimestamp("2026-05-14");
+  assert.ok(now);
+
+  assert.deepEqual(
+    buildPlannerLinkedSourceCompletionMeta({
+      plannerNode: {
+        text: "[[node:source-task]]",
+        sourceMeta: {
+          customPlannerState: "keep",
+        },
+      } as never,
+      sourceTask: {
+        _id: "source-task",
+        pageId: "task-page",
+      } as never,
+      now,
+    }),
+    {
+      customPlannerState: "keep",
+      sourceType: "planner",
+      plannerKind: "plannerLinkedTask",
+      sourceTaskNodeId: "source-task",
+      sourceTaskPageId: "task-page",
+      taskKindLocked: true,
+      recurrenceFrequency: null,
+      sourceTaskCompletionSyncedAt: now,
+    },
   );
 });
 

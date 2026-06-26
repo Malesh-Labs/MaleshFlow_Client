@@ -184,6 +184,36 @@ export function shouldSyncPlannerLinkedRecurringSourceTaskCompletion(
   );
 }
 
+export function buildPlannerLinkedSourceCompletionMeta(args: {
+  plannerNode: Pick<Doc<"nodes">, "sourceMeta">;
+  sourceTask: Pick<Doc<"nodes">, "_id" | "pageId">;
+  now: number;
+}) {
+  const sourceMeta = getNodeSourceMeta(args.plannerNode);
+  return {
+    ...sourceMeta,
+    sourceType:
+      typeof sourceMeta.sourceType === "string" ? sourceMeta.sourceType : "planner",
+    plannerKind:
+      typeof sourceMeta.plannerKind === "string"
+        ? sourceMeta.plannerKind
+        : PLANNER_LINKED_TASK_META_KIND,
+    sourceTaskNodeId:
+      typeof sourceMeta.sourceTaskNodeId === "string" &&
+      sourceMeta.sourceTaskNodeId.length > 0
+        ? sourceMeta.sourceTaskNodeId
+        : args.sourceTask._id,
+    sourceTaskPageId:
+      typeof sourceMeta.sourceTaskPageId === "string" &&
+      sourceMeta.sourceTaskPageId.length > 0
+        ? sourceMeta.sourceTaskPageId
+        : args.sourceTask.pageId,
+    taskKindLocked: sourceMeta.taskKindLocked === false ? false : true,
+    recurrenceFrequency: null,
+    sourceTaskCompletionSyncedAt: args.now,
+  };
+}
+
 export function getPlannerDayRoots(nodes: Doc<"nodes">[]) {
   return nodes
     .filter((node) => node.parentNodeId === null && isPlannerDayNode(node))
@@ -342,7 +372,7 @@ function findPlannerLinkedCompletionRoot(
 ) {
   let currentNode: Doc<"nodes"> | null = startNode;
   while (currentNode) {
-    if (getPlannerLinkedSourceTaskId(currentNode)) {
+    if (getPlannerLinkedSourceTaskRef(currentNode)) {
       return currentNode;
     }
     currentNode = currentNode.parentNodeId
@@ -447,10 +477,11 @@ async function syncPlannerLinkedSourceTaskCompletion(
     }
 
     await ctx.db.patch(plannerNode._id, {
-      sourceMeta: {
-        ...getNodeSourceMeta(plannerNode),
-        sourceTaskCompletionSyncedAt: now,
-      },
+      sourceMeta: buildPlannerLinkedSourceCompletionMeta({
+        plannerNode,
+        sourceTask,
+        now,
+      }),
       updatedAt: now,
     });
     touchedPageIds.add(sourceTask.pageId as string);
