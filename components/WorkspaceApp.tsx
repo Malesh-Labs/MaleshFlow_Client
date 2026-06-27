@@ -9598,7 +9598,10 @@ function ConfiguredWorkspace({
         continue;
       }
 
-      if (isPlannerCompletionTask(node, workspaceNodeMap)) {
+      if (
+        isPlannerCompletionTask(node, workspaceNodeMap) &&
+        node.taskStatus !== "done"
+      ) {
         await completePlannerTask({
           ownerKey,
           plannerNodeId: node._id as Id<"nodes">,
@@ -19045,7 +19048,7 @@ function OutlineNodeEditor({
       return;
     }
 
-    if (isPlannerCompletionTask(node, nodeMap)) {
+    if (isPlannerCompletionTask(node, nodeMap) && node.taskStatus !== "done") {
       await completePlannerTaskMutation({
         ownerKey,
         plannerNodeId: node._id as Id<"nodes">,
@@ -19113,7 +19116,11 @@ function OutlineNodeEditor({
         recurrenceFrequency,
       }, node);
 
-    if (isPlannerCompletionItem(node, nodeMap) && !isNoteCompleted) {
+    if (
+      isPlannerCompletionItem(node, nodeMap) &&
+      !isNoteCompleted &&
+      node.taskStatus !== "done"
+    ) {
       await completePlannerTaskMutation({
         ownerKey,
         plannerNodeId: node._id as Id<"nodes">,
