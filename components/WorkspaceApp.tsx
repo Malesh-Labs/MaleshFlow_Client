@@ -390,6 +390,46 @@ type ActionPaletteResult = {
   disabled?: boolean;
   onSelect: () => void | Promise<void>;
 };
+const PINNED_ACTION_SYMBOL_BY_KEY: Record<string, string> = {
+  "new-models": "M",
+  "new-tasks": "✓",
+  "new-notes": "✎",
+  "new-views": "◫",
+  "new-templates": "▤",
+  "new-journal": "J",
+  "new-scratchpads": "S",
+  "new-planner": "◷",
+  "select-no-page": "◇",
+  "export-data-dump": "⇩",
+  "toggle-favorite": "★",
+  "toggle-page-data-dump": "◈",
+  "toggle-item-data-dump": "◆",
+  "toggle-children-link-autocomplete": "⌁",
+  "find-replace": "⇄",
+  "resolve-empty-links": "⟲",
+  "view-shortcuts": "⌘",
+  "collapse-all": "▾",
+  "move-selected": "↗",
+  "view-overdue-tasks": "!",
+  "task-schedule": "◴",
+  "note-date": "◌",
+  "import-text": "⇥",
+  "upload-legacy-files": "⇧",
+  "search-legacy": "⌕",
+  "copy-task-calendar-feed": "◫",
+  "search-archive": "◱",
+  "rebuild-embeddings": "⟳",
+  "reset-local-state": "⌫",
+  "lock-workspace": "⌧",
+};
+
+function getPinnedActionSymbol(action: Pick<ActionPaletteResult, "key" | "title">) {
+  return (
+    PINNED_ACTION_SYMBOL_BY_KEY[action.key] ??
+    Array.from(action.title.trim()).at(0)?.toUpperCase() ??
+    "•"
+  );
+}
 type DataDumpExportBundle = {
   files: Array<{
     path: string;
@@ -7790,7 +7830,7 @@ function ConfiguredWorkspace({
     clearNodeSelection();
   }, [clearNodeSelection]);
 
-  const actionResults = useMemo(() => {
+  const { actionResults, floatingPinnedActionResults } = useMemo(() => {
     const favoriteContextPage = favoriteTargetPage;
     const favoriteContextNode = favoriteTargetNode;
     const linkAutocompleteContextNode = favoriteTargetNode;
@@ -8054,6 +8094,7 @@ function ConfiguredWorkspace({
         actionLabel: "Open",
         onSelect: () => {
           switchPaletteMode("replace");
+          setPaletteOpen(true);
         },
       },
       {
@@ -8074,6 +8115,7 @@ function ConfiguredWorkspace({
         actionLabel: "Open",
         onSelect: () => {
           switchPaletteMode("resolveLinks");
+          setPaletteOpen(true);
         },
       },
       {
@@ -8122,6 +8164,7 @@ function ConfiguredWorkspace({
             count: moveTargetRootNodeIds.length,
           });
           switchPaletteMode("pages");
+          setPaletteOpen(true);
         },
       },
       {
@@ -8132,6 +8175,7 @@ function ConfiguredWorkspace({
         actionLabel: "Open",
         onSelect: () => {
           switchPaletteMode("overdueTasks");
+          setPaletteOpen(true);
         },
       },
       {
@@ -8183,6 +8227,7 @@ function ConfiguredWorkspace({
         actionLabel: "Open",
         onSelect: () => {
           switchPaletteMode("importer");
+          setPaletteOpen(true);
         },
       },
       {
@@ -8194,6 +8239,7 @@ function ConfiguredWorkspace({
         onSelect: () => {
           setLegacyPanelFileId(null);
           switchPaletteMode("legacyUpload");
+          setPaletteOpen(true);
         },
       },
       {
@@ -8205,6 +8251,7 @@ function ConfiguredWorkspace({
         onSelect: () => {
           setLegacyPanelFileId(null);
           switchPaletteMode("legacySearch");
+          setPaletteOpen(true);
         },
       },
       {
@@ -8240,6 +8287,7 @@ function ConfiguredWorkspace({
         actionLabel: "Open",
         onSelect: () => {
           switchPaletteMode("archive");
+          setPaletteOpen(true);
         },
       },
       {
@@ -8284,17 +8332,22 @@ function ConfiguredWorkspace({
             ),
           );
 
-    return matchingResults
-      .map((result, index) => ({ result, index }))
-      .sort((left, right) => {
-        const leftPinned = pinnedActionKeys.has(left.result.key);
-        const rightPinned = pinnedActionKeys.has(right.result.key);
-        if (leftPinned !== rightPinned) {
-          return leftPinned ? -1 : 1;
-        }
-        return left.index - right.index;
-      })
-      .map(({ result }) => result);
+    return {
+      actionResults: matchingResults
+        .map((result, index) => ({ result, index }))
+        .sort((left, right) => {
+          const leftPinned = pinnedActionKeys.has(left.result.key);
+          const rightPinned = pinnedActionKeys.has(right.result.key);
+          if (leftPinned !== rightPinned) {
+            return leftPinned ? -1 : 1;
+          }
+          return left.index - right.index;
+        })
+        .map(({ result }) => result),
+      floatingPinnedActionResults: results.filter((result) =>
+        pinnedActionKeys.has(result.key),
+      ),
+    };
   }, [
     collapseAllNodesOnSelectedPage,
     collapsiblePageNodeIds.length,
@@ -8751,6 +8804,14 @@ function ConfiguredWorkspace({
     workspaceAiMemoryDraftRef.current = value;
     setWorkspaceAiMemorySaveError("");
   }, []);
+
+  const closeWorkspaceChat = useCallback(() => {
+    if (isWorkspaceAiMemoryDirty) {
+      void saveWorkspaceAiMemoryDraft(workspaceAiMemoryDraftRef.current);
+    }
+    setIsWorkspaceChatOpen(false);
+    setWorkspaceChatError("");
+  }, [isWorkspaceAiMemoryDirty, saveWorkspaceAiMemoryDraft]);
 
   useEffect(() => {
     if (!isInboxOpen || !isInboxDirty || isInboxClearing) {
@@ -10002,6 +10063,36 @@ function ConfiguredWorkspace({
   }, [isWorkspaceChatOpen, isWorkspaceChatPinned]);
 
   useEffect(() => {
+    if (!isWorkspaceChatOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      const targetElement =
+        target instanceof Element ? target : target.parentElement;
+      if (
+        targetElement?.closest(
+          "[data-workspace-ai-chat-panel='true'], [data-workspace-ai-chat-toggle='true']",
+        )
+      ) {
+        return;
+      }
+
+      closeWorkspaceChat();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+    };
+  }, [closeWorkspaceChat, isWorkspaceChatOpen]);
+
+  useEffect(() => {
     if (!isInboxOpen) {
       return;
     }
@@ -10484,8 +10575,7 @@ function ConfiguredWorkspace({
 
         if (isWorkspaceChatOpen) {
           event.preventDefault();
-          setIsWorkspaceChatOpen(false);
-          setWorkspaceChatError("");
+          closeWorkspaceChat();
           return;
         }
 
@@ -10651,6 +10741,7 @@ function ConfiguredWorkspace({
     selectionAnchorNodeId,
     toggleWorkspaceChat,
     cyclePaletteMode,
+    closeWorkspaceChat,
     isShortcutsOpen,
     paletteOpen,
     isWorkspaceChatOpen,
@@ -11712,9 +11803,10 @@ function ConfiguredWorkspace({
             ) : null}
           </div>
         ) : null}
-        <div className="pointer-events-auto flex items-center gap-2 border border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface)_88%,transparent)] px-2 py-2 shadow-[0_18px_40px_-28px_rgba(0,0,0,0.5)] backdrop-blur-sm">
+        <div className="pointer-events-auto flex max-w-[calc(100vw-2rem)] flex-wrap items-center justify-end gap-2 border border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface)_88%,transparent)] px-2 py-2 shadow-[0_18px_40px_-28px_rgba(0,0,0,0.5)] backdrop-blur-sm">
           <button
             type="button"
+            data-workspace-ai-chat-toggle="true"
             onMouseDown={(event) => event.preventDefault()}
             onClick={toggleWorkspaceChat}
             title="AI chat"
@@ -11758,6 +11850,25 @@ function ConfiguredWorkspace({
           >
             🗃️
           </button>
+          {floatingPinnedActionResults.map((result) => (
+            <button
+              key={`floating-pinned-action-${result.key}`}
+              type="button"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                if (result.disabled) {
+                  return;
+                }
+                void result.onSelect();
+              }}
+              disabled={result.disabled}
+              title={result.title}
+              aria-label={result.title}
+              className="flex h-10 w-10 items-center justify-center border border-[var(--workspace-border)] text-lg text-[var(--workspace-text-muted)] transition hover:border-[var(--workspace-accent)] hover:text-[var(--workspace-text)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {getPinnedActionSymbol(result)}
+            </button>
+          ))}
           <button
             type="button"
             onMouseDown={(event) => event.preventDefault()}
@@ -11921,7 +12032,10 @@ function ConfiguredWorkspace({
       </div>
       {isWorkspaceChatOpen && !isWorkspaceChatPinned ? (
         <div className="mx-auto flex h-dvh max-h-dvh w-full max-w-6xl flex-col px-4 pb-[calc(env(safe-area-inset-bottom,0px)+7rem)] pt-24 sm:px-8 sm:pb-[calc(env(safe-area-inset-bottom,0px)+2rem)] sm:pt-28">
-          <div className="min-h-0 flex-1 overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]">
+          <div
+            data-workspace-ai-chat-panel="true"
+            className="min-h-0 flex-1 overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]"
+          >
             <WorkspaceAiChatPanel
               ownerKey={ownerKey}
               availableTags={sortedTags}
@@ -11940,12 +12054,7 @@ function ConfiguredWorkspace({
               onSaveMemory={() => void saveWorkspaceAiMemoryDraft(workspaceAiMemoryDraftRef.current)}
               applyingPlanMessageIds={applyingWorkspaceChatPlanMessageIds}
               onApplyPlan={handleApplyWorkspaceChatPlan}
-              onDismiss={() => {
-                if (isWorkspaceAiMemoryDirty) {
-                  void saveWorkspaceAiMemoryDraft(workspaceAiMemoryDraftRef.current);
-                }
-                setIsWorkspaceChatOpen(false);
-              }}
+              onDismiss={closeWorkspaceChat}
               isPinned={isWorkspaceChatPinned}
               onPinnedChange={setIsWorkspaceChatPinned}
               isMobileLayout={isMobileLayout}
@@ -14729,7 +14838,10 @@ function ConfiguredWorkspace({
       ) : null}
       {isWorkspaceChatOpen && isWorkspaceChatPinned ? (
         <div className="fixed inset-x-0 bottom-0 z-50 mx-auto flex h-[min(54dvh,28rem)] w-full max-w-6xl flex-col px-3 pb-[calc(env(safe-area-inset-bottom,0px)+0.75rem)] sm:h-[min(46dvh,26rem)] sm:px-6">
-          <div className="min-h-0 flex-1 overflow-hidden border border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface-muted)_96%,transparent)] shadow-[0_-24px_70px_-42px_rgba(0,0,0,0.65)] backdrop-blur-sm">
+          <div
+            data-workspace-ai-chat-panel="true"
+            className="min-h-0 flex-1 overflow-hidden border border-[var(--workspace-border)] bg-[color-mix(in_srgb,var(--workspace-surface-muted)_96%,transparent)] shadow-[0_-24px_70px_-42px_rgba(0,0,0,0.65)] backdrop-blur-sm"
+          >
             <WorkspaceAiChatPanel
               ownerKey={ownerKey}
               availableTags={sortedTags}
@@ -14748,12 +14860,7 @@ function ConfiguredWorkspace({
               onSaveMemory={() => void saveWorkspaceAiMemoryDraft(workspaceAiMemoryDraftRef.current)}
               applyingPlanMessageIds={applyingWorkspaceChatPlanMessageIds}
               onApplyPlan={handleApplyWorkspaceChatPlan}
-              onDismiss={() => {
-                if (isWorkspaceAiMemoryDirty) {
-                  void saveWorkspaceAiMemoryDraft(workspaceAiMemoryDraftRef.current);
-                }
-                setIsWorkspaceChatOpen(false);
-              }}
+              onDismiss={closeWorkspaceChat}
               isPinned={isWorkspaceChatPinned}
               onPinnedChange={setIsWorkspaceChatPinned}
               isMobileLayout={isMobileLayout}
