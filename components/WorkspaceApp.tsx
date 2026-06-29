@@ -9730,11 +9730,21 @@ function ConfiguredWorkspace({
     const orderedSelectedNodeIds = visibleNodeOrder.filter((nodeId) =>
       selectedNodeIds.has(nodeId),
     );
-    const selectedRootNodeIds = orderedSelectedNodeIds.filter((nodeId) => {
+    const deletableSelectedNodeIds = orderedSelectedNodeIds.filter((nodeId) => {
+      const node = workspaceNodeMap.get(nodeId) ?? null;
+      if (!node || isNodeLocked(node)) {
+        return false;
+      }
+
+      const page = pagesById.get(node.pageId as string);
+      return !page?.archived;
+    });
+    const deletableSelectedNodeIdSet = new Set(deletableSelectedNodeIds);
+    const selectedRootNodeIds = deletableSelectedNodeIds.filter((nodeId) => {
       let currentNode = workspaceNodeMap.get(nodeId) ?? null;
       while (currentNode?.parentNodeId) {
         const parentNodeId = currentNode.parentNodeId as string;
-        if (selectedNodeIds.has(parentNodeId)) {
+        if (deletableSelectedNodeIdSet.has(parentNodeId)) {
           return false;
         }
         currentNode = workspaceNodeMap.get(parentNodeId) ?? null;
@@ -9745,18 +9755,7 @@ function ConfiguredWorkspace({
 
     const deletableNodes = selectedRootNodeIds
       .map((nodeId) => workspaceNodeMap.get(nodeId) ?? null)
-      .filter((node): node is Doc<"nodes"> => {
-        if (!node) {
-          return false;
-        }
-
-        if (isNodeLocked(node)) {
-          return false;
-        }
-
-        const page = pagesById.get(node.pageId as string);
-        return !page?.archived;
-      });
+      .filter((node): node is Doc<"nodes"> => node !== null);
 
     if (deletableNodes.length === 0) {
       setCopySnackbarMessage("Could not delete the selected item. It may be locked or read-only.");
