@@ -9746,6 +9746,7 @@ function ConfiguredWorkspace({
       });
 
     if (deletableNodes.length === 0) {
+      setCopySnackbarMessage("Could not delete the selected item. It may be locked or read-only.");
       return;
     }
 
@@ -9787,7 +9788,14 @@ function ConfiguredWorkspace({
       });
     }
 
-    await executeNodeArchiveBatch(nodeIdsToArchive, true);
+    try {
+      await executeNodeArchiveBatch(nodeIdsToArchive, true);
+    } catch (error) {
+      setCopySnackbarMessage(
+        getNodeActionErrorMessage(error, "Could not delete the selected item."),
+      );
+      return;
+    }
 
     clearNodeSelection();
 
@@ -9814,6 +9822,7 @@ function ConfiguredWorkspace({
     pagesById,
     selectedNodeIds,
     selectionTrees,
+    setCopySnackbarMessage,
     sidebarNodes,
     visibleNodeOrder,
     workspacePageForests,
@@ -20400,7 +20409,11 @@ function OutlineNodeEditor({
                   void handlePaste(event).catch(() => undefined);
                 }}
                 onKeyDown={(event) => {
-                  void handleKeyDown(event).catch(() => undefined);
+                  void handleKeyDown(event).catch((error) => {
+                    setNodeActionError(
+                      getNodeActionErrorMessage(error, "Could not update that item."),
+                    );
+                  });
                 }}
                 placeholder="Write a line…"
                 disabled={isDisabled}
