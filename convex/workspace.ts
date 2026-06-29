@@ -106,8 +106,11 @@ const MAX_PAGE_TREE_NODE_TEXT_CHARS = 500_000;
 const MAX_PAGE_TREE_BACKLINKS = 1200;
 const MAX_MULTI_PAGE_VIEW_PAGES = 8;
 const MAX_MULTI_PAGE_VIEW_NODE_SECTIONS = 16;
-const MAX_MULTI_PAGE_VIEW_NODES = 5000;
-const MAX_MULTI_PAGE_VIEW_TEXT_CHARS = 1_000_000;
+const MAX_MULTI_PAGE_VIEW_CONFIG_ROOTS = 200;
+const MAX_MULTI_PAGE_VIEW_INCLUDE_ROWS = 80;
+const MAX_MULTI_PAGE_VIEW_NODES = 1200;
+const MAX_MULTI_PAGE_VIEW_TEXT_CHARS = 250_000;
+const MAX_MULTI_PAGE_VIEW_NODE_TREE_NODES = 300;
 const MAX_NODE_LINK_CHILD_TREE_NODES = 500;
 const MAX_NODE_LINK_CHILD_TREE_TEXT_CHARS = 100_000;
 const MAX_NODE_AI_ANCESTOR_DEPTH = 40;
@@ -2980,13 +2983,19 @@ export const getMultiPageView = query({
       return null;
     }
 
-    const nodesResult = await listPageNodesForTree(ctx, page._id);
-    const nodes = nodesResult.nodes;
+    const rootNodes = await ctx.db
+      .query("nodes")
+      .withIndex("by_page_parent_position", (query) =>
+        query.eq("pageId", page._id).eq("parentNodeId", null),
+      )
+      .take(MAX_MULTI_PAGE_VIEW_CONFIG_ROOTS + 1);
     const includedPagesSection =
-      nodes
-        .filter((node) => node.parentNodeId === null)
-        .find((node) => getNodeSourceMeta(node).sectionSlot === MULTI_PAGE_INCLUDED_PAGES_SLOT) ??
-      null;
+      rootNodes.find(
+        (node) =>
+          !node.archived &&
+          getNodeSourceMeta(node).sectionSlot === MULTI_PAGE_INCLUDED_PAGES_SLOT,
+      ) ?? null;
+    const reachedConfigRootLimit = rootNodes.length > MAX_MULTI_PAGE_VIEW_CONFIG_ROOTS;
 
     if (!includedPagesSection) {
       return {
@@ -2994,13 +3003,23 @@ export const getMultiPageView = query({
         includedNodes: [],
         includedItems: [],
         skippedRows: [],
-        loadWarning: `Add the ${MULTI_PAGE_INCLUDED_PAGES_TITLE} section to configure this view.`,
+        loadWarning: reachedConfigRootLimit
+          ? `Could not find the ${MULTI_PAGE_INCLUDED_PAGES_TITLE} section in the first ${MAX_MULTI_PAGE_VIEW_CONFIG_ROOTS} top-level items.`
+          : `Add the ${MULTI_PAGE_INCLUDED_PAGES_TITLE} section to configure this view.`,
       };
     }
 
-    const includeRows = nodes
-      .filter((node) => node.parentNodeId === includedPagesSection._id && !node.archived)
-      .sort((left, right) => left.position - right.position);
+    const fetchedIncludeRows = await ctx.db
+      .query("nodes")
+      .withIndex("by_page_parent_position", (query) =>
+        query.eq("pageId", page._id).eq("parentNodeId", includedPagesSection._id),
+      )
+      .take(MAX_MULTI_PAGE_VIEW_INCLUDE_ROWS + 1);
+    const includeRows = fetchedIncludeRows
+      .slice(0, MAX_MULTI_PAGE_VIEW_INCLUDE_ROWS)
+      .filter((node) => !node.archived);
+    const reachedIncludeRowLimit =
+      fetchedIncludeRows.length > MAX_MULTI_PAGE_VIEW_INCLUDE_ROWS;
     const includedPages: Array<{
       configNodeId: Id<"nodes">;
       pageTree: Awaited<ReturnType<typeof buildPageTreeResult>>;
@@ -3034,6 +3053,15 @@ export const getMultiPageView = query({
     let reachedNodeLimit = false;
 
     for (const row of includeRows) {
+      if (remainingNodes === 0 || remainingTextChars === 0) {
+        skippedRows.push({
+          configNodeId: row._id,
+          text: row.text,
+          reason: "This multi-page view hit its load limit before this row could be loaded.",
+        });
+        continue;
+      }
+
       if (getFirstMultiPageIncludedPageLink(row.text)) {
         if (includedPages.length >= MAX_MULTI_PAGE_VIEW_PAGES) {
           reachedPageLimit = true;
@@ -3080,6 +3108,7 @@ export const getMultiPageView = query({
         const pageTree = await buildPageTreeResult(ctx, includedPage, {
           maxNodes: remainingNodes,
           maxTextChars: remainingTextChars,
+          includeBacklinkMetadata: false,
         });
         const includedPageEntry = {
           configNodeId: row._id,
@@ -3144,8 +3173,9 @@ export const getMultiPageView = query({
         }
 
         const nodeTree = await buildNodeTreeResult(ctx, includedNode, sourcePage, {
-          maxNodes: remainingNodes,
+          maxNodes: Math.min(remainingNodes, MAX_MULTI_PAGE_VIEW_NODE_TREE_NODES),
           maxTextChars: remainingTextChars,
+          includeBacklinkMetadata: false,
         });
         const includedNodeEntry = {
           configNodeId: row._id,
@@ -3173,6 +3203,12 @@ export const getMultiPageView = query({
     }
 
     const warningParts = [
+      reachedConfigRootLimit
+        ? `Only the first ${MAX_MULTI_PAGE_VIEW_CONFIG_ROOTS} top-level view items were checked.`
+        : "",
+      reachedIncludeRowLimit
+        ? `Only the first ${MAX_MULTI_PAGE_VIEW_INCLUDE_ROWS} included rows were checked.`
+        : "",
       reachedPageLimit ? `Only the first ${MAX_MULTI_PAGE_VIEW_PAGES} pages are shown.` : "",
       reachedNodeLimit
         ? `Only the first ${MAX_MULTI_PAGE_VIEW_NODE_SECTIONS} nodes are shown.`
@@ -4127,9 +4163,11 @@ async function buildPageTreeResult(
   options: {
     maxNodes?: number;
     maxTextChars?: number;
+    includeBacklinkMetadata?: boolean;
   } = {},
 ) {
   const warnings: string[] = [];
+  const includeBacklinkMetadata = options.includeBacklinkMetadata ?? true;
 
   let nodes: Doc<"nodes">[] = [];
   let nodesTruncated = false;
@@ -4162,7 +4200,7 @@ async function buildPageTreeResult(
 
   let visibleBacklinks: Doc<"links">[] = [];
   let backlinksTruncated = false;
-  if (!page.archived && !nodesTruncated) {
+  if (includeBacklinkMetadata && !page.archived && !nodesTruncated) {
     try {
       const backlinkResult = await listPageBacklinksForTree(ctx, page._id);
       backlinksTruncated = backlinkResult.truncated;
@@ -4182,7 +4220,7 @@ async function buildPageTreeResult(
   }
 
   let nodeBacklinkCounts: Record<string, number> = {};
-  if (!page.archived && nodes.length > 0 && !nodesTruncated) {
+  if (includeBacklinkMetadata && !page.archived && nodes.length > 0 && !nodesTruncated) {
     try {
       nodeBacklinkCounts = mergeNodeBacklinkCounts(
         buildLocalNodeBacklinkCounts(nodes),
@@ -4281,9 +4319,11 @@ async function buildNodeTreeResult(
   options: {
     maxNodes?: number;
     maxTextChars?: number;
+    includeBacklinkMetadata?: boolean;
   } = {},
 ) {
   const warnings: string[] = [];
+  const includeBacklinkMetadata = options.includeBacklinkMetadata ?? true;
   const result = await collectNodeTreeForTreeWithCaps(
     ctx,
     rootNode,
@@ -4298,7 +4338,7 @@ async function buildNodeTreeResult(
   }
 
   let nodeBacklinkCounts: Record<string, number> = {};
-  if (nodes.length > 0 && !result.truncated) {
+  if (includeBacklinkMetadata && nodes.length > 0 && !result.truncated) {
     try {
       nodeBacklinkCounts = mergeNodeBacklinkCounts(
         buildLocalNodeBacklinkCounts(nodes),
