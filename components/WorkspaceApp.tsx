@@ -1612,6 +1612,19 @@ function getNodeMeta(node: { sourceMeta?: unknown } | null | undefined) {
   return node.sourceMeta as Record<string, unknown>;
 }
 
+function isNodeLocked(node: { sourceMeta?: unknown } | null | undefined) {
+  const sourceMeta = getNodeMeta(node);
+  if (sourceMeta.locked !== true) {
+    return false;
+  }
+
+  return (
+    typeof sourceMeta.sectionSlot === "string" ||
+    typeof sourceMeta.plannerTemplateWeekday === "string" ||
+    sourceMeta.plannerKind === "plannerDay"
+  );
+}
+
 function isPlannerDayTitleNode(node: { sourceMeta?: unknown } | null | undefined) {
   const sourceMeta = getNodeMeta(node);
   return (
@@ -5544,7 +5557,7 @@ function ConfiguredWorkspace({
       directSchedulePaletteNode?._id === paletteContextNodeId
         ? directSchedulePaletteNode
         : workspaceNodeMap.get(paletteContextNodeId) ?? null;
-    if (!node || node.kind !== "task" || getNodeMeta(node).locked === true) {
+    if (!node || node.kind !== "task" || isNodeLocked(node)) {
       return null;
     }
 
@@ -5564,7 +5577,7 @@ function ConfiguredWorkspace({
       directSchedulePaletteNode?._id === paletteContextNodeId
         ? directSchedulePaletteNode
         : workspaceNodeMap.get(paletteContextNodeId) ?? null;
-    if (!node || node.kind !== "note" || getNodeMeta(node).locked === true) {
+    if (!node || node.kind !== "note" || isNodeLocked(node)) {
       return null;
     }
 
@@ -8838,7 +8851,7 @@ function ConfiguredWorkspace({
           return false;
         }
 
-        if (getNodeMeta(selectedNode).locked === true) {
+        if (isNodeLocked(selectedNode)) {
           return false;
         }
 
@@ -8876,7 +8889,7 @@ function ConfiguredWorkspace({
             return false;
           }
 
-          if (getNodeMeta(context.node).locked === true) {
+          if (isNodeLocked(context.node)) {
             return false;
           }
 
@@ -8980,7 +8993,7 @@ function ConfiguredWorkspace({
 
     const targetNode = [...pageVisibleRows]
       .reverse()
-      .find((node) => getNodeMeta(node).locked !== true);
+      .find((node) => !isNodeLocked(node));
 
     if (!targetNode) {
       return;
@@ -9018,7 +9031,7 @@ function ConfiguredWorkspace({
           ): context is NonNullable<ReturnType<typeof findNodeContext>> => context !== null,
         )
         .filter((context) => {
-          if (getNodeMeta(context.node).locked === true) {
+          if (isNodeLocked(context.node)) {
             return false;
           }
 
@@ -9202,7 +9215,7 @@ function ConfiguredWorkspace({
           ): context is NonNullable<ReturnType<typeof findNodeContext>> => context !== null,
         )
         .filter((context) => {
-          if (getNodeMeta(context.node).locked === true) {
+          if (isNodeLocked(context.node)) {
             return false;
           }
 
@@ -9407,7 +9420,7 @@ function ConfiguredWorkspace({
 
     for (const nodeId of orderedSelectedNodeIds) {
       const node = workspaceNodeMap.get(nodeId);
-      if (!node || getNodeMeta(node).locked === true) {
+      if (!node || isNodeLocked(node)) {
         continue;
       }
 
@@ -9500,7 +9513,7 @@ function ConfiguredWorkspace({
 
     for (const nodeId of orderedSelectedNodeIds) {
       const node = workspaceNodeMap.get(nodeId);
-      if (!node || getNodeMeta(node).locked === true) {
+      if (!node || isNodeLocked(node)) {
         continue;
       }
 
@@ -9589,7 +9602,7 @@ function ConfiguredWorkspace({
 
     for (const nodeId of orderedSelectedNodeIds) {
       const node = workspaceNodeMap.get(nodeId);
-      if (!node || getNodeMeta(node).locked === true) {
+      if (!node || isNodeLocked(node)) {
         continue;
       }
 
@@ -9737,7 +9750,7 @@ function ConfiguredWorkspace({
           return false;
         }
 
-        if (getNodeMeta(node).locked === true) {
+        if (isNodeLocked(node)) {
           return false;
         }
 
@@ -16366,7 +16379,7 @@ function LinkedNodeChildrenBlock({
         const selectedNode = nodeMap.get(selectedRootNodeId);
         return (
           selectedNode?.pageId === pageId &&
-          getNodeMeta(selectedNode).locked !== true &&
+          !isNodeLocked(selectedNode) &&
           !isSourcePageReadOnly
         );
       });
@@ -16404,7 +16417,7 @@ function LinkedNodeChildrenBlock({
         .filter(
           (context) =>
             context.pageId === sourcePageId &&
-            getNodeMeta(context.node).locked !== true &&
+            !isNodeLocked(context.node) &&
             !isSourcePageReadOnly,
         );
 
@@ -18014,7 +18027,7 @@ function OutlineNodeEditor({
   const isExcludedFromDataDump = nodeMeta.excludeFromDataDump === true;
   const isCompleted = isTaskCompleted || isNoteCompleted;
   const isDimmedByCompletedAncestor = hasCompletedAncestorNode(node, nodeMap);
-  const isLocked = nodeMeta.locked === true;
+  const isLocked = isNodeLocked(node);
   const sectionSlot =
     typeof nodeMeta.sectionSlot === "string" ? nodeMeta.sectionSlot : null;
   const isPlannerTemplateWeekdayRoot =
@@ -19769,7 +19782,7 @@ function OutlineNodeEditor({
       !isDisabled &&
       previousSibling &&
       node.children.length === 0 &&
-      getNodeMeta(previousSibling).locked !== true
+      !isNodeLocked(previousSibling)
     ) {
       event.preventDefault();
       const previousEditorId = getNodeEditorId(previousSibling._id as Id<"nodes">);
