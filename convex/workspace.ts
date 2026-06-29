@@ -5908,7 +5908,7 @@ export const reorderNode = mutation({
       updatedAt: getTimestamp(),
     });
 
-    await enqueuePageRootEmbeddingRefresh(ctx, node.pageId);
+    await enqueueContainingRootEmbeddingRefresh(ctx, node);
   },
 });
 
@@ -6047,7 +6047,7 @@ export const setNodeTreeArchived = mutation({
       }
     }
 
-    await enqueuePageRootEmbeddingRefresh(ctx, node.pageId);
+    await enqueueContainingRootEmbeddingRefresh(ctx, node);
   },
 });
 
@@ -6063,8 +6063,6 @@ export const setNodeTreesArchivedBatch = mutation({
       return null;
     }
 
-    const touchedPageIds = new Set<Id<"pages">>();
-
     for (const nodeId of args.nodeIds) {
       const node = await ctx.db.get(nodeId);
       if (!node) {
@@ -6078,7 +6076,7 @@ export const setNodeTreesArchivedBatch = mutation({
         getTimestamp(),
       );
 
-      touchedPageIds.add(node.pageId);
+      await enqueueContainingRootEmbeddingRefresh(ctx, node);
 
       if (!args.archived) {
         for (const descendant of descendants) {
@@ -6089,10 +6087,6 @@ export const setNodeTreesArchivedBatch = mutation({
           await enqueueNodeAiWork(ctx, descendant._id);
         }
       }
-    }
-
-    for (const pageId of touchedPageIds) {
-      await enqueuePageRootEmbeddingRefresh(ctx, pageId);
     }
 
     return null;
