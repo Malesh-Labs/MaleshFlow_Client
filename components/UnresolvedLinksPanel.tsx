@@ -7,7 +7,10 @@ import { api } from "@/convex/_generated/api";
 import type { Doc, Id } from "@/convex/_generated/dataModel";
 import { stripNodeDisplaySyntaxMarkers } from "@/lib/domain/displaySyntax";
 import { stripInlineFormattingMarkers } from "@/lib/domain/inlineFormatting";
-import { replaceLinkMarkupWithLabels } from "@/lib/domain/links";
+import {
+  buildWikiLinkReplacementMarkup,
+  replaceLinkMarkupWithLabels,
+} from "@/lib/domain/links";
 
 const SKIP = "skip" as const;
 
@@ -99,6 +102,26 @@ function getTargetDisplayText(target: SelectedLinkTarget) {
     : getNodeDisplayText(target.node);
 }
 
+function compareTargetOptions(left: SelectedLinkTarget, right: SelectedLinkTarget) {
+  const leftText = getTargetDisplayText(left);
+  const rightText = getTargetDisplayText(right);
+  const lengthDelta = leftText.length - rightText.length;
+  if (lengthDelta !== 0) {
+    return lengthDelta;
+  }
+
+  const labelDelta = leftText.localeCompare(rightText);
+  if (labelDelta !== 0) {
+    return labelDelta;
+  }
+
+  if (left.kind !== right.kind) {
+    return left.kind.localeCompare(right.kind);
+  }
+
+  return getTargetKey(left).localeCompare(getTargetKey(right));
+}
+
 function getTargetSubtitle(target: SelectedLinkTarget) {
   if (target.kind === "page") {
     return "Page";
@@ -111,20 +134,37 @@ function getTargetSubtitle(target: SelectedLinkTarget) {
   ].filter((value) => value.length > 0).join(" · ");
 }
 
-function sanitizeReplacementLabel(value: string) {
-  return value
-    .replace(/\|/g, "/")
-    .replace(/\]\]/g, "] ]")
-    .trim();
+function buildReplacementMarkup(label: string, target: SelectedLinkTarget) {
+  return target.kind === "page"
+    ? buildWikiLinkReplacementMarkup(label, {
+        kind: "page",
+        ref: target.page._id as string,
+      })
+    : buildWikiLinkReplacementMarkup(label, {
+        kind: "node",
+        ref: target.node._id as string,
+        displayText: getTargetDisplayText(target),
+      });
 }
 
-function buildReplacementMarkup(label: string, target: SelectedLinkTarget) {
-  const safeLabel =
-    sanitizeReplacementLabel(label) ||
-    (target.kind === "page" ? "Linked page" : "Linked node");
-  return target.kind === "page"
-    ? `[[${safeLabel}|page:${target.page._id}]]`
-    : `[[${safeLabel}|node:${target.node._id}]]`;
+function getEffectiveReplacementTarget(
+  selectedTarget: SelectedLinkTarget,
+  useParentTarget: boolean,
+): SelectedLinkTarget {
+  if (
+    selectedTarget.kind !== "node" ||
+    !useParentTarget ||
+    selectedTarget.parentNode === null
+  ) {
+    return selectedTarget;
+  }
+
+  return {
+    kind: "node",
+    node: selectedTarget.parentNode,
+    page: selectedTarget.page,
+    parentNode: null,
+  };
 }
 
 export function UnresolvedLinksPanel({
@@ -135,6 +175,7 @@ export function UnresolvedLinksPanel({
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [selectedTarget, setSelectedTarget] = useState<SelectedLinkTarget | null>(null);
+  const [useParentTarget, setUseParentTarget] = useState(false);
   const [error, setError] = useState("");
   const [isApplying, setIsApplying] = useState(false);
   const [applyProgress, setApplyProgress] = useState<ApplyProgress | null>(null);
@@ -184,6 +225,7 @@ export function UnresolvedLinksPanel({
     lastActiveGroupKeyRef.current = activeGroupKey;
     setSearchQuery(activeGroup?.title ?? "");
     setSelectedTarget(null);
+    setUseParentTarget(false);
     setError("");
     setApplyProgress(null);
   }, [activeGroup]);
@@ -194,12 +236,12 @@ export function UnresolvedLinksPanel({
       ? {
           ownerKey,
           query: debouncedSearchQuery,
-          limit: 12,
+          limit: 24,
         }
       : SKIP,
   ) as LinkTargetSearchResults | undefined;
   const targetOptions = useMemo(
-    () => [
+    () => ([
       ...(targetResults?.pages ?? []).map(
         (page): SelectedLinkTarget => ({
           kind: "page",
@@ -216,9 +258,14 @@ export function UnresolvedLinksPanel({
             parentNode: entry.parentNode ?? null,
           }),
         ),
-    ],
+    ]).sort(compareTargetOptions),
     [targetResults],
   );
+  const canUseParentTarget =
+    selectedTarget?.kind === "node" && selectedTarget.parentNode !== null;
+  const effectiveTarget = selectedTarget
+    ? getEffectiveReplacementTarget(selectedTarget, useParentTarget && canUseParentTarget)
+    : null;
 
   const summary = useMemo(() => {
     if (typeof groupsResult === "undefined") {
@@ -237,13 +284,19 @@ export function UnresolvedLinksPanel({
   }, [groups, groupsResult]);
 
   const handleApply = useCallback(async () => {
-    if (!activeGroup || !selectedTarget || isApplying) {
+    if (!activeGroup || !selectedTarget || !effectiveTarget || isApplying) {
       return;
     }
 
-    const targetText = getTargetDisplayText(selectedTarget);
-    const replacementMarkup = buildReplacementMarkup(activeGroup.title, selectedTarget);
-    const confirmation = `Replace every unresolved [[${activeGroup.title}]] with ${replacementMarkup} pointing to ${selectedTarget.kind} "${targetText}"?`;
+    const targetText = getTargetDisplayText(effectiveTarget);
+    const replacementMarkup = buildReplacementMarkup(activeGroup.title, effectiveTarget);
+    const targetKindLabel =
+      effectiveTarget.kind === "page"
+        ? "page"
+        : effectiveTarget !== selectedTarget
+          ? "parent item"
+          : "item";
+    const confirmation = `Replace every unresolved [[${activeGroup.title}]] with ${replacementMarkup} pointing to ${targetKindLabel} "${targetText}"?`;
     if (!window.confirm(confirmation)) {
       return;
     }
@@ -261,14 +314,14 @@ export function UnresolvedLinksPanel({
           ownerKey,
           normalizedTitle: activeGroup.normalizedTitle,
           target:
-            selectedTarget.kind === "page"
+            effectiveTarget.kind === "page"
               ? {
                   kind: "page",
-                  pageId: selectedTarget.page._id as Id<"pages">,
+                  pageId: effectiveTarget.page._id as Id<"pages">,
                 }
               : {
                   kind: "node",
-                  nodeId: selectedTarget.node._id as Id<"nodes">,
+                  nodeId: effectiveTarget.node._id as Id<"nodes">,
                 },
           batchSize: 40,
         });
@@ -291,6 +344,7 @@ export function UnresolvedLinksPanel({
           : "No empty links needed replacing",
       );
       setSelectedTarget(null);
+      setUseParentTarget(false);
     } catch (applyError) {
       setError(
         applyError instanceof Error
@@ -302,6 +356,7 @@ export function UnresolvedLinksPanel({
     }
   }, [
     activeGroup,
+    effectiveTarget,
     isApplying,
     onApplied,
     ownerKey,
@@ -409,6 +464,7 @@ export function UnresolvedLinksPanel({
                   onChange={(event) => {
                     setSearchQuery(event.target.value);
                     setSelectedTarget(null);
+                    setUseParentTarget(false);
                   }}
                   placeholder="Search pages, notes, and tasks…"
                   className="w-full border border-[var(--workspace-border)] bg-[var(--workspace-sidebar-bg)] px-3 py-2 text-sm outline-none transition focus:border-[var(--workspace-accent)]"
@@ -437,7 +493,10 @@ export function UnresolvedLinksPanel({
                       <button
                         key={getTargetKey(result)}
                         type="button"
-                        onClick={() => setSelectedTarget(result)}
+                        onClick={() => {
+                          setSelectedTarget(result);
+                          setUseParentTarget(false);
+                        }}
                         className={clsx(
                           "block w-full border px-4 py-3 text-left transition",
                           isSelected
@@ -490,14 +549,19 @@ export function UnresolvedLinksPanel({
                 </div>
               ) : null}
 
-              {selectedTarget ? (
+              {effectiveTarget ? (
                 <div className="border border-[var(--workspace-border-subtle)] bg-[var(--workspace-sidebar-bg)] px-4 py-3">
                   <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-text-faint)]">
                     Replacement
                   </p>
                   <p className="mt-2 text-sm leading-6 text-[var(--workspace-text)] [overflow-wrap:anywhere]">
-                    {buildReplacementMarkup(activeGroup.title, selectedTarget)}
+                    {buildReplacementMarkup(activeGroup.title, effectiveTarget)}
                   </p>
+                  {effectiveTarget !== selectedTarget ? (
+                    <p className="mt-2 text-xs leading-5 text-[var(--workspace-text-subtle)]">
+                      Targeting parent: {getTargetDisplayText(effectiveTarget)}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
 
@@ -510,7 +574,21 @@ export function UnresolvedLinksPanel({
                 <p className="text-sm text-[var(--workspace-danger)]">{error}</p>
               ) : null}
 
-              <div className="flex justify-end">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                {canUseParentTarget ? (
+                  <label className="flex items-center gap-2 text-xs text-[var(--workspace-text-subtle)]">
+                    <input
+                      type="checkbox"
+                      checked={useParentTarget}
+                      disabled={isApplying}
+                      onChange={(event) => setUseParentTarget(event.target.checked)}
+                      className="h-4 w-4 accent-[var(--workspace-accent)]"
+                    />
+                    <span>Use selected item’s parent</span>
+                  </label>
+                ) : (
+                  <span />
+                )}
                 <button
                   type="button"
                   onClick={() => {

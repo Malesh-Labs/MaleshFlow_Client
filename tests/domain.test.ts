@@ -1116,6 +1116,38 @@ test("rewritePlainPageWikiLinksToNode converts only matching plain page wiki lin
   });
 });
 
+test("rewritePlainPageWikiLinksToNode compacts matching labels to bare node ids", () => {
+  const text =
+    "See [[test]], [[Test]], [[test thing]], [[Other]], and [[Label|node:node_123]].";
+
+  const rewritten = rewritePlainPageWikiLinksToNode(
+    text,
+    (link) => ["test", "test thing"].includes(link.targetPageTitle?.toLowerCase() ?? ""),
+    "node_456",
+    " test   thing ",
+  );
+
+  assert.deepEqual(rewritten, {
+    value:
+      "See [[test|node:node_456]], [[Test|node:node_456]], [[node_456]], [[Other]], and [[Label|node:node_123]].",
+    occurrenceCount: 3,
+  });
+});
+
+test("rewritePlainPageWikiLinksToNode compacts case-insensitive exact label matches", () => {
+  const rewritten = rewritePlainPageWikiLinksToNode(
+    "See [[Test]].",
+    (link) => link.targetPageTitle?.toLowerCase() === "test",
+    "node_456",
+    "test",
+  );
+
+  assert.deepEqual(rewritten, {
+    value: "See [[node_456]].",
+    occurrenceCount: 1,
+  });
+});
+
 test("rewritePlainPageWikiLinksToTarget can resolve empty links to page refs", () => {
   const text =
     "See [[test]], [[Test]], [[Other]], [[Test|page:page_123]], and [[Label|node:node_123]].";
@@ -1134,6 +1166,38 @@ test("rewritePlainPageWikiLinksToTarget can resolve empty links to page refs", (
       "See [[test|page:page_456]], [[Test|page:page_456]], [[Other]], [[Test|page:page_123]], and [[Label|node:node_123]].",
     occurrenceCount: 2,
   });
+});
+
+test("rewritePlainPageWikiLinksToTarget keeps page target labels explicit", () => {
+  const rewritten = rewritePlainPageWikiLinksToTarget(
+    "See [[test]].",
+    (link) => link.targetPageTitle?.toLowerCase() === "test",
+    {
+      kind: "page",
+      ref: "page_456",
+      displayText: "test",
+    },
+  );
+
+  assert.deepEqual(rewritten, {
+    value: "See [[test|page:page_456]].",
+    occurrenceCount: 1,
+  });
+});
+
+test("extractLinks parses bare wiki node id links", () => {
+  assert.deepEqual(extractLinks("See [[node_456]] and [[test]]."), [
+    {
+      kind: "node",
+      label: "[[node_456]]",
+      targetNodeRef: "node_456",
+    },
+    {
+      kind: "page",
+      label: "[[test]]",
+      targetPageTitle: "test",
+    },
+  ]);
 });
 
 test("rewritePlainPageWikiLinksToNode returns null when no plain page links match", () => {

@@ -3800,6 +3800,9 @@ async function replaceUnresolvedPageLinksWithTargetBatch(
         ? {
             kind: "node",
             ref: targetNode!._id as string,
+            displayText:
+              replaceLinkMarkupWithLabels(targetNode!.text).trim() ||
+              targetNode!.text.trim(),
           }
         : {
             kind: "page",

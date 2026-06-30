@@ -35,6 +35,7 @@ const PLAIN_EMAIL_PATTERN =
   /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const PAGE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?page:([a-zA-Z0-9_-]+)$/;
 const NODE_WIKI_TARGET_PATTERN = /^(?:(.*?)\|)?node:([a-zA-Z0-9_-]+)(\?[A-Za-z]+(?:&[A-Za-z]+)*)?$/;
+const BARE_NODE_WIKI_TARGET_PATTERN = /^(?:node_[a-zA-Z0-9_-]+|k17[0-9a-z]{20,})$/i;
 const NODE_LINK_OPTION_TEXT_PATTERN =
   /\?(?:parent|hidetags|showchildren)(?:&(?:parent|hidetags|showchildren))*$/i;
 const NODE_LINK_OPTION_CANDIDATE_PATTERN = /^\?[A-Za-z]+(?:&[A-Za-z]+)*/;
@@ -215,6 +216,10 @@ function stripTrailingNodeLinkOptions(label: string) {
   return label.replace(NODE_LINK_OPTION_TEXT_PATTERN, "");
 }
 
+function isBareNodeWikiTargetRef(value: string) {
+  return BARE_NODE_WIKI_TARGET_PATTERN.test(value.trim());
+}
+
 export function extractLinkMatches(text: string) {
   const matches: ExtractedLinkMatch[] = [];
 
@@ -277,6 +282,19 @@ export function extractLinkMatches(text: string) {
           ...(includeParent ? { includeParent: true } : {}),
           ...(hideTags ? { hideTags: true } : {}),
           ...(showChildren ? { showChildren: true } : {}),
+        },
+      });
+      continue;
+    }
+
+    if (isBareNodeWikiTargetRef(inner)) {
+      matches.push({
+        start: match.index ?? 0,
+        end: (match.index ?? 0) + match[0].length,
+        link: {
+          kind: "node",
+          label: match[0],
+          targetNodeRef: inner,
         },
       });
       continue;
@@ -550,6 +568,37 @@ function sanitizeWikiLinkReplacementLabel(value: string) {
     .trim();
 }
 
+function normalizeWikiLinkReplacementComparisonText(value: string) {
+  return value.replace(/\s+/g, " ").trim().toLocaleLowerCase();
+}
+
+export function buildWikiLinkReplacementMarkup(
+  label: string,
+  target: {
+    kind: "node" | "page";
+    ref: string;
+    displayText?: string;
+  },
+) {
+  const safeLabel =
+    sanitizeWikiLinkReplacementLabel(label) ||
+    (target.kind === "node" ? "Linked node" : "Linked page");
+  const normalizedLabel = normalizeWikiLinkReplacementComparisonText(label);
+  const normalizedDisplayText = normalizeWikiLinkReplacementComparisonText(
+    target.displayText ?? "",
+  );
+  if (
+    target.kind === "node" &&
+    normalizedLabel.length > 0 &&
+    normalizedLabel === normalizedDisplayText &&
+    isBareNodeWikiTargetRef(target.ref)
+  ) {
+    return `[[${target.ref}]]`;
+  }
+
+  return `[[${safeLabel}|${target.kind}:${target.ref}]]`;
+}
+
 export function rewritePlainPageWikiLinksToTarget(
   text: string,
   shouldRewrite: (
@@ -558,6 +607,7 @@ export function rewritePlainPageWikiLinksToTarget(
   target: {
     kind: "node" | "page";
     ref: string;
+    displayText?: string;
   },
 ) {
   const matches = extractLinkMatches(text);
@@ -585,7 +635,7 @@ export function rewritePlainPageWikiLinksToTarget(
           getExplicitWikiLinkPreviewText(match.link.label) ||
             match.link.targetPageTitle,
         ) || (target.kind === "node" ? "Linked node" : "Linked page");
-      nextText += `[[${label}|${target.kind}:${target.ref}]]`;
+      nextText += buildWikiLinkReplacementMarkup(label, target);
       occurrenceCount += 1;
     } else {
       nextText += text.slice(match.start, match.end);
@@ -614,10 +664,12 @@ export function rewritePlainPageWikiLinksToNode(
     link: Extract<ExtractedLink, { kind: "page" }>,
   ) => boolean,
   targetNodeRef: string,
+  targetNodeDisplayText?: string,
 ) {
   return rewritePlainPageWikiLinksToTarget(text, shouldRewrite, {
     kind: "node",
     ref: targetNodeRef,
+    displayText: targetNodeDisplayText,
   });
 }
 
