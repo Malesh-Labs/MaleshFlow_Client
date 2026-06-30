@@ -40,6 +40,7 @@ import {
 } from "../lib/domain/planner";
 import { getAppendPosition } from "../lib/domain/positions";
 import {
+  extractLinkMatches,
   getExplicitWikiLinkPreviewText,
   replaceLinkMarkupWithLabels,
 } from "../lib/domain/links";
@@ -53,13 +54,66 @@ function normalizePlannerSuggestionText(text: string) {
   return stripInlineFormattingMarkers(replaceLinkMarkupWithLabels(text)).trim();
 }
 
-function getPlannerMergeDuplicateStatusText(node: Pick<Doc<"nodes">, "text">) {
-  const readableText = normalizePlannerSuggestionText(node.text).replace(/\s+/g, " ").trim();
+async function resolvePlannerDuplicateStatusText(
+  db: DatabaseReader,
+  text: string,
+) {
+  const matches = extractLinkMatches(text);
+  if (matches.length === 0) {
+    return normalizePlannerSuggestionText(text);
+  }
+
+  let cursor = 0;
+  let nextText = "";
+
+  for (const match of matches) {
+    if (match.start > cursor) {
+      nextText += text.slice(cursor, match.start);
+    }
+
+    if (match.link.kind === "node") {
+      const previewText = match.link.label.startsWith("[[")
+        ? getExplicitWikiLinkPreviewText(match.link.label).trim()
+        : "";
+      const targetNode = await db.get(match.link.targetNodeRef as Id<"nodes">);
+      nextText += targetNode
+        ? normalizePlannerSuggestionText(targetNode.text) || targetNode.text.trim()
+        : previewText || match.link.label;
+    } else if (match.link.kind === "page") {
+      const previewText = getExplicitWikiLinkPreviewText(match.link.label).trim();
+      if (previewText) {
+        nextText += previewText;
+      } else if (match.link.targetPageTitle) {
+        nextText += match.link.targetPageTitle;
+      } else if (match.link.targetPageRef) {
+        const targetPage = await db.get(match.link.targetPageRef as Id<"pages">);
+        nextText += targetPage?.title.trim() || match.link.label;
+      } else {
+        nextText += match.link.label;
+      }
+    } else {
+      nextText += match.link.text;
+    }
+
+    cursor = match.end;
+  }
+
+  if (cursor < text.length) {
+    nextText += text.slice(cursor);
+  }
+
+  return stripInlineFormattingMarkers(nextText).replace(/\s+/g, " ").trim();
+}
+
+async function getPlannerMergeDuplicateStatusText(
+  db: DatabaseReader,
+  node: Pick<Doc<"nodes">, "text">,
+) {
+  const readableText = (await resolvePlannerDuplicateStatusText(db, node.text))
+    .replace(/\s+/g, " ")
+    .trim();
   const rawText = stripInlineFormattingMarkers(node.text).replace(/\s+/g, " ").trim();
-  const text =
-    rawText.includes("[[") && readableText.length < Math.min(12, rawText.length / 2)
-      ? rawText
-      : readableText || rawText || "(empty item)";
+  const text = readableText || rawText || "(empty item)";
 
   return text.length > 140 ? `${text.slice(0, 137)}...` : text;
 }
@@ -915,7 +969,9 @@ export const completePlannerDay = mutation({
       if (duplicateMatch) {
         const archivedDuplicateNode =
           duplicateMatch.keep === "incoming" ? duplicateMatch.candidate.node : child;
-        archivedDuplicateTexts.push(getPlannerMergeDuplicateStatusText(archivedDuplicateNode));
+        archivedDuplicateTexts.push(
+          await getPlannerMergeDuplicateStatusText(ctx.db, archivedDuplicateNode),
+        );
 
         if (duplicateMatch.keep === "incoming") {
           await moveDirectPlannerMergeChildren(ctx, {

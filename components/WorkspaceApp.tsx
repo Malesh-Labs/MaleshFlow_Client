@@ -11432,7 +11432,12 @@ function ConfiguredWorkspace({
       const duplicateTexts = Array.isArray(result?.archivedDuplicateTexts)
         ? result.archivedDuplicateTexts.filter(
             (text): text is string => typeof text === "string" && text.trim().length > 0,
-          )
+          ).map((text) => {
+            const readableText = stripInlineFormattingMarkers(
+              replaceLinkMarkupWithLabels(text),
+            ).replace(/\s+/g, " ").trim();
+            return readableText || text.replace(/\s+/g, " ").trim();
+          })
         : [];
       const parts = [`Completed the top day and moved ${movedCount} item${movedCount === 1 ? "" : "s"} into Focus.`];
       if (duplicateCount > 0) {
