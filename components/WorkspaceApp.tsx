@@ -81,7 +81,7 @@ import {
   replaceLinkMarkupWithLabels,
   sanitizeGeneratedWikiLinkLabel,
 } from "@/lib/domain/links";
-import { extractTagMatches } from "@/lib/domain/tags";
+import { extractTagMatches, stripTagsFromText } from "@/lib/domain/tags";
 import {
   buildPageBacklinkFindQuery,
   buildNodeSelectionIds,
@@ -2748,10 +2748,10 @@ function buildLinkPreviewSegments(
           : { text: "", isDimmed: false };
       const childNodeText = nodeLabel.text || renderedTargetNode.text || "Linked node";
       const visibleChildNodeText = match.link.hideTags
-        ? splitLeadingTagBadges(childNodeText).text || "Linked node"
+        ? stripTagsFromText(childNodeText) || "Linked node"
         : childNodeText;
       const visibleParentNodeText = match.link.hideTags
-        ? splitLeadingTagBadges(parentNode.text).text
+        ? stripTagsFromText(parentNode.text)
         : parentNode.text;
       const renderedNodeText = visibleParentNodeText
         ? `${visibleChildNodeText} (${visibleParentNodeText})`

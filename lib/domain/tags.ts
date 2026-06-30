@@ -55,3 +55,26 @@ export function extractTagMatches(text: string) {
 export function extractTags(text: string) {
   return extractTagMatches(text).map((match) => match.value);
 }
+
+export function stripTagsFromText(text: string) {
+  const matches = extractTagMatches(text);
+  if (matches.length === 0) {
+    return text.trim();
+  }
+
+  let cursor = 0;
+  let nextText = "";
+
+  for (const match of matches) {
+    if (match.start > cursor) {
+      nextText += text.slice(cursor, match.start);
+    }
+    cursor = match.end;
+  }
+
+  if (cursor < text.length) {
+    nextText += text.slice(cursor);
+  }
+
+  return nextText.replace(/\s+/g, " ").trim();
+}

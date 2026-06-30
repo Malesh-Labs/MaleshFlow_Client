@@ -25,7 +25,7 @@ import {
   buildJournalFeedbackUserPrompt,
   buildModelRewriteUserPrompt,
 } from "../lib/domain/aiPrompts";
-import { extractTagMatches, extractTags } from "../lib/domain/tags";
+import { extractTagMatches, extractTags, stripTagsFromText } from "../lib/domain/tags";
 import { parseMarkdownFile, serializePageToMarkdown } from "../lib/domain/markdown";
 import {
   buildDeterministicEmbedding,
@@ -1295,6 +1295,17 @@ test("extractTagMatches recognizes tags inside italic markers", () => {
         value: "malesh/labs/fanswap",
       },
     ],
+  );
+});
+
+test("stripTagsFromText removes leading and trailing tags", () => {
+  assert.equal(
+    stripTagsFromText("#perm Renew DMA contact #malesh/labs/fanswap"),
+    "Renew DMA contact",
+  );
+  assert.equal(
+    stripTagsFromText("Do the thing #work/personal before review"),
+    "Do the thing before review",
   );
 });
 
