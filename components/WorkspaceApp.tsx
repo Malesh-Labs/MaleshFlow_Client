@@ -1158,17 +1158,27 @@ function useVisualViewportStyle(): React.CSSProperties {
 }
 
 function MobileReorderToolbar({
+  canOutdent,
+  canIndent,
   canMoveUp,
   canMoveDown,
+  onOutdent,
+  onIndent,
   onMoveUp,
   onMoveDown,
 }: {
+  canOutdent: boolean;
+  canIndent: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
+  onOutdent: () => void;
+  onIndent: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
 }) {
   const vpStyle = useVisualViewportStyle();
+  const buttonClass =
+    "flex h-9 w-9 flex-none items-center justify-center rounded border border-[var(--workspace-border)] text-lg text-[var(--workspace-text-faint)] transition active:bg-[var(--workspace-surface-hover)] disabled:opacity-30";
   return createPortal(
     <div
       className="fixed bottom-0 left-0 right-0 z-50 flex items-center gap-2 border-t border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-3 py-2"
@@ -1177,9 +1187,33 @@ function MobileReorderToolbar({
       <button
         type="button"
         onMouseDown={(e) => e.preventDefault()}
+        onClick={onOutdent}
+        disabled={!canOutdent}
+        aria-label="Outdent item"
+        title="Outdent item"
+        className={buttonClass}
+      >
+        ⇤
+      </button>
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onIndent}
+        disabled={!canIndent}
+        aria-label="Indent item"
+        title="Indent item"
+        className={buttonClass}
+      >
+        ⇥
+      </button>
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
         onClick={onMoveUp}
         disabled={!canMoveUp}
-        className="flex h-9 w-9 flex-none items-center justify-center rounded border border-[var(--workspace-border)] text-lg text-[var(--workspace-text-faint)] transition active:bg-[var(--workspace-surface-hover)] disabled:opacity-30"
+        aria-label="Move item up"
+        title="Move item up"
+        className={buttonClass}
       >
         ↑
       </button>
@@ -1188,7 +1222,9 @@ function MobileReorderToolbar({
         onMouseDown={(e) => e.preventDefault()}
         onClick={onMoveDown}
         disabled={!canMoveDown}
-        className="flex h-9 w-9 flex-none items-center justify-center rounded border border-[var(--workspace-border)] text-lg text-[var(--workspace-text-faint)] transition active:bg-[var(--workspace-surface-hover)] disabled:opacity-30"
+        aria-label="Move item down"
+        title="Move item down"
+        className={buttonClass}
       >
         ↓
       </button>
@@ -19573,6 +19609,104 @@ function OutlineNodeEditor({
     );
   };
 
+  const handleIndentOutdent = async ({
+    outdent,
+    selectionStart = textareaRef.current?.selectionStart ?? draft.length,
+    selectionEnd = textareaRef.current?.selectionEnd ?? selectionStart,
+  }: {
+    outdent: boolean;
+    selectionStart?: number;
+    selectionEnd?: number;
+  }) => {
+    if (isDisabled) {
+      return;
+    }
+
+    const saveResult = await commitNodeText(draft);
+    const historyEntries: HistoryEntry[] = [];
+    if (saveResult.updateEntry) {
+      historyEntries.push(saveResult.updateEntry);
+    }
+
+    const beforePlacement = buildNodePlacement(
+      pageId,
+      parentNodeId,
+      (previousSibling?._id as Id<"nodes"> | undefined) ?? null,
+    );
+    let afterPlacement: NodePlacement | null = null;
+
+    if (saveResult.deleted) {
+      return;
+    }
+
+    if (outdent) {
+      if (!node.parentNodeId) {
+        return;
+      }
+
+      const parentNode = nodeMap.get(node.parentNodeId as string);
+      if (!parentNode) {
+        return;
+      }
+
+      afterPlacement = buildNodePlacement(
+        pageId,
+        (parentNode.parentNodeId as Id<"nodes"> | null) ?? null,
+        parentNode._id as Id<"nodes">,
+      );
+      await moveNode({
+        ownerKey,
+        nodeId: node._id as Id<"nodes">,
+        pageId,
+        parentNodeId: (parentNode.parentNodeId as Id<"nodes"> | null) ?? null,
+        afterNodeId: parentNode._id as Id<"nodes">,
+      });
+    } else {
+      if (!previousSibling) {
+        return;
+      }
+
+      const targetAfterNodeId = getLastChildNodeId(previousSibling);
+      afterPlacement = buildNodePlacement(
+        pageId,
+        previousSibling._id as Id<"nodes">,
+        targetAfterNodeId,
+      );
+      await moveNode({
+        ownerKey,
+        nodeId: node._id as Id<"nodes">,
+        pageId,
+        parentNodeId: previousSibling._id as Id<"nodes">,
+        afterNodeId: targetAfterNodeId,
+      });
+    }
+
+    if (afterPlacement) {
+      historyEntries.push({
+        type: "move_node",
+        pageId,
+        nodeId: node._id as Id<"nodes">,
+        beforePlacement,
+        afterPlacement,
+        focusEditorId: editorId,
+      });
+    }
+
+    if (historyEntries.length === 1) {
+      history.pushUndoEntry(historyEntries[0]!);
+    } else if (historyEntries.length > 1) {
+      history.pushUndoEntry({
+        type: "compound",
+        pageId,
+        entries: historyEntries,
+        focusAfterUndoId: editorId,
+        focusAfterRedoId: editorId,
+      });
+    }
+
+    restoreEditorSelection(selectionStart, selectionEnd);
+  };
+
   const handleKeyDown = async (event: TextareaKeyboardEvent<HTMLTextAreaElement>) => {
     const isModifier = event.metaKey || event.ctrlKey;
     const normalizedKey = event.key.toLowerCase();
@@ -20010,90 +20144,11 @@ function OutlineNodeEditor({
       }
 
       event.preventDefault();
-      const selectionStart = event.currentTarget.selectionStart ?? draft.length;
-      const selectionEnd = event.currentTarget.selectionEnd ?? selectionStart;
-      const saveResult = await commitNodeText(draft);
-      const historyEntries: HistoryEntry[] = [];
-      if (saveResult.updateEntry) {
-        historyEntries.push(saveResult.updateEntry);
-      }
-
-      const beforePlacement = buildNodePlacement(
-        pageId,
-        parentNodeId,
-        (previousSibling?._id as Id<"nodes"> | undefined) ?? null,
-      );
-      let afterPlacement: NodePlacement | null = null;
-
-      if (saveResult.deleted) {
-        return;
-      }
-
-      if (event.shiftKey) {
-        if (!node.parentNodeId) {
-          return;
-        }
-
-        const parentNode = nodeMap.get(node.parentNodeId as string);
-        if (!parentNode) {
-          return;
-        }
-
-        afterPlacement = buildNodePlacement(
-          pageId,
-          (parentNode.parentNodeId as Id<"nodes"> | null) ?? null,
-          parentNode._id as Id<"nodes">,
-        );
-        await moveNode({
-          ownerKey,
-          nodeId: node._id as Id<"nodes">,
-          pageId,
-          parentNodeId: (parentNode.parentNodeId as Id<"nodes"> | null) ?? null,
-          afterNodeId: parentNode._id as Id<"nodes">,
-        });
-      } else {
-        if (!previousSibling) {
-          return;
-        }
-
-        const targetAfterNodeId = getLastChildNodeId(previousSibling);
-        afterPlacement = buildNodePlacement(
-          pageId,
-          previousSibling._id as Id<"nodes">,
-          targetAfterNodeId,
-        );
-        await moveNode({
-          ownerKey,
-          nodeId: node._id as Id<"nodes">,
-          pageId,
-          parentNodeId: previousSibling._id as Id<"nodes">,
-          afterNodeId: targetAfterNodeId,
-        });
-      }
-
-      if (afterPlacement) {
-        historyEntries.push({
-          type: "move_node",
-          pageId,
-          nodeId: node._id as Id<"nodes">,
-          beforePlacement,
-          afterPlacement,
-          focusEditorId: editorId,
-        });
-      }
-
-      if (historyEntries.length === 1) {
-        history.pushUndoEntry(historyEntries[0]!);
-      } else if (historyEntries.length > 1) {
-        history.pushUndoEntry({
-          type: "compound",
-          pageId,
-          entries: historyEntries,
-          focusAfterUndoId: editorId,
-          focusAfterRedoId: editorId,
-        });
-      }
-      restoreEditorSelection(selectionStart, selectionEnd);
+      await handleIndentOutdent({
+        outdent: event.shiftKey,
+        selectionStart,
+        selectionEnd,
+      });
       return;
     }
 
@@ -20658,8 +20713,18 @@ function OutlineNodeEditor({
               ) : null}
               {isFocused && isMobileLayout && !isDisabled ? (
                 <MobileReorderToolbar
+                  canOutdent={Boolean(
+                    node.parentNodeId && nodeMap.has(node.parentNodeId as string),
+                  )}
+                  canIndent={previousSibling !== null}
                   canMoveUp={previousSibling !== null}
                   canMoveDown={nextSibling !== null}
+                  onOutdent={() => {
+                    void handleIndentOutdent({ outdent: true }).catch(() => undefined);
+                  }}
+                  onIndent={() => {
+                    void handleIndentOutdent({ outdent: false }).catch(() => undefined);
+                  }}
                   onMoveUp={() => { void handleMobileMoveUp().catch(() => undefined); }}
                   onMoveDown={() => { void handleMobileMoveDown().catch(() => undefined); }}
                 />
