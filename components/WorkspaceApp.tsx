@@ -2657,8 +2657,68 @@ function useFloatingMenuPosition(
   return isOpen ? position : null;
 }
 
-function normalizeNodeLinkPreviewDisplay(value: string) {
-  const syntaxText = stripInlineFormattingMarkers(replaceLinkMarkupWithLabels(value));
+function replaceLinkMarkupWithPreviewLabels(
+  value: string,
+  pagesByTitle: Map<string, PageDoc>,
+  pagesById: Map<string, PageDoc>,
+) {
+  const matches = extractLinkMatches(value);
+  if (matches.length === 0) {
+    return value.trim();
+  }
+
+  let cursor = 0;
+  let nextText = "";
+
+  for (const match of matches) {
+    if (match.start > cursor) {
+      nextText += value.slice(cursor, match.start);
+    }
+
+    if (match.link.kind === "page") {
+      const page =
+        (match.link.targetPageRef
+          ? pagesById.get(match.link.targetPageRef)
+          : null) ??
+        (match.link.targetPageTitle
+          ? pagesByTitle.get(normalizePageTitleKey(match.link.targetPageTitle))
+          : null);
+      nextText +=
+        getExplicitWikiLinkPreviewText(match.link.label) ||
+        page?.title ||
+        match.link.targetPageTitle ||
+        "Linked page";
+    } else if (match.link.kind === "external") {
+      nextText += match.link.text;
+    } else if (match.link.label.startsWith("[[")) {
+      nextText += getExplicitWikiLinkPreviewText(match.link.label);
+    }
+
+    cursor = match.end;
+  }
+
+  if (cursor < value.length) {
+    nextText += value.slice(cursor);
+  }
+
+  return nextText.replace(/\s+/g, " ").trim();
+}
+
+function normalizeNodeLinkPreviewDisplay(
+  value: string,
+  pageContext?: {
+    pagesByTitle: Map<string, PageDoc>;
+    pagesById: Map<string, PageDoc>;
+  },
+) {
+  const resolvedText = pageContext
+    ? replaceLinkMarkupWithPreviewLabels(
+        value,
+        pageContext.pagesByTitle,
+        pageContext.pagesById,
+      )
+    : replaceLinkMarkupWithLabels(value);
+  const syntaxText = stripInlineFormattingMarkers(resolvedText);
   return {
     text: stripNodeDisplaySyntaxMarkers(syntaxText).trim(),
     isDimmed: isDimmedSyntaxLine(syntaxText),
@@ -2776,11 +2836,17 @@ function buildLinkPreviewSegments(
         getExplicitWikiLinkPreviewText(match.link.label),
       );
       const renderedTargetNode = targetNode
-        ? normalizeNodeLinkPreviewDisplay(targetNode.text)
+        ? normalizeNodeLinkPreviewDisplay(targetNode.text, {
+            pagesByTitle,
+            pagesById,
+          })
         : { text: "", isDimmed: false };
       const parentNode =
         match.link.includeParent && targetNode?.parentText && !targetNode.parentArchived
-          ? normalizeNodeLinkPreviewDisplay(targetNode.parentText)
+          ? normalizeNodeLinkPreviewDisplay(targetNode.parentText, {
+              pagesByTitle,
+              pagesById,
+            })
           : { text: "", isDimmed: false };
       const childNodeText = nodeLabel.text || renderedTargetNode.text || "Linked node";
       const visibleChildNodeText = match.link.hideTags
