@@ -16854,7 +16854,7 @@ function getTagPreviewClass({
   isCompleted: boolean;
 }) {
   return clsx(
-    "inline-block max-w-full align-baseline rounded-full border border-[var(--workspace-border-subtle)] bg-[color-mix(in_srgb,var(--workspace-brand)_10%,transparent)] px-1.5 py-[0.08rem] text-[0.9em] leading-[1.25] text-[var(--workspace-text-faint)] no-underline [overflow-wrap:anywhere]",
+    "inline-flex max-w-full flex-none items-center overflow-hidden text-ellipsis whitespace-nowrap align-baseline rounded-full border border-[var(--workspace-border-subtle)] bg-[color-mix(in_srgb,var(--workspace-brand)_10%,transparent)] px-1.5 py-[0.08rem] text-[0.9em] leading-[1.25] text-[var(--workspace-text-faint)] no-underline [overflow-wrap:normal]",
     interactive
       ? "cursor-pointer transition hover:border-[var(--workspace-accent)] hover:bg-[color-mix(in_srgb,var(--workspace-brand)_16%,transparent)] hover:text-[var(--workspace-text-subtle)]"
       : "",
