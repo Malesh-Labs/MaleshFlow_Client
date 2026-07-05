@@ -1696,7 +1696,6 @@ function isNodeLocked(node: { sourceMeta?: unknown } | null | undefined) {
 
   return (
     typeof sourceMeta.sectionSlot === "string" ||
-    typeof sourceMeta.plannerTemplateWeekday === "string" ||
     sourceMeta.plannerKind === "plannerDay"
   );
 }
