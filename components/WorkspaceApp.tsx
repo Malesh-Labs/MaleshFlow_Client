@@ -5321,9 +5321,13 @@ function ConfiguredWorkspace({
   const plannerTopVisibleRoots = [plannerFocusSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
-  const plannerBottomVisibleRoots = [plannerTemplateSection].filter(
-    (node): node is TreeNode => Boolean(node),
-  );
+  // The Template section root is rendered as a PageSection header, not an
+  // outline row, so once its id lands in collapsedNodeIds (collapse-all or the
+  // pre-hydration default) there is no way to expand it again and its subtree
+  // would vanish from visibleNodeOrder — breaking delete/selection for
+  // template items. Flatten from its children instead, like the planner
+  // sidebar and scratchpad sections.
+  const plannerBottomVisibleRoots = plannerTemplateSection?.children ?? [];
   const modelVisibleRoots = [modelSection, recentExamplesSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
