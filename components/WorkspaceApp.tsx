@@ -1233,7 +1233,10 @@ function MobileReorderToolbar({
   );
 }
 
-function toTreeNodes(nodes: Doc<"nodes">[]) {
+function toTreeNodes(
+  nodes: Doc<"nodes">[],
+  rootOrder: "position" | "recentlyAdded" = "position",
+) {
   return buildOutlineTree(
     nodes.map((node) => ({
       ...node,
@@ -1241,6 +1244,7 @@ function toTreeNodes(nodes: Doc<"nodes">[]) {
       pageId: node.pageId as string,
       parentNodeId: node.parentNodeId ? (node.parentNodeId as string) : null,
     })),
+    { rootOrder },
   ) as TreeNode[];
 }
 
@@ -4931,6 +4935,8 @@ function ConfiguredWorkspace({
     selectedPageSourceMeta?.excludeFromDataDump === true;
   const isSelectedPageDoneArchiveEnabled =
     selectedPageSourceMeta?.archiveCompletedRootTasksToDone === true;
+  const isPlannerHistoryPage =
+    selectedPageSourceMeta?.archivedPurpose === "plannerHistory";
   const pageTitleEditorId = selectedPage ? getPageTitleEditorId(selectedPage._id) : null;
   const pageTitleTarget = useMemo(
     () =>
@@ -4943,8 +4949,14 @@ function ConfiguredWorkspace({
     [selectedPage],
   );
   const tree = useMemo(
-    () => (activePageTree ? toTreeNodes(activePageTree.nodes) : []),
-    [activePageTree],
+    () =>
+      activePageTree
+        ? toTreeNodes(
+            activePageTree.nodes,
+            isPlannerHistoryPage ? "recentlyAdded" : "position",
+          )
+        : [],
+    [activePageTree, isPlannerHistoryPage],
   );
   const collapsiblePageTreeNodeIds = useMemo(() => collectExpandableNodeIds(tree), [tree]);
   const nodeMap = new Map(

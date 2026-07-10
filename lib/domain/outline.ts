@@ -2,6 +2,7 @@ import { sortByPosition } from "./positions";
 
 export type OutlineNodeLike = {
   _id: string;
+  _creationTime?: number;
   pageId: string;
   parentNodeId: string | null;
   position: number;
@@ -13,13 +14,38 @@ export type OutlineNodeLike = {
   dueEndAt?: number | null;
   archived: boolean;
   sourceMeta?: Record<string, unknown> | null;
+  createdAt?: number;
 };
 
 export type OutlineTreeNode<T extends OutlineNodeLike> = T & {
   children: Array<OutlineTreeNode<T>>;
 };
 
-export function buildOutlineTree<T extends OutlineNodeLike>(nodes: T[]) {
+type OutlineTreeOptions = {
+  rootOrder?: "position" | "recentlyAdded";
+};
+
+function getRecentlyAddedTimestamp(node: OutlineNodeLike) {
+  const archivedAt = node.sourceMeta?.archivedAt;
+  if (typeof archivedAt === "number" && Number.isFinite(archivedAt)) {
+    return archivedAt;
+  }
+
+  if (typeof node.createdAt === "number" && Number.isFinite(node.createdAt)) {
+    return node.createdAt;
+  }
+
+  if (typeof node._creationTime === "number" && Number.isFinite(node._creationTime)) {
+    return node._creationTime;
+  }
+
+  return node.position;
+}
+
+export function buildOutlineTree<T extends OutlineNodeLike>(
+  nodes: T[],
+  options: OutlineTreeOptions = {},
+) {
   const sorted = sortByPosition(nodes);
   const byId = new Map<string, OutlineTreeNode<T>>();
   const roots: Array<OutlineTreeNode<T>> = [];
@@ -38,6 +64,22 @@ export function buildOutlineTree<T extends OutlineNodeLike>(nodes: T[]) {
       }
     }
     roots.push(treeNode);
+  }
+
+  if (options.rootOrder === "recentlyAdded") {
+    roots.sort((left, right) => {
+      const timestampDifference =
+        getRecentlyAddedTimestamp(right) - getRecentlyAddedTimestamp(left);
+      if (timestampDifference !== 0) {
+        return timestampDifference;
+      }
+
+      if (left.position !== right.position) {
+        return right.position - left.position;
+      }
+
+      return right._id.localeCompare(left._id);
+    });
   }
 
   return roots;

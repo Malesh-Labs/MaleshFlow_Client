@@ -2845,6 +2845,153 @@ test("buildFocusedOutlineContext returns the focused root when it has no parent"
   assert.equal(context.roots[0]?._id, "root");
 });
 
+test("buildOutlineTree can order roots by recently added timestamps", () => {
+  const tree = buildOutlineTree(
+    [
+      {
+        _id: "old-archive",
+        pageId: "page",
+        parentNodeId: null,
+        position: 10,
+        text: "Old archive",
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
+        archived: false,
+        sourceMeta: { archivedAt: 100 },
+      },
+      {
+        _id: "position-fallback",
+        pageId: "page",
+        parentNodeId: null,
+        position: 200,
+        text: "Position fallback",
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
+        archived: false,
+      },
+      {
+        _id: "creation-time-fallback",
+        _creationTime: 300,
+        pageId: "page",
+        parentNodeId: null,
+        position: 30,
+        text: "Creation time fallback",
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
+        archived: false,
+      },
+      {
+        _id: "created-at-fallback",
+        pageId: "page",
+        parentNodeId: null,
+        position: 40,
+        text: "Created at fallback",
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
+        archived: false,
+        createdAt: 400,
+      },
+      {
+        _id: "new-archive",
+        pageId: "page",
+        parentNodeId: null,
+        position: 50,
+        text: "New archive",
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
+        archived: false,
+        sourceMeta: { archivedAt: 500 },
+      },
+      {
+        _id: "later-child",
+        pageId: "page",
+        parentNodeId: "new-archive",
+        position: 2,
+        text: "Later child",
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
+        archived: false,
+      },
+      {
+        _id: "earlier-child",
+        pageId: "page",
+        parentNodeId: "new-archive",
+        position: 1,
+        text: "Earlier child",
+        kind: "note",
+        taskStatus: null,
+        priority: null,
+        dueAt: null,
+        archived: false,
+      },
+    ],
+    { rootOrder: "recentlyAdded" },
+  );
+
+  assert.deepEqual(
+    tree.map((node) => node._id),
+    [
+      "new-archive",
+      "created-at-fallback",
+      "creation-time-fallback",
+      "position-fallback",
+      "old-archive",
+    ],
+  );
+  assert.deepEqual(
+    tree[0]?.children.map((node) => node._id),
+    ["earlier-child", "later-child"],
+  );
+});
+
+test("buildOutlineTree keeps ordinary roots ordered by position", () => {
+  const tree = buildOutlineTree([
+    {
+      _id: "later-position",
+      pageId: "page",
+      parentNodeId: null,
+      position: 2,
+      text: "Later position",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      archived: false,
+      sourceMeta: { archivedAt: 500 },
+    },
+    {
+      _id: "earlier-position",
+      pageId: "page",
+      parentNodeId: null,
+      position: 1,
+      text: "Earlier position",
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      archived: false,
+      sourceMeta: { archivedAt: 100 },
+    },
+  ]);
+
+  assert.deepEqual(
+    tree.map((node) => node._id),
+    ["earlier-position", "later-position"],
+  );
+});
+
 test("buildDeterministicEmbedding is stable and uses contextual input", () => {
   const input = buildEmbeddingInput({
     pageTitle: "Weekly Review",
