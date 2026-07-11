@@ -854,6 +854,24 @@ async function ensurePastWeeksPage(ctx: MutationCtx) {
       return right.createdAt - left.createdAt;
     })[0] ?? null;
   if (existing) {
+    const sourceMeta = getPageSourceMeta(existing);
+    if (sourceMeta.archivedPurpose !== "plannerHistory") {
+      const updatedAt = Date.now();
+      const nextSourceMeta = {
+        ...sourceMeta,
+        archivedPurpose: "plannerHistory",
+      };
+      await ctx.db.patch(existing._id, {
+        sourceMeta: nextSourceMeta,
+        updatedAt,
+      });
+      return {
+        ...existing,
+        sourceMeta: nextSourceMeta,
+        updatedAt,
+      };
+    }
+
     return existing;
   }
 

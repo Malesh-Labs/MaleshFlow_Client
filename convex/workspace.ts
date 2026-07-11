@@ -253,12 +253,14 @@ async function collectCappedRootSubtreeLines(
 async function listPageNodesForTree(
   ctx: QueryCtx,
   pageId: Id<"pages">,
+  newestFirst = false,
 ) {
   return await listPageNodesForTreeWithCaps(
     ctx,
     pageId,
     MAX_PAGE_TREE_NODES,
     MAX_PAGE_TREE_NODE_TEXT_CHARS,
+    newestFirst,
   );
 }
 
@@ -267,6 +269,7 @@ async function listPageNodesForTreeWithCaps(
   pageId: Id<"pages">,
   maxNodes: number,
   maxTextChars: number,
+  newestFirst = false,
 ) {
   const cappedNodeLimit = Math.max(0, Math.min(maxNodes, MAX_PAGE_TREE_NODES));
   const cappedTextLimit = Math.max(0, Math.min(maxTextChars, MAX_PAGE_TREE_NODE_TEXT_CHARS));
@@ -282,27 +285,50 @@ async function listPageNodesForTreeWithCaps(
     .withIndex("by_page_archived", (query) =>
       query.eq("pageId", pageId).eq("archived", false),
     )
+    .order(newestFirst ? "desc" : "asc")
     .take(cappedNodeLimit + 1);
 
   const nodes: Doc<"nodes">[] = [];
   let textChars = 0;
+  let truncated = fetchedNodes.length > cappedNodeLimit;
 
   for (const node of fetchedNodes) {
     const nextTextChars = textChars + node.text.length;
     if (nodes.length >= cappedNodeLimit || nextTextChars > cappedTextLimit) {
-      return {
-        nodes,
-        truncated: true,
-      };
+      truncated = true;
+      break;
     }
 
     nodes.push(node);
     textChars = nextTextChars;
   }
 
+  if (newestFirst && truncated) {
+    const retainedNodeIds = new Set(nodes.map((node) => node._id as string));
+    let removedOrphan = true;
+    while (removedOrphan) {
+      removedOrphan = false;
+      for (const node of nodes) {
+        if (
+          retainedNodeIds.has(node._id as string) &&
+          node.parentNodeId &&
+          !retainedNodeIds.has(node.parentNodeId as string)
+        ) {
+          retainedNodeIds.delete(node._id as string);
+          removedOrphan = true;
+        }
+      }
+    }
+
+    return {
+      nodes: nodes.filter((node) => retainedNodeIds.has(node._id as string)),
+      truncated,
+    };
+  }
+
   return {
     nodes,
-    truncated: fetchedNodes.length > cappedNodeLimit,
+    truncated,
   };
 }
 
@@ -325,6 +351,18 @@ function getPageSourceMeta(page: Pick<Doc<"pages">, "sourceMeta"> | null | undef
   return page && typeof page.sourceMeta === "object" && page.sourceMeta
     ? (page.sourceMeta as Record<string, unknown>)
     : {};
+}
+
+function isPlannerHistoryArchivePage(
+  page:
+    | Pick<Doc<"pages">, "archived" | "sourceMeta" | "title">
+    | null
+    | undefined,
+) {
+  return (
+    getPageSourceMeta(page).archivedPurpose === "plannerHistory" ||
+    (page?.archived === true && page.title === "Past Weeks")
+  );
 }
 
 function getNodeSourceMeta(node: Pick<Doc<"nodes">, "sourceMeta"> | null | undefined) {
@@ -4171,6 +4209,7 @@ async function buildPageTreeResult(
 ) {
   const warnings: string[] = [];
   const includeBacklinkMetadata = options.includeBacklinkMetadata ?? true;
+  const newestNodesFirst = isPlannerHistoryArchivePage(page);
 
   let nodes: Doc<"nodes">[] = [];
   let nodesTruncated = false;
@@ -4182,13 +4221,16 @@ async function buildPageTreeResult(
             page._id,
             options.maxNodes ?? MAX_PAGE_TREE_NODES,
             options.maxTextChars ?? MAX_PAGE_TREE_NODE_TEXT_CHARS,
+            newestNodesFirst,
           )
-        : await listPageNodesForTree(ctx, page._id);
+        : await listPageNodesForTree(ctx, page._id, newestNodesFirst);
     nodes = result.nodes;
     nodesTruncated = result.truncated;
     if (nodesTruncated) {
       warnings.push(
-        "This page is too large to load fully right now, so only the first portion is shown.",
+        newestNodesFirst
+          ? "This archive is too large to load fully right now, so only the most recent portion is shown."
+          : "This page is too large to load fully right now, so only the first portion is shown.",
       );
     }
   } catch (error) {

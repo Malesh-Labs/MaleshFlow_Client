@@ -1428,6 +1428,18 @@ function isSidebarSpecialPage(page: Doc<"pages"> | null | undefined) {
   return sourceMeta.specialPage === "sidebar";
 }
 
+function isPlannerHistoryArchivePage(page: Doc<"pages"> | null | undefined) {
+  const sourceMeta =
+    page && typeof page.sourceMeta === "object" && page.sourceMeta
+      ? (page.sourceMeta as Record<string, unknown>)
+      : {};
+
+  return (
+    sourceMeta.archivedPurpose === "plannerHistory" ||
+    (page?.archived === true && page.title === "Past Weeks")
+  );
+}
+
 function getModelPageCustomPrompt(page: Doc<"pages"> | null | undefined) {
   const sourceMeta =
     page && typeof page.sourceMeta === "object" && page.sourceMeta
@@ -4935,8 +4947,7 @@ function ConfiguredWorkspace({
     selectedPageSourceMeta?.excludeFromDataDump === true;
   const isSelectedPageDoneArchiveEnabled =
     selectedPageSourceMeta?.archiveCompletedRootTasksToDone === true;
-  const isPlannerHistoryPage =
-    selectedPageSourceMeta?.archivedPurpose === "plannerHistory";
+  const isPlannerHistoryPage = isPlannerHistoryArchivePage(selectedPage);
   const pageTitleEditorId = selectedPage ? getPageTitleEditorId(selectedPage._id) : null;
   const pageTitleTarget = useMemo(
     () =>
