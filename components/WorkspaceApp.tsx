@@ -16974,6 +16974,21 @@ function LinkPreviewLeadingTags({
   );
 }
 
+function getTaggedLinkPreviewLayoutClass(hasLeadingTags: boolean) {
+  return hasLeadingTags
+    ? "inline-flex max-w-full flex-wrap items-baseline align-baseline text-left"
+    : "inline max-w-full align-baseline text-left";
+}
+
+function getTaggedLinkPreviewTextClass(hasLeadingTags: boolean) {
+  return clsx(
+    "decoration-[1.5px] underline-offset-[3px]",
+    hasLeadingTags
+      ? "min-w-[min(10rem,100%)] flex-auto"
+      : "inline",
+  );
+}
+
 function LinkedTextPreview({
   segments,
   onFocusLine,
@@ -17108,7 +17123,8 @@ function LinkedTextPreview({
                   onOpenPage(segment.pageId!);
                 }}
                 className={clsx(
-                  "inline max-w-full cursor-pointer align-baseline text-left transition",
+                  getTaggedLinkPreviewLayoutClass(Boolean(segment.leadingTags?.length)),
+                  "cursor-pointer transition",
                   getLinkPreviewTextClass({
                     isCompleted,
                     isDimmed: segment.isDimmed,
@@ -17130,8 +17146,8 @@ function LinkedTextPreview({
               />
               {segment.text ? (
                 <span
-                  className={clsx(
-                    "inline decoration-[1.5px] underline-offset-[3px]",
+                  className={getTaggedLinkPreviewTextClass(
+                    Boolean(segment.leadingTags?.length),
                   )}
                   style={getInlinePreviewStyle({
                     strike: segment.strike || isCompleted,
@@ -17160,9 +17176,10 @@ function LinkedTextPreview({
             <span
               key={segment.key}
               className={clsx(
-                segment.leadingTags?.length
-                  ? "inline max-w-full align-baseline text-left"
-                  : "inline decoration-[1.5px] underline-offset-[3px]",
+                getTaggedLinkPreviewLayoutClass(Boolean(segment.leadingTags?.length)),
+                !segment.leadingTags?.length
+                  ? "decoration-[1.5px] underline-offset-[3px]"
+                  : "",
                 getLinkPreviewTextClass({
                   isCompleted,
                   isDimmed: segment.isDimmed,
@@ -17199,7 +17216,7 @@ function LinkedTextPreview({
               {segment.leadingTags?.length ? (
                 segment.text ? (
                   <span
-                    className="inline decoration-[1.5px] underline-offset-[3px]"
+                    className={getTaggedLinkPreviewTextClass(true)}
                     style={getInlinePreviewStyle({
                       strike: segment.strike || isCompleted,
                       italic: segment.italic,
@@ -17405,7 +17422,7 @@ function LinkPreviewMeasure({
           <span
             key={segment.key}
             className={clsx(
-              "inline max-w-full align-baseline text-left",
+              getTaggedLinkPreviewLayoutClass(Boolean(segment.leadingTags?.length)),
               getLinkPreviewTextClass({
                 isCompleted,
                 isDimmed: segment.isDimmed,
@@ -17428,8 +17445,8 @@ function LinkPreviewMeasure({
             />
             {segment.text ? (
               <span
-                className={clsx(
-                  "inline decoration-[1.5px] underline-offset-[3px]",
+                className={getTaggedLinkPreviewTextClass(
+                  Boolean(segment.leadingTags?.length),
                 )}
                 style={getInlinePreviewStyle({
                   strike: segment.strike || isCompleted,
