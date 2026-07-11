@@ -16995,7 +16995,7 @@ function getTaggedLinkPreviewTextClass(hasLeadingTags: boolean) {
   return clsx(
     "decoration-[1.5px] underline-offset-[3px]",
     hasLeadingTags
-      ? "min-w-[min(10rem,100%)] flex-auto"
+      ? "min-w-[min(10rem,100%)] flex-[0_1_auto] text-left"
       : "inline",
   );
 }
