@@ -16985,21 +16985,6 @@ function LinkPreviewLeadingTags({
   );
 }
 
-function getTaggedLinkPreviewLayoutClass(hasLeadingTags: boolean) {
-  return hasLeadingTags
-    ? "inline-flex max-w-full flex-wrap items-baseline align-baseline text-left"
-    : "inline max-w-full align-baseline text-left";
-}
-
-function getTaggedLinkPreviewTextClass(hasLeadingTags: boolean) {
-  return clsx(
-    "decoration-[1.5px] underline-offset-[3px]",
-    hasLeadingTags
-      ? "min-w-[min(10rem,100%)] flex-[0_1_auto] text-left"
-      : "inline",
-  );
-}
-
 function LinkedTextPreview({
   segments,
   onFocusLine,
@@ -17115,35 +17100,44 @@ function LinkedTextPreview({
           ) : segment.pageId !== null ? (
             <span
               key={segment.key}
-              className="inline max-w-full align-baseline"
+              role="link"
+              tabIndex={0}
+              data-inline-preview-interactive="true"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+              }}
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (segment.linkKind === "node" && segment.nodeId) {
+                  onOpenNode(segment.pageId!, segment.nodeId);
+                  return;
+                }
+                onOpenPage(segment.pageId!);
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") {
+                  return;
+                }
+                event.preventDefault();
+                event.stopPropagation();
+                if (segment.linkKind === "node" && segment.nodeId) {
+                  onOpenNode(segment.pageId!, segment.nodeId);
+                  return;
+                }
+                onOpenPage(segment.pageId!);
+              }}
+              className={clsx(
+                "inline max-w-full cursor-pointer align-baseline text-left transition",
+                getLinkPreviewTextClass({
+                  isCompleted,
+                  isDimmed: segment.isDimmed,
+                  interactive: true,
+                }),
+                segment.archived ? "opacity-75" : "",
+              )}
             >
-              <button
-                type="button"
-                data-inline-preview-interactive="true"
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                }}
-                onClick={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  if (segment.linkKind === "node" && segment.nodeId) {
-                    onOpenNode(segment.pageId!, segment.nodeId);
-                    return;
-                  }
-                  onOpenPage(segment.pageId!);
-                }}
-                className={clsx(
-                  getTaggedLinkPreviewLayoutClass(Boolean(segment.leadingTags?.length)),
-                  "cursor-pointer transition",
-                  getLinkPreviewTextClass({
-                    isCompleted,
-                    isDimmed: segment.isDimmed,
-                    interactive: true,
-                  }),
-                  segment.archived ? "opacity-75" : "",
-                )}
-              >
               <LinkPreviewLeadingTags
                 tags={segment.leadingTags}
                 isCompleted={isCompleted}
@@ -17157,9 +17151,7 @@ function LinkedTextPreview({
               />
               {segment.text ? (
                 <span
-                  className={getTaggedLinkPreviewTextClass(
-                    Boolean(segment.leadingTags?.length),
-                  )}
+                  className="inline decoration-[1.5px] underline-offset-[3px]"
                   style={getInlinePreviewStyle({
                     strike: segment.strike || isCompleted,
                     italic: segment.italic,
@@ -17181,13 +17173,12 @@ function LinkedTextPreview({
                   {segment.pageTypeBadge}
                 </span>
               ) : null}
-              </button>
             </span>
           ) : (
             <span
               key={segment.key}
               className={clsx(
-                getTaggedLinkPreviewLayoutClass(Boolean(segment.leadingTags?.length)),
+                "inline max-w-full align-baseline text-left",
                 !segment.leadingTags?.length
                   ? "decoration-[1.5px] underline-offset-[3px]"
                   : "",
@@ -17227,7 +17218,7 @@ function LinkedTextPreview({
               {segment.leadingTags?.length ? (
                 segment.text ? (
                   <span
-                    className={getTaggedLinkPreviewTextClass(true)}
+                    className="inline decoration-[1.5px] underline-offset-[3px]"
                     style={getInlinePreviewStyle({
                       strike: segment.strike || isCompleted,
                       italic: segment.italic,
@@ -17433,7 +17424,7 @@ function LinkPreviewMeasure({
           <span
             key={segment.key}
             className={clsx(
-              getTaggedLinkPreviewLayoutClass(Boolean(segment.leadingTags?.length)),
+              "inline max-w-full align-baseline text-left",
               getLinkPreviewTextClass({
                 isCompleted,
                 isDimmed: segment.isDimmed,
@@ -17456,9 +17447,7 @@ function LinkPreviewMeasure({
             />
             {segment.text ? (
               <span
-                className={getTaggedLinkPreviewTextClass(
-                  Boolean(segment.leadingTags?.length),
-                )}
+                className="inline decoration-[1.5px] underline-offset-[3px]"
                 style={getInlinePreviewStyle({
                   strike: segment.strike || isCompleted,
                   italic: segment.italic,
@@ -20480,7 +20469,9 @@ function OutlineNodeEditor({
           const isTextSelectionTarget = isTextEntryElement(event.target);
           const isInteractiveSurfaceTarget =
             event.target instanceof HTMLElement &&
-            event.target.closest("button, a, [contenteditable='true']");
+            event.target.closest(
+              "button, a, [data-inline-preview-interactive='true'], [contenteditable='true']",
+            );
           const activeEditorNodeId =
             document.activeElement instanceof HTMLElement
               ? document.activeElement.closest<HTMLElement>("[data-node-id]")?.dataset.nodeId ??
