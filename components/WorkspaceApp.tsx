@@ -2120,7 +2120,7 @@ function getDocumentTitle(pageTitle: string | null | undefined) {
   return trimmedTitle && trimmedTitle.length > 0 ? trimmedTitle : "Malesh Flow";
 }
 
-function getPaletteDocumentTitle(mode: PaletteMode) {
+function getPaletteDocumentTitle(mode: PaletteMode): string {
   switch (mode) {
     case "pages":
       return "Search Pages";
@@ -2144,6 +2144,8 @@ function getPaletteDocumentTitle(mode: PaletteMode) {
       return "Search Legacy";
     case "legacyViewer":
       return "View Legacy";
+    case "overdueTasks":
+      return "Past Due Tasks";
     case "taskSchedule":
       return "Task Schedule";
     case "noteDate":
