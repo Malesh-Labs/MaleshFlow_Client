@@ -6415,13 +6415,16 @@ function ConfiguredWorkspace({
       const dueLabel = formatDueDateRange(result.node.dueAt, result.node.dueEndAt ?? null);
       return [
         result.node.text,
-        normalizeNodeLinkPreviewDisplay(result.node.text).text,
+        normalizeNodeLinkPreviewDisplay(result.node.text, {
+          pagesByTitle,
+          pagesById,
+        }).text,
         result.page?.title ?? "",
         result.parentNode?.text ?? "",
         dueLabel,
       ].some((value) => value.toLowerCase().includes(normalizedQuery));
     });
-  }, [overdueTaskQueryResults, paletteQuery]);
+  }, [overdueTaskQueryResults, pagesById, pagesByTitle, paletteQuery]);
   const workspaceChatMessages = workspaceKnowledgeThread?.messages ?? [];
   const embeddingProgressLabel = useMemo(() => {
     if (!embeddingRebuildProgress) {
@@ -14766,7 +14769,10 @@ function ConfiguredWorkspace({
                     result.node.dueEndAt ?? null,
                   );
                   const taskTitle =
-                    normalizeNodeLinkPreviewDisplay(result.node.text).text ||
+                    normalizeNodeLinkPreviewDisplay(result.node.text, {
+                      pagesByTitle,
+                      pagesById,
+                    }).text ||
                     result.node.text ||
                     "(empty task)";
 
