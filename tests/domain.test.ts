@@ -25,7 +25,12 @@ import {
   buildJournalFeedbackUserPrompt,
   buildModelRewriteUserPrompt,
 } from "../lib/domain/aiPrompts";
-import { extractTagMatches, extractTags, stripTagsFromText } from "../lib/domain/tags";
+import {
+  extractTagMatches,
+  extractTags,
+  splitEdgeTagMatches,
+  stripTagsFromText,
+} from "../lib/domain/tags";
 import { parseMarkdownFile, serializePageToMarkdown } from "../lib/domain/markdown";
 import {
   buildDeterministicEmbedding,
@@ -51,6 +56,7 @@ import {
 import {
   buildFocusedOutlineContext,
   buildOutlineTree,
+  numberOutlineItemText,
 } from "../lib/domain/outline";
 import {
   advanceRecurringDueDate,
@@ -1295,6 +1301,20 @@ test("extractTagMatches recognizes tags inside italic markers", () => {
         value: "malesh/labs/fanswap",
       },
     ],
+  );
+});
+
+test("splitEdgeTagMatches separates leading and trailing tag badges", () => {
+  const result = splitEdgeTagMatches("#start Linked node text #first #second");
+
+  assert.deepEqual(
+    result.leadingTags.map((tag) => tag.label),
+    ["#start"],
+  );
+  assert.equal(result.text, "Linked node text");
+  assert.deepEqual(
+    result.trailingTags.map((tag) => tag.label),
+    ["#first", "#second"],
   );
 });
 
@@ -2990,6 +3010,15 @@ test("buildOutlineTree keeps ordinary roots ordered by position", () => {
     tree.map((node) => node._id),
     ["earlier-position", "later-position"],
   );
+});
+
+test("numberOutlineItemText adds and refreshes ordered prefixes", () => {
+  assert.equal(numberOutlineItemText("First item", 0), "1. First item");
+  assert.equal(numberOutlineItemText("9. Existing number", 1), "2. Existing number");
+  assert.equal(numberOutlineItemText("3) Existing number", 2), "3. Existing number");
+  assert.equal(numberOutlineItemText("%% Dimmed item", 3), "%% 4. Dimmed item");
+  assert.equal(numberOutlineItemText("# Heading item", 4), "# 5. Heading item");
+  assert.equal(numberOutlineItemText("First line\nSecond line", 5), "6. First line\nSecond line");
 });
 
 test("buildDeterministicEmbedding is stable and uses contextual input", () => {

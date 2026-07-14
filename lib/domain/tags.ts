@@ -56,6 +56,41 @@ export function extractTags(text: string) {
   return extractTagMatches(text).map((match) => match.value);
 }
 
+export function splitEdgeTagMatches(text: string) {
+  let remaining = text.trimStart();
+  const leadingTags: ExtractedTagMatch[] = [];
+  const trailingTags: ExtractedTagMatch[] = [];
+
+  while (remaining.length > 0) {
+    const tagMatch = extractTagMatches(remaining).find((match) => match.start === 0);
+    if (!tagMatch) {
+      break;
+    }
+
+    leadingTags.push(tagMatch);
+    remaining = remaining.slice(tagMatch.end).trimStart();
+  }
+
+  remaining = remaining.trimEnd();
+  while (remaining.length > 0) {
+    const tagMatch = extractTagMatches(remaining).find(
+      (match) => match.end === remaining.length,
+    );
+    if (!tagMatch) {
+      break;
+    }
+
+    trailingTags.unshift(tagMatch);
+    remaining = remaining.slice(0, tagMatch.start).trimEnd();
+  }
+
+  return {
+    leadingTags,
+    trailingTags,
+    text: remaining,
+  };
+}
+
 export function stripTagsFromText(text: string) {
   const matches = extractTagMatches(text);
   if (matches.length === 0) {

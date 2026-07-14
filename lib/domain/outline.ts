@@ -21,6 +21,16 @@ export type OutlineTreeNode<T extends OutlineNodeLike> = T & {
   children: Array<OutlineTreeNode<T>>;
 };
 
+const NUMBERED_ITEM_PREFIX_PATTERN =
+  /^(\s*(?:%%\s*)?(?:#{1,3}\s+)?)(?:\d+[.)]\s+)?([\s\S]*)$/;
+
+export function numberOutlineItemText(value: string, index: number) {
+  const match = value.match(NUMBERED_ITEM_PREFIX_PATTERN);
+  const syntaxPrefix = match?.[1] ?? "";
+  const itemText = match?.[2] ?? value;
+  return `${syntaxPrefix}${index + 1}. ${itemText}`;
+}
+
 type OutlineTreeOptions = {
   rootOrder?: "position" | "recentlyAdded";
 };

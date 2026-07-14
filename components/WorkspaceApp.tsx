@@ -58,6 +58,7 @@ import {
 import {
   buildFocusedOutlineContext,
   buildOutlineTree,
+  numberOutlineItemText,
   type OutlineTreeNode,
 } from "@/lib/domain/outline";
 import {
@@ -81,7 +82,11 @@ import {
   replaceLinkMarkupWithLabels,
   sanitizeGeneratedWikiLinkLabel,
 } from "@/lib/domain/links";
-import { extractTagMatches, stripTagsFromText } from "@/lib/domain/tags";
+import {
+  extractTagMatches,
+  splitEdgeTagMatches,
+  stripTagsFromText,
+} from "@/lib/domain/tags";
 import {
   buildPageBacklinkFindQuery,
   buildNodeSelectionIds,
@@ -409,6 +414,7 @@ const PINNED_ACTION_SYMBOL_BY_KEY: Record<string, string> = {
   "resolve-empty-links": "⟲",
   "view-shortcuts": "⌘",
   "collapse-all": "▾",
+  "number-children": "№",
   "move-selected": "↗",
   "view-overdue-tasks": "!",
   "task-schedule": "◴",
@@ -535,6 +541,7 @@ type LinkPreviewSegment =
       isDimmed?: boolean;
       pageTypeBadge?: string | null;
       leadingTags?: LinkPreviewTagBadge[];
+      trailingTags?: LinkPreviewTagBadge[];
       showChildren?: boolean;
     }
   | {
@@ -2742,30 +2749,22 @@ function normalizeNodeLinkPreviewDisplay(
   };
 }
 
-function splitLeadingTagBadges(value: string): {
+function splitEdgeTagBadges(value: string): {
   leadingTags: LinkPreviewTagBadge[];
+  trailingTags: LinkPreviewTagBadge[];
   text: string;
 } {
-  let remaining = value.trimStart();
-  const leadingTags: LinkPreviewTagBadge[] = [];
-
-  while (remaining.length > 0) {
-    const tagMatch = extractTagMatches(remaining).find((match) => match.start === 0);
-    if (!tagMatch) {
-      break;
-    }
-
-    leadingTags.push({
-      text: tagMatch.label,
-      value: tagMatch.value,
-      normalizedValue: tagMatch.normalizedValue,
-    });
-    remaining = remaining.slice(tagMatch.end).trimStart();
-  }
+  const { leadingTags, trailingTags, text } = splitEdgeTagMatches(value);
+  const toBadge = (tagMatch: (typeof leadingTags)[number]) => ({
+    text: tagMatch.label,
+    value: tagMatch.value,
+    normalizedValue: tagMatch.normalizedValue,
+  });
 
   return {
-    leadingTags,
-    text: remaining,
+    leadingTags: leadingTags.map(toBadge),
+    trailingTags: trailingTags.map(toBadge),
+    text,
   };
 }
 
@@ -2876,8 +2875,8 @@ function buildLinkPreviewSegments(
         ? `${visibleChildNodeText} (${visibleParentNodeText})`
         : visibleChildNodeText;
       const renderedNodeParts = match.link.hideTags
-        ? { leadingTags: [], text: renderedNodeText.trimStart() }
-        : splitLeadingTagBadges(renderedNodeText);
+        ? { leadingTags: [], trailingTags: [], text: renderedNodeText.trim() }
+        : splitEdgeTagBadges(renderedNodeText);
       segments.push({
         key: `node:${match.start}`,
         kind: "link",
@@ -2896,6 +2895,10 @@ function buildLinkPreviewSegments(
         leadingTags:
           renderedNodeParts.leadingTags.length > 0
             ? renderedNodeParts.leadingTags
+            : undefined,
+        trailingTags:
+          renderedNodeParts.trailingTags.length > 0
+            ? renderedNodeParts.trailingTags
             : undefined,
         showChildren: match.link.showChildren === true,
       });
@@ -5786,6 +5789,42 @@ function ConfiguredWorkspace({
 
     return selectedPage;
   }, [favoriteTargetNode, pagesById, selectedPage]);
+  const numberChildrenContextNode = useMemo(() => {
+    if (!paletteContextNodeId) {
+      return null;
+    }
+
+    const node = workspaceNodeMap.get(paletteContextNodeId) ?? null;
+    if (!node || node.archived || isOptimisticNodeId(node._id as string)) {
+      return null;
+    }
+
+    const page = pagesById.get(node.pageId as string) ?? null;
+    return page && !page.archived ? node : null;
+  }, [paletteContextNodeId, pagesById, workspaceNodeMap]);
+  const numberChildrenTargetPage = numberChildrenContextNode
+    ? (pagesById.get(numberChildrenContextNode.pageId as string) ?? null)
+    : selectedPage && !selectedPage.archived && !isSidebarSpecialPage(selectedPage)
+      ? selectedPage
+      : null;
+  const numberChildrenTargetNodes = useMemo(() => {
+    if (!numberChildrenTargetPage) {
+      return [] as Doc<"nodes">[];
+    }
+
+    const parentNodeId = numberChildrenContextNode?._id ?? null;
+    return [...workspaceNodeMap.values()]
+      .filter(
+        (node) =>
+          node.pageId === numberChildrenTargetPage._id &&
+          ((node.parentNodeId as Id<"nodes"> | null) ?? null) === parentNodeId &&
+          !node.archived &&
+          !isOptimisticNodeId(node._id as string) &&
+          !isNodeLocked(node) &&
+          !isSeparatorLineText(node.text),
+      )
+      .sort((left, right) => left.position - right.position);
+  }, [numberChildrenContextNode, numberChildrenTargetPage, workspaceNodeMap]);
   const taskScheduleEffectiveDueRange = useMemo(
     () =>
       taskScheduleTargetNode
@@ -7943,6 +7982,75 @@ function ConfiguredWorkspace({
     setPageDataDumpExcluded,
   ]);
 
+  const handleNumberChildren = useCallback(async () => {
+    if (numberChildrenTargetNodes.length === 0) {
+      return;
+    }
+
+    const historyEntries: Array<Extract<HistoryEntry, { type: "update_node" }>> = [];
+    const updates: Array<{ nodeId: Id<"nodes">; text: string }> = [];
+
+    numberChildrenTargetNodes.forEach((node, index) => {
+      const nextText = numberOutlineItemText(node.text, index);
+      if (nextText === node.text) {
+        return;
+      }
+
+      const beforeSnapshot = toNodeValueSnapshot(node);
+      const afterSnapshot = withNodeScheduleSnapshot(
+        { ...beforeSnapshot, text: nextText },
+        node,
+      );
+      updates.push({
+        nodeId: node._id as Id<"nodes">,
+        text: nextText,
+      });
+      historyEntries.push({
+        type: "update_node",
+        pageId: node.pageId as Id<"pages">,
+        nodeId: node._id as Id<"nodes">,
+        before: beforeSnapshot,
+        after: afterSnapshot,
+        focusEditorId: getNodeEditorId(node._id as Id<"nodes">),
+      });
+    });
+
+    try {
+      await executeNodeUpdateBatch(updates);
+    } catch (error) {
+      setCopySnackbarMessage(
+        getNodeActionErrorMessage(error, "Could not number those children."),
+      );
+      return;
+    }
+
+    if (historyEntries.length === 1) {
+      history.pushUndoEntry(historyEntries[0]!);
+    } else if (historyEntries.length > 1) {
+      history.pushUndoEntry({
+        type: "compound",
+        pageId: historyEntries[0]!.pageId,
+        entries: historyEntries,
+        focusAfterUndoId: historyEntries[0]!.focusEditorId,
+        focusAfterRedoId: historyEntries[historyEntries.length - 1]!.focusEditorId,
+      });
+    }
+
+    setCopySnackbarMessage(
+      updates.length === 0
+        ? "Those children are already numbered."
+        : `Numbered ${updates.length} child item${updates.length === 1 ? "" : "s"}.`,
+    );
+    setPaletteOpen(false);
+    setPaletteQuery("");
+    setPaletteMode("pages");
+  }, [
+    executeNodeUpdateBatch,
+    history,
+    numberChildrenTargetNodes,
+    setCopySnackbarMessage,
+  ]);
+
   const handleSelectNoPage = useCallback(() => {
     setIsWorkspaceChatOpen(false);
     setPendingPalettePageAction(null);
@@ -8278,6 +8386,33 @@ function ConfiguredWorkspace({
         },
       },
       {
+        key: "number-children",
+        title: "Number Children",
+        subtitle: numberChildrenTargetPage
+          ? numberChildrenTargetNodes.length > 0
+            ? numberChildrenContextNode
+              ? `Number ${numberChildrenTargetNodes.length} immediate child item${numberChildrenTargetNodes.length === 1 ? "" : "s"} under ${numberChildrenContextNode.text || "the selected item"}.`
+              : `Number ${numberChildrenTargetNodes.length} root item${numberChildrenTargetNodes.length === 1 ? "" : "s"} on ${numberChildrenTargetPage.title}.`
+            : numberChildrenContextNode
+              ? "The selected item has no editable children to number."
+              : `${numberChildrenTargetPage.title} has no editable root items to number.`
+          : "Select an item or open an active page first.",
+        keywords: [
+          "number",
+          "number children",
+          "number items",
+          "ordered list",
+          "outline",
+          "children",
+          "page",
+        ],
+        actionLabel: "Number",
+        disabled: numberChildrenTargetNodes.length === 0,
+        onSelect: () => {
+          void handleNumberChildren();
+        },
+      },
+      {
         key: "move-selected",
         title: "Move",
         subtitle:
@@ -8494,6 +8629,7 @@ function ConfiguredWorkspace({
     handleResetLocalState,
     handleSelectNoPage,
     handleToggleSelectedPageDataDumpExcluded,
+    handleNumberChildren,
     favoriteTargetNode,
     favoriteTargetPage,
     favoritedNodeIds,
@@ -8509,6 +8645,9 @@ function ConfiguredWorkspace({
     isWorkspaceChatOpen,
     noteDateSummary,
     noteDateTargetNode,
+    numberChildrenContextNode,
+    numberChildrenTargetNodes,
+    numberChildrenTargetPage,
     ownerKey,
     openNoteDatePalette,
     openTaskSchedulePalette,
@@ -16993,6 +17132,37 @@ function LinkPreviewLeadingTags({
   );
 }
 
+function LinkPreviewTrailingTags({
+  tags,
+  isCompleted,
+  style,
+}: {
+  tags?: LinkPreviewTagBadge[];
+  isCompleted: boolean;
+  style: CSSProperties;
+}) {
+  if (!tags?.length) {
+    return null;
+  }
+
+  return (
+    <>
+      {tags.map((tag, index) => (
+        <span
+          key={`${tag.normalizedValue}:${index}`}
+          className={clsx(
+            getTagPreviewClass({ interactive: false, isCompleted }),
+            "ml-1",
+          )}
+          style={style}
+        >
+          {tag.text}
+        </span>
+      ))}
+    </>
+  );
+}
+
 function LinkedTextPreview({
   segments,
   onFocusLine,
@@ -17171,6 +17341,17 @@ function LinkedTextPreview({
                   {segment.text}
                 </span>
               ) : null}
+              <LinkPreviewTrailingTags
+                tags={segment.trailingTags}
+                isCompleted={isCompleted}
+                style={getInlinePreviewStyle({
+                  strike: segment.strike || isCompleted,
+                  italic: segment.italic,
+                  bold: segment.bold,
+                  code: segment.code,
+                  underline: false,
+                })}
+              />
               {segment.pageTypeBadge ? (
                 <span
                   className={clsx(
@@ -17187,7 +17368,7 @@ function LinkedTextPreview({
               key={segment.key}
               className={clsx(
                 "inline max-w-full align-baseline text-left",
-                !segment.leadingTags?.length
+                !segment.leadingTags?.length && !segment.trailingTags?.length
                   ? "decoration-[1.5px] underline-offset-[3px]"
                   : "",
                 getLinkPreviewTextClass({
@@ -17201,7 +17382,7 @@ function LinkedTextPreview({
                 segment.resolved ? "" : "opacity-80",
               )}
               style={
-                segment.leadingTags?.length
+                segment.leadingTags?.length || segment.trailingTags?.length
                   ? undefined
                   : getInlinePreviewStyle({
                       strike: segment.strike || isCompleted,
@@ -17223,7 +17404,7 @@ function LinkedTextPreview({
                   underline: false,
                 })}
               />
-              {segment.leadingTags?.length ? (
+              {segment.leadingTags?.length || segment.trailingTags?.length ? (
                 segment.text ? (
                   <span
                     className="inline decoration-[1.5px] underline-offset-[3px]"
@@ -17241,6 +17422,17 @@ function LinkedTextPreview({
               ) : (
                 segment.text
               )}
+              <LinkPreviewTrailingTags
+                tags={segment.trailingTags}
+                isCompleted={isCompleted}
+                style={getInlinePreviewStyle({
+                  strike: segment.strike || isCompleted,
+                  italic: segment.italic,
+                  bold: segment.bold,
+                  code: segment.code,
+                  underline: false,
+                })}
+              />
             </span>
           )
         ),
@@ -17467,6 +17659,17 @@ function LinkPreviewMeasure({
                 {segment.text}
               </span>
             ) : null}
+            <LinkPreviewTrailingTags
+              tags={segment.trailingTags}
+              isCompleted={isCompleted}
+              style={getInlinePreviewStyle({
+                strike: segment.strike || isCompleted,
+                italic: segment.italic,
+                bold: segment.bold,
+                code: segment.code,
+                underline: false,
+              })}
+            />
             {segment.pageTypeBadge ? (
               <span
                 className={clsx(
