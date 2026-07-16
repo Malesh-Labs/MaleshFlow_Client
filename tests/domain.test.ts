@@ -42,6 +42,7 @@ import {
 import {
   buildTaskCalendarIcs,
   normalizeCalendarTaskText,
+  normalizeCalendarTaskTextWithNodeLinks,
 } from "../lib/domain/calendar";
 import {
   applySelectedInlineFormattingShortcut,
@@ -956,6 +957,26 @@ test("normalizeCalendarTaskText removes link markup and inline formatting", () =
   assert.equal(
     normalizeCalendarTaskText("**Pay** __[taxes](https://example.com)__ for [[Home|page:abc]]"),
     "Pay taxes for Home",
+  );
+});
+
+test("normalizeCalendarTaskTextWithNodeLinks resolves bare node links in place", () => {
+  const linkedNodeId = "k179vk3egynhpe5fb9j36vgwsx84dmdc";
+  const nodeTextById = new Map([[linkedNodeId, "Dentist appointment"]]);
+
+  assert.equal(
+    normalizeCalendarTaskTextWithNodeLinks(
+      `[[node:${linkedNodeId}]] at 2:30pm`,
+      nodeTextById,
+    ),
+    "Dentist appointment at 2:30pm",
+  );
+  assert.equal(
+    normalizeCalendarTaskTextWithNodeLinks(
+      `[[Custom label|node:${linkedNodeId}]] at 2:30pm`,
+      nodeTextById,
+    ),
+    "Custom label at 2:30pm",
   );
 });
 

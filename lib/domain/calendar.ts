@@ -1,5 +1,9 @@
 import { extractTags } from "./tags";
-import { replaceLinkMarkupWithLabels } from "./links";
+import {
+  extractLinkMatches,
+  getExplicitWikiLinkPreviewText,
+  replaceLinkMarkupWithLabels,
+} from "./links";
 import { timestampToDateInputValue } from "./recurrence";
 
 export type TaskCalendarFeedEvent = {
@@ -75,6 +79,40 @@ export function normalizeCalendarTaskText(text: string) {
     .replace(/(\*\*|__|~~|`)/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+export function normalizeCalendarTaskTextWithNodeLinks(
+  text: string,
+  nodeTextById: ReadonlyMap<string, string>,
+) {
+  const matches = extractLinkMatches(text);
+  if (matches.length === 0) {
+    return normalizeCalendarTaskText(text);
+  }
+
+  let cursor = 0;
+  let resolvedText = "";
+  for (const match of matches) {
+    if (match.start > cursor) {
+      resolvedText += text.slice(cursor, match.start);
+    }
+
+    if (match.link.kind === "node") {
+      resolvedText +=
+        getExplicitWikiLinkPreviewText(match.link.label) ||
+        nodeTextById.get(match.link.targetNodeRef) ||
+        "";
+    } else {
+      resolvedText += text.slice(match.start, match.end);
+    }
+    cursor = match.end;
+  }
+
+  if (cursor < text.length) {
+    resolvedText += text.slice(cursor);
+  }
+
+  return normalizeCalendarTaskText(resolvedText);
 }
 
 export function extractCalendarTaskCategories(text: string) {

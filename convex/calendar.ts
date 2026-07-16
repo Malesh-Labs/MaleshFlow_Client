@@ -9,11 +9,11 @@ import {
 } from "./lib/planner";
 import {
   extractCalendarTaskCategories,
-  normalizeCalendarTaskText,
+  normalizeCalendarTaskTextWithNodeLinks,
   type TaskCalendarFeed,
   type TaskCalendarFeedEvent,
 } from "../lib/domain/calendar";
-import { extractLinks } from "../lib/domain/links";
+import { extractLinks, getExplicitWikiLinkPreviewText } from "../lib/domain/links";
 
 const TASK_CALENDAR_FEED_KIND = "task_ics";
 
@@ -45,25 +45,37 @@ function getTaskCalendarFeedUrl(token: string) {
 async function resolveCalendarTaskSummary(
   db: {
     get: (id: Id<"nodes">) => Promise<Doc<"nodes"> | null>;
+    normalizeId: (tableName: "nodes", id: string) => Id<"nodes"> | null;
   },
   text: string,
 ) {
-  const normalized = normalizeCalendarTaskText(text);
-  if (normalized.length > 0) {
-    return normalized;
-  }
+  const nodeRefs = [
+    ...new Set(
+      extractLinks(text)
+        .filter(
+          (link) =>
+            link.kind === "node" &&
+            getExplicitWikiLinkPreviewText(link.label).length === 0,
+        )
+        .map((link) =>
+          link.kind === "node" ? link.targetNodeRef : "",
+        )
+        .filter((nodeRef) => nodeRef.length > 0),
+    ),
+  ];
+  const nodeIds = nodeRefs
+    .map((nodeRef) => db.normalizeId("nodes", nodeRef))
+    .filter((nodeId): nodeId is Id<"nodes"> => nodeId !== null);
+  const referencedNodes = await Promise.all(
+    nodeIds.map((nodeId) => db.get(nodeId)),
+  );
+  const nodeTextById = new Map(
+    referencedNodes
+      .filter((node): node is Doc<"nodes"> => node !== null)
+      .map((node) => [node._id as string, node.text]),
+  );
 
-  const links = extractLinks(text.trim());
-  if (links.length !== 1 || links[0]?.kind !== "node" || !links[0].targetNodeRef) {
-    return "Untitled Task";
-  }
-
-  const referencedNode = await db.get(links[0].targetNodeRef as Id<"nodes">);
-  if (!referencedNode) {
-    return "Untitled Task";
-  }
-
-  return normalizeCalendarTaskText(referencedNode.text) || "Untitled Task";
+  return normalizeCalendarTaskTextWithNodeLinks(text, nodeTextById) || "Untitled Task";
 }
 
 function buildCalendarTaskDescription(args: {
