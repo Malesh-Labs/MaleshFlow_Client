@@ -6,6 +6,7 @@ import {
   extractLinkMatches,
   extractLinks,
   getExplicitWikiLinkPreviewText,
+  replaceNodeLinkMarkupWithResolvedText,
   replaceLinkMarkupWithLabels,
   rewriteMatchingPageWikiLinks,
   rewritePlainPageWikiLinksToNode,
@@ -777,6 +778,30 @@ test("replaceLinkMarkupWithLabels consumes trailing parent node link options", (
   assert.equal(
     replaceLinkMarkupWithLabels("See [[Custom label|node:node_456]]?hideTags&showChildren now."),
     "See Custom label now.",
+  );
+});
+
+test("replaceNodeLinkMarkupWithResolvedText expands nested bare node labels", () => {
+  const outerNodeId = "k17000000000000000000000000000001";
+  const innerNodeId = "k17000000000000000000000000000002";
+  const nodeTextById = new Map([
+    [outerNodeId, `going to [[node:${innerNodeId}]]`],
+    [innerNodeId, "Honolulu"],
+  ]);
+
+  assert.equal(
+    replaceNodeLinkMarkupWithResolvedText(
+      `[[node:${outerNodeId}]]`,
+      nodeTextById,
+    ),
+    "going to Honolulu",
+  );
+  assert.equal(
+    replaceNodeLinkMarkupWithResolvedText(
+      `[[Custom trip|node:${outerNodeId}]]`,
+      nodeTextById,
+    ),
+    "Custom trip",
   );
 });
 

@@ -498,6 +498,71 @@ export function replaceLinkMarkupWithLabels(text: string) {
   return replaceLinkMarkup(text, (match) => getReadableLinkLabel(match));
 }
 
+export function replaceNodeLinkMarkupWithResolvedText(
+  text: string,
+  nodeTextById: ReadonlyMap<string, string> | Readonly<Record<string, string>>,
+  options: {
+    maxDepth?: number;
+  } = {},
+) {
+  const maxDepth = Math.max(1, options.maxDepth ?? 3);
+  const nodeTextMap = nodeTextById as ReadonlyMap<string, string>;
+  const nodeTextRecord = nodeTextById as Readonly<Record<string, string>>;
+  const getNodeText = (nodeId: string) =>
+    typeof nodeTextMap.get === "function"
+      ? nodeTextMap.get(nodeId)
+      : nodeTextRecord[nodeId];
+
+  const resolveText = (value: string, depth: number, ancestorNodeIds: Set<string>): string => {
+    const matches = extractLinkMatches(value);
+    if (matches.length === 0) {
+      return value;
+    }
+
+    let cursor = 0;
+    let nextText = "";
+    for (const match of matches) {
+      if (match.start > cursor) {
+        nextText += value.slice(cursor, match.start);
+      }
+
+      if (match.link.kind !== "node") {
+        nextText += value.slice(match.start, match.end);
+        cursor = match.end;
+        continue;
+      }
+
+      const explicitLabel = getExplicitWikiLinkPreviewText(match.link.label);
+      if (explicitLabel) {
+        nextText += explicitLabel;
+        cursor = match.end;
+        continue;
+      }
+
+      const targetNodeId = match.link.targetNodeRef;
+      const targetText = getNodeText(targetNodeId);
+      if (
+        targetText !== undefined &&
+        depth < maxDepth &&
+        !ancestorNodeIds.has(targetNodeId)
+      ) {
+        const nextAncestorNodeIds = new Set(ancestorNodeIds);
+        nextAncestorNodeIds.add(targetNodeId);
+        nextText += resolveText(targetText, depth + 1, nextAncestorNodeIds);
+      }
+      cursor = match.end;
+    }
+
+    if (cursor < value.length) {
+      nextText += value.slice(cursor);
+    }
+
+    return nextText;
+  };
+
+  return resolveText(text, 0, new Set());
+}
+
 export function sanitizeGeneratedWikiLinkLabel(value: string) {
   return (
     replaceLinkMarkupWithLabels(value)

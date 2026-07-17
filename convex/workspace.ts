@@ -113,6 +113,8 @@ const MAX_MULTI_PAGE_VIEW_TEXT_CHARS = 250_000;
 const MAX_MULTI_PAGE_VIEW_NODE_TREE_NODES = 300;
 const MAX_NODE_LINK_CHILD_TREE_NODES = 500;
 const MAX_NODE_LINK_CHILD_TREE_TEXT_CHARS = 100_000;
+const MAX_NODE_LINK_PREVIEW_DEPTH = 3;
+const MAX_NODE_LINK_PREVIEW_NESTED_NODES = 50;
 const MAX_NODE_AI_ANCESTOR_DEPTH = 40;
 const MAX_NODE_AI_SUBTREE_NODES = 2000;
 const PAGE_DELETE_NODE_BATCH_SIZE = 100;
@@ -4082,6 +4084,69 @@ export const resolveNodeLinks = query({
         .map((node) => [node._id, node]),
     );
 
+    const collectNestedNodeTexts = async (
+      sourceTexts: string[],
+      excludedNodeIds: Set<string>,
+    ) => {
+      const nestedNodeTexts: Record<string, string> = {};
+      const visitedNodeIds = new Set(excludedNodeIds);
+      let nestedNodeCount = 0;
+      let frontierTexts = sourceTexts;
+
+      for (
+        let depth = 0;
+        depth < MAX_NODE_LINK_PREVIEW_DEPTH &&
+        nestedNodeCount < MAX_NODE_LINK_PREVIEW_NESTED_NODES;
+        depth += 1
+      ) {
+        const frontierNodeIds: Id<"nodes">[] = [];
+        sourceLoop:
+        for (const sourceText of frontierTexts) {
+          for (const link of extractLinks(sourceText)) {
+            if (
+              link.kind !== "node" ||
+              getExplicitWikiLinkPreviewText(link.label).length > 0 ||
+              visitedNodeIds.has(link.targetNodeRef)
+            ) {
+              continue;
+            }
+
+            const nodeId = ctx.db.normalizeId("nodes", link.targetNodeRef);
+            if (!nodeId) {
+              continue;
+            }
+            visitedNodeIds.add(nodeId as string);
+            frontierNodeIds.push(nodeId);
+            if (
+              nestedNodeCount + frontierNodeIds.length >=
+              MAX_NODE_LINK_PREVIEW_NESTED_NODES
+            ) {
+              break sourceLoop;
+            }
+          }
+        }
+
+        if (frontierNodeIds.length === 0) {
+          break;
+        }
+
+        const frontierNodes = await Promise.all(
+          frontierNodeIds.map((nodeId) => ctx.db.get(nodeId)),
+        );
+        frontierTexts = [];
+        for (const nestedNode of frontierNodes) {
+          if (!nestedNode) {
+            continue;
+          }
+          nestedNodeTexts[nestedNode._id as string] = nestedNode.text;
+          nestedNodeCount += 1;
+          frontierTexts.push(nestedNode.text);
+        }
+      }
+
+      return nestedNodeTexts;
+    };
+
     return await Promise.all(nodes
       .filter((node): node is Doc<"nodes"> => node !== null)
       .map(async (node) => {
@@ -4096,6 +4161,14 @@ export const resolveNodeLinks = query({
                 maxTextChars: MAX_NODE_LINK_CHILD_TREE_TEXT_CHARS,
               })
             : null;
+        const nestedNodeTexts = await collectNestedNodeTexts(
+          [node.text, ...(parentNode ? [parentNode.text] : [])],
+          new Set(
+            [node._id, parentNode?._id]
+              .filter((nodeId): nodeId is Id<"nodes"> => nodeId !== undefined)
+              .map((nodeId) => nodeId as string),
+          ),
+        );
         return {
           nodeId: node._id,
           pageId: page?._id ?? null,
@@ -4105,6 +4178,7 @@ export const resolveNodeLinks = query({
           parentNodeId: parentNode?._id ?? null,
           parentText: parentNode && !parentNode.archived ? parentNode.text : null,
           parentArchived: parentNode?.archived ?? false,
+          nestedNodeTexts,
           childTree,
         };
       }));

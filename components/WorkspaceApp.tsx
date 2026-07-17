@@ -79,6 +79,7 @@ import {
   convertHtmlClipboardToMarkdownText,
   extractLinkMatches,
   getExplicitWikiLinkPreviewText,
+  replaceNodeLinkMarkupWithResolvedText,
   replaceLinkMarkupWithLabels,
   sanitizeGeneratedWikiLinkLabel,
 } from "@/lib/domain/links";
@@ -487,6 +488,7 @@ type NodeLinkTargetResolution = {
   parentNodeId: Id<"nodes"> | null;
   parentText: string | null;
   parentArchived: boolean;
+  nestedNodeTexts?: Record<string, string>;
   childTree?: NodeLinkChildTreeResult | null;
 };
 type LinkSuggestion =
@@ -2685,10 +2687,14 @@ function replaceLinkMarkupWithPreviewLabels(
   value: string,
   pagesByTitle: Map<string, PageDoc>,
   pagesById: Map<string, PageDoc>,
+  nestedNodeTexts?: Readonly<Record<string, string>>,
 ) {
-  const matches = extractLinkMatches(value);
+  const previewValue = nestedNodeTexts
+    ? replaceNodeLinkMarkupWithResolvedText(value, nestedNodeTexts)
+    : value;
+  const matches = extractLinkMatches(previewValue);
   if (matches.length === 0) {
-    return value.trim();
+    return previewValue.trim();
   }
 
   let cursor = 0;
@@ -2696,7 +2702,7 @@ function replaceLinkMarkupWithPreviewLabels(
 
   for (const match of matches) {
     if (match.start > cursor) {
-      nextText += value.slice(cursor, match.start);
+      nextText += previewValue.slice(cursor, match.start);
     }
 
     if (match.link.kind === "page") {
@@ -2721,8 +2727,8 @@ function replaceLinkMarkupWithPreviewLabels(
     cursor = match.end;
   }
 
-  if (cursor < value.length) {
-    nextText += value.slice(cursor);
+  if (cursor < previewValue.length) {
+    nextText += previewValue.slice(cursor);
   }
 
   return nextText.replace(/\s+/g, " ").trim();
@@ -2733,6 +2739,7 @@ function normalizeNodeLinkPreviewDisplay(
   pageContext?: {
     pagesByTitle: Map<string, PageDoc>;
     pagesById: Map<string, PageDoc>;
+    nestedNodeTexts?: Readonly<Record<string, string>>;
   },
 ) {
   const resolvedText = pageContext
@@ -2740,6 +2747,7 @@ function normalizeNodeLinkPreviewDisplay(
         value,
         pageContext.pagesByTitle,
         pageContext.pagesById,
+        pageContext.nestedNodeTexts,
       )
     : replaceLinkMarkupWithLabels(value);
   const syntaxText = stripInlineFormattingMarkers(resolvedText);
@@ -2855,6 +2863,7 @@ function buildLinkPreviewSegments(
         ? normalizeNodeLinkPreviewDisplay(targetNode.text, {
             pagesByTitle,
             pagesById,
+            nestedNodeTexts: targetNode.nestedNodeTexts,
           })
         : { text: "", isDimmed: false };
       const parentNode =
@@ -2862,6 +2871,7 @@ function buildLinkPreviewSegments(
           ? normalizeNodeLinkPreviewDisplay(targetNode.parentText, {
               pagesByTitle,
               pagesById,
+              nestedNodeTexts: targetNode.nestedNodeTexts,
             })
           : { text: "", isDimmed: false };
       const childNodeText = nodeLabel.text || renderedTargetNode.text || "Linked node";
