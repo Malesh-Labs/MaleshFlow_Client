@@ -103,9 +103,14 @@ export function listFocusSymbolTextExemptNodeIds<T extends FocusSymbolTextExempt
   focusChildren: T[],
 ) {
   const exemptNodeIds: string[] = [];
+  let separatorCount = 0;
   for (const child of focusChildren) {
     if (isSeparatorLineText(child.text.trim())) {
-      break;
+      separatorCount += 1;
+      if (separatorCount >= 2) {
+        break;
+      }
+      continue;
     }
     exemptNodeIds.push(...collectNodeAndDescendantIds(child));
   }
