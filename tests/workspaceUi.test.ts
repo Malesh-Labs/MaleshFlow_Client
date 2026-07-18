@@ -9,6 +9,42 @@ import {
   shouldAddSpaceAfterTagAutocomplete,
   splitFindQuerySegments,
 } from "../lib/domain/workspaceUi";
+import {
+  readWorkspacePanelLocation,
+  writeWorkspacePanelLocation,
+} from "../lib/domain/workspaceLocation";
+
+test("workspace panel locations round-trip without losing the page", () => {
+  const searchParams = new URLSearchParams("page=page_123");
+  writeWorkspacePanelLocation(searchParams, {
+    kind: "palette",
+    mode: "resolveLinks",
+    nodeId: "node_456",
+  });
+
+  assert.equal(searchParams.get("page"), "page_123");
+  assert.equal(searchParams.get("panel"), "resolve-links");
+  assert.equal(searchParams.get("panelNode"), "node_456");
+  assert.deepEqual(readWorkspacePanelLocation(searchParams), {
+    kind: "palette",
+    mode: "resolveLinks",
+    nodeId: "node_456",
+  });
+
+  writeWorkspacePanelLocation(searchParams, { kind: "aiChat" });
+  assert.deepEqual(readWorkspacePanelLocation(searchParams), { kind: "aiChat" });
+  assert.equal(searchParams.get("panelNode"), null);
+
+  writeWorkspacePanelLocation(searchParams, null);
+  assert.equal(searchParams.toString(), "page=page_123");
+});
+
+test("unknown workspace panel locations are ignored", () => {
+  assert.equal(
+    readWorkspacePanelLocation(new URLSearchParams("panel=not-a-real-panel")),
+    null,
+  );
+});
 
 test("buildNodeSelectionIds returns the inclusive range between two nodes", () => {
   const selection = buildNodeSelectionIds(

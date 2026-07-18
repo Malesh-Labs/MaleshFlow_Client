@@ -97,6 +97,12 @@ import {
   shouldAddSpaceAfterTagAutocomplete,
   splitFindQuerySegments,
 } from "@/lib/domain/workspaceUi";
+import {
+  readWorkspacePanelLocation,
+  writeWorkspacePanelLocation,
+  type WorkspacePaletteMode,
+  type WorkspacePanelLocation,
+} from "@/lib/domain/workspaceLocation";
 import { DEFAULT_AI_WORKING_MEMORY_TEXT } from "@/lib/domain/aiMemory";
 import {
   getEffectiveTaskDueDateRange,
@@ -358,21 +364,7 @@ type SidebarTreeResult = {
   linkedPageIds: Id<"pages">[];
   nodeBacklinkCounts: Record<string, number>;
 };
-type PaletteMode =
-  | "pages"
-  | "find"
-  | "nodes"
-  | "actions"
-  | "replace"
-  | "resolveLinks"
-  | "archive"
-  | "importer"
-  | "legacyUpload"
-  | "legacySearch"
-  | "legacyViewer"
-  | "overdueTasks"
-  | "taskSchedule"
-  | "noteDate";
+type PaletteMode = WorkspacePaletteMode;
 const PALETTE_MODE_ORDER: PaletteMode[] = [
   "actions",
   "pages",
@@ -2180,6 +2172,42 @@ function readFocusedNodeIdFromLocation() {
   return url.searchParams.get(FOCUSED_NODE_SEARCH_PARAM);
 }
 
+function readWorkspacePanelFromLocation() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return readWorkspacePanelLocation(new URL(window.location.href).searchParams);
+}
+
+function writeWorkspacePanelToHistory(
+  location: WorkspacePanelLocation | null,
+  mode: "push" | "replace" = "replace",
+) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  writeWorkspacePanelLocation(url.searchParams, location);
+  const nextUrl = `${url.pathname}${url.search}${url.hash}`;
+  const currentUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (nextUrl === currentUrl) {
+    return;
+  }
+  const nextTitle = location
+    ? location.kind === "aiChat"
+      ? "AI Chat"
+      : getPaletteDocumentTitle(location.mode)
+    : document.title;
+  if (mode === "push") {
+    window.history.pushState(window.history.state, nextTitle, nextUrl);
+    return;
+  }
+
+  window.history.replaceState(window.history.state, nextTitle, nextUrl);
+}
+
 function focusWorkspaceAiChatInput() {
   if (typeof document === "undefined") {
     return;
@@ -2205,6 +2233,9 @@ function writePageIdToHistory(
   const url = new URL(window.location.href);
   url.searchParams.delete("node");
   url.searchParams.delete(FOCUSED_NODE_SEARCH_PARAM);
+  if (mode === "push") {
+    writeWorkspacePanelLocation(url.searchParams, null);
+  }
   if (pageId) {
     url.searchParams.set("page", pageId);
   } else {
@@ -2236,6 +2267,9 @@ function writeFocusedNodeToHistory(
 
   const url = new URL(window.location.href);
   url.searchParams.delete("node");
+  if (mode === "push") {
+    writeWorkspacePanelLocation(url.searchParams, null);
+  }
   url.searchParams.set("page", pageId);
   url.searchParams.set(FOCUSED_NODE_SEARCH_PARAM, nodeId);
 
@@ -4073,6 +4107,7 @@ function ConfiguredWorkspace({
   const [randomBoxSaveError, setRandomBoxSaveError] = useState("");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteMode, setPaletteMode] = useState<PaletteMode>("pages");
+  const [hasHydratedPanelLocation, setHasHydratedPanelLocation] = useState(false);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteHighlightIndex, setPaletteHighlightIndex] = useState(0);
   const [pinnedActionKeys, setPinnedActionKeys] = useState<Set<string>>(() =>
@@ -4809,6 +4844,7 @@ function ConfiguredWorkspace({
 
   const openPalette = useCallback((mode: PaletteMode) => {
     const selectedNodeSnapshot = [...selectedNodeIds];
+    let panelNodeId: string | null = null;
     setDirectSchedulePaletteNode(null);
     if (mode === "actions") {
       setActionContextSelectedNodeIds(selectedNodeSnapshot);
@@ -4823,11 +4859,15 @@ function ConfiguredWorkspace({
         typeof document !== "undefined"
           ? getNodeIdFromTarget(document.activeElement)
           : null;
-      setActionContextNodeId(
+      panelNodeId =
         focusedNodeId ??
-          (selectedNodeIds.size === 1 ? ([...selectedNodeIds][0] ?? null) : null),
-      );
+        (selectedNodeIds.size === 1 ? ([...selectedNodeIds][0] ?? null) : null);
+      setActionContextNodeId(panelNodeId);
     }
+    writeWorkspacePanelToHistory(
+      { kind: "palette", mode, nodeId: panelNodeId },
+      "push",
+    );
     switchPaletteMode(mode);
     setPaletteOpen(true);
   }, [clearNodeSelection, selectedNodeIds, switchPaletteMode]);
@@ -4847,6 +4887,10 @@ function ConfiguredWorkspace({
     setPaletteHighlightIndex(0);
     setTextSearchResults([]);
     setNodeSearchResults([]);
+    writeWorkspacePanelToHistory(
+      { kind: "palette", mode: "taskSchedule", nodeId },
+      "push",
+    );
     setPaletteOpen(true);
   }, [clearNodeSelection, selectedNodeIds]);
 
@@ -4865,6 +4909,10 @@ function ConfiguredWorkspace({
     setPaletteHighlightIndex(0);
     setTextSearchResults([]);
     setNodeSearchResults([]);
+    writeWorkspacePanelToHistory(
+      { kind: "palette", mode: "noteDate", nodeId },
+      "push",
+    );
     setPaletteOpen(true);
   }, [clearNodeSelection, selectedNodeIds]);
 
@@ -4892,6 +4940,10 @@ function ConfiguredWorkspace({
     setPaletteHighlightIndex(0);
     setTextSearchResults([]);
     setNodeSearchResults([]);
+    writeWorkspacePanelToHistory(
+      { kind: "palette", mode: "find", nodeId: null },
+      "push",
+    );
     setPaletteOpen(true);
   }, [clearNodeSelection, selectedNodeIds]);
 
@@ -4914,8 +4966,11 @@ function ConfiguredWorkspace({
     setPaletteMode("pages");
     setTextSearchResults([]);
     setNodeSearchResults([]);
+    if (!isWorkspaceChatOpen) {
+      writeWorkspacePanelToHistory({ kind: "aiChat" }, "push");
+    }
     setIsWorkspaceChatOpen((current) => !current);
-  }, []);
+  }, [isWorkspaceChatOpen]);
 
   const isSidebarQueryLoading =
     Boolean(ownerKey) && isOwnerKeyValid === true && typeof sidebarTree === "undefined";
@@ -7104,12 +7159,52 @@ function ConfiguredWorkspace({
   }, [plannerNextTaskSuggestion, plannerRandomTaskSuggestion]);
 
   useEffect(() => {
+    const applyPanelLocation = (
+      panelLocation: WorkspacePanelLocation | null,
+      closeWhenMissing: boolean,
+    ) => {
+      if (panelLocation?.kind === "aiChat") {
+        setPaletteOpen(false);
+        setPaletteQuery("");
+        setPaletteMode("pages");
+        setIsWorkspaceChatOpen(true);
+        return;
+      }
+
+      if (panelLocation?.kind === "palette") {
+        lastPaletteModeRef.current = panelLocation.mode;
+        setIsWorkspaceChatOpen(false);
+        setDirectSchedulePaletteNode(null);
+        setActionContextSelectedNodeIds([]);
+        setActionContextNodeId(panelLocation.nodeId);
+        setPaletteMode(panelLocation.mode);
+        setPaletteQuery("");
+        setPaletteHighlightIndex(0);
+        setTextSearchResults([]);
+        setNodeSearchResults([]);
+        setPaletteOpen(true);
+        return;
+      }
+
+      if (closeWhenMissing) {
+        setIsWorkspaceChatOpen(false);
+        setPaletteOpen(false);
+        setPaletteQuery("");
+        setPaletteMode("pages");
+        setTextSearchResults([]);
+        setNodeSearchResults([]);
+      }
+    };
+
     setLocationPageId(readPageIdFromLocation());
     setLocationFocusedNodeId(readFocusedNodeIdFromLocation());
+    applyPanelLocation(readWorkspacePanelFromLocation(), false);
+    setHasHydratedPanelLocation(true);
 
     const handlePopState = () => {
       setLocationPageId(readPageIdFromLocation());
       setLocationFocusedNodeId(readFocusedNodeIdFromLocation());
+      applyPanelLocation(readWorkspacePanelFromLocation(), true);
     };
 
     window.addEventListener("popstate", handlePopState);
@@ -7428,6 +7523,29 @@ function ConfiguredWorkspace({
     paletteOpen,
     selectedPage?.title,
     selectedPageId,
+  ]);
+
+  useEffect(() => {
+    if (!hasHydratedPanelLocation) {
+      return;
+    }
+
+    const panelLocation: WorkspacePanelLocation | null = paletteOpen
+      ? {
+          kind: "palette",
+          mode: paletteMode,
+          nodeId: actionContextNodeId,
+        }
+      : isWorkspaceChatOpen
+        ? { kind: "aiChat" }
+        : null;
+    writeWorkspacePanelToHistory(panelLocation, "replace");
+  }, [
+    actionContextNodeId,
+    hasHydratedPanelLocation,
+    isWorkspaceChatOpen,
+    paletteMode,
+    paletteOpen,
   ]);
 
   useEffect(() => {
