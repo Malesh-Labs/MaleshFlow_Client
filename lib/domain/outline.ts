@@ -35,6 +35,23 @@ type OutlineTreeOptions = {
   rootOrder?: "position" | "recentlyAdded";
 };
 
+type ArchivePageLike = {
+  archived?: boolean;
+  title?: string;
+  sourceMeta?: Record<string, unknown> | null;
+};
+
+export function shouldOrderArchiveRootsByRecency(
+  page: ArchivePageLike | null | undefined,
+) {
+  const archivedPurpose = page?.sourceMeta?.archivedPurpose;
+  return (
+    archivedPurpose === "plannerHistory" ||
+    archivedPurpose === "taskHistory" ||
+    (page?.archived === true && (page.title === "Past Weeks" || page.title === "Done"))
+  );
+}
+
 function getRecentlyAddedTimestamp(node: OutlineNodeLike) {
   const archivedAt = node.sourceMeta?.archivedAt;
   if (typeof archivedAt === "number" && Number.isFinite(archivedAt)) {

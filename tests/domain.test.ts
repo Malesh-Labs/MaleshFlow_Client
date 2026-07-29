@@ -59,6 +59,7 @@ import {
   buildFocusedOutlineContext,
   buildOutlineTree,
   numberOutlineItemText,
+  shouldOrderArchiveRootsByRecency,
 } from "../lib/domain/outline";
 import {
   advanceRecurringDueDate,
@@ -3067,6 +3068,49 @@ test("buildOutlineTree keeps ordinary roots ordered by position", () => {
   assert.deepEqual(
     tree.map((node) => node._id),
     ["earlier-position", "later-position"],
+  );
+});
+
+test("archive root recency ordering applies to Past Weeks and Done only", () => {
+  assert.equal(
+    shouldOrderArchiveRootsByRecency({
+      archived: true,
+      title: "Past Weeks",
+      sourceMeta: { archivedPurpose: "plannerHistory" },
+    }),
+    true,
+  );
+  assert.equal(
+    shouldOrderArchiveRootsByRecency({
+      archived: true,
+      title: "Done",
+      sourceMeta: { archivedPurpose: "taskHistory" },
+    }),
+    true,
+  );
+  assert.equal(
+    shouldOrderArchiveRootsByRecency({
+      archived: true,
+      title: "Done",
+      sourceMeta: null,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldOrderArchiveRootsByRecency({
+      archived: true,
+      title: "Inbox History",
+      sourceMeta: { archivedPurpose: "inboxHistory" },
+    }),
+    false,
+  );
+  assert.equal(
+    shouldOrderArchiveRootsByRecency({
+      archived: false,
+      title: "Done",
+      sourceMeta: null,
+    }),
+    false,
   );
 });
 

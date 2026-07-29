@@ -59,6 +59,7 @@ import {
   buildFocusedOutlineContext,
   buildOutlineTree,
   numberOutlineItemText,
+  shouldOrderArchiveRootsByRecency,
   type OutlineTreeNode,
 } from "@/lib/domain/outline";
 import {
@@ -1427,18 +1428,6 @@ function isSidebarSpecialPage(page: Doc<"pages"> | null | undefined) {
       : {};
 
   return sourceMeta.specialPage === "sidebar";
-}
-
-function isPlannerHistoryArchivePage(page: Doc<"pages"> | null | undefined) {
-  const sourceMeta =
-    page && typeof page.sourceMeta === "object" && page.sourceMeta
-      ? (page.sourceMeta as Record<string, unknown>)
-      : {};
-
-  return (
-    sourceMeta.archivedPurpose === "plannerHistory" ||
-    (page?.archived === true && page.title === "Past Weeks")
-  );
 }
 
 function getModelPageCustomPrompt(page: Doc<"pages"> | null | undefined) {
@@ -5017,7 +5006,8 @@ function ConfiguredWorkspace({
     selectedPageSourceMeta?.excludeFromDataDump === true;
   const isSelectedPageDoneArchiveEnabled =
     selectedPageSourceMeta?.archiveCompletedRootTasksToDone === true;
-  const isPlannerHistoryPage = isPlannerHistoryArchivePage(selectedPage);
+  const shouldOrderSelectedPageRootsByRecency =
+    shouldOrderArchiveRootsByRecency(selectedPage);
   const pageTitleEditorId = selectedPage ? getPageTitleEditorId(selectedPage._id) : null;
   const pageTitleTarget = useMemo(
     () =>
@@ -5034,10 +5024,10 @@ function ConfiguredWorkspace({
       activePageTree
         ? toTreeNodes(
             activePageTree.nodes,
-            isPlannerHistoryPage ? "recentlyAdded" : "position",
+            shouldOrderSelectedPageRootsByRecency ? "recentlyAdded" : "position",
           )
         : [],
-    [activePageTree, isPlannerHistoryPage],
+    [activePageTree, shouldOrderSelectedPageRootsByRecency],
   );
   const collapsiblePageTreeNodeIds = useMemo(() => collectExpandableNodeIds(tree), [tree]);
   const nodeMap = new Map(
