@@ -1164,19 +1164,23 @@ function MobileReorderToolbar({
   canIndent,
   canMoveUp,
   canMoveDown,
+  nodeKind,
   onOutdent,
   onIndent,
   onMoveUp,
   onMoveDown,
+  onToggleKind,
 }: {
   canOutdent: boolean;
   canIndent: boolean;
   canMoveUp: boolean;
   canMoveDown: boolean;
+  nodeKind: string;
   onOutdent: () => void;
   onIndent: () => void;
   onMoveUp: () => void;
   onMoveDown: () => void;
+  onToggleKind: () => void;
 }) {
   const vpStyle = useVisualViewportStyle();
   const buttonClass =
@@ -1229,6 +1233,16 @@ function MobileReorderToolbar({
         className={buttonClass}
       >
         ↓
+      </button>
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onToggleKind}
+        aria-label={nodeKind === "task" ? "Switch to note" : "Switch to task"}
+        title={nodeKind === "task" ? "Switch to note" : "Switch to task"}
+        className={buttonClass}
+      >
+        {nodeKind === "task" ? "•" : "☐"}
       </button>
     </div>,
     document.body,
@@ -21159,6 +21173,10 @@ function OutlineNodeEditor({
                   }}
                   onMoveUp={() => { void handleMobileMoveUp().catch(() => undefined); }}
                   onMoveDown={() => { void handleMobileMoveDown().catch(() => undefined); }}
+                  nodeKind={node.kind}
+                  onToggleKind={() => {
+                    void handleToggleNodeKind().catch(() => undefined);
+                  }}
                 />
               ) : null}
             </div>
