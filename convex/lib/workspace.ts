@@ -240,6 +240,13 @@ export function applyNodeMoveToSiblingCache(
   }
 }
 
+export function applyNodeInsertToSiblingCache(
+  cache: SiblingListCache,
+  node: Doc<"nodes">,
+) {
+  applyNodeMoveToSiblingCache(cache, node, node.pageId, node.parentNodeId, node.position);
+}
+
 export async function computeAppendNodePosition(
   db: DatabaseReader,
   pageId: Id<"pages">,

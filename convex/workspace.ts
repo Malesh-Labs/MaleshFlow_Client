@@ -14,6 +14,7 @@ import {
 import type { Doc, Id } from "./_generated/dataModel";
 import { assertOwnerKey, isOwnerKeyValid } from "./lib/auth";
 import {
+  applyNodeInsertToSiblingCache,
   applyNodeMoveToSiblingCache,
   buildUniquePageSlug,
   collectNodeTree,
@@ -5335,6 +5336,10 @@ export const createNodesBatch = mutation({
     let lastCreatedId: Id<"nodes"> | null = null;
     let lastParentNodeId: Id<"nodes"> | null = null;
     const createdNodeIdsByClientId = new Map<string, Id<"nodes">>();
+    // Read each destination's sibling list once for the whole batch;
+    // re-collecting it per created node made large paste/import batches into
+    // big parents exceed Convex's per-execution document read limit.
+    const siblingCache = createSiblingListCache();
 
     for (const entry of args.nodes) {
       const parentNodeId =
@@ -5349,8 +5354,9 @@ export const createNodesBatch = mutation({
           : lastParentNodeId === parentNodeId
             ? lastCreatedId
             : null;
-      const position = await computeNodePosition(
+      const position = await computeNodePositionCached(
         ctx.db,
+        siblingCache,
         args.pageId,
         parentNodeId,
         afterNodeId,
@@ -5388,6 +5394,7 @@ export const createNodesBatch = mutation({
       }
 
       createdNodes.push(node);
+      applyNodeInsertToSiblingCache(siblingCache, node);
       if (entry.clientId) {
         createdNodeIdsByClientId.set(entry.clientId, nodeId);
       }
