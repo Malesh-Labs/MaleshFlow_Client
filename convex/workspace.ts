@@ -14,9 +14,12 @@ import {
 import type { Doc, Id } from "./_generated/dataModel";
 import { assertOwnerKey, isOwnerKeyValid } from "./lib/auth";
 import {
+  applyNodeMoveToSiblingCache,
   buildUniquePageSlug,
   collectNodeTree,
   computeNodePosition,
+  computeNodePositionCached,
+  createSiblingListCache,
   deleteNodeTree,
   enqueueContainingRootEmbeddingRefresh,
   enqueueNodeEmbeddingRefresh,
@@ -6004,6 +6007,10 @@ export const moveNodesBatch = mutation({
     }
 
     const touchedPageIds = new Set<Id<"pages">>();
+    // Read each destination's sibling list once for the whole batch;
+    // re-collecting it per move made batch moves into large parents exceed
+    // Convex's per-execution document read limit.
+    const siblingCache = createSiblingListCache();
 
     for (const move of args.moves) {
       const node = await ctx.db.get(move.nodeId);
@@ -6015,8 +6022,9 @@ export const moveNodesBatch = mutation({
       const pageId = move.pageId ?? node.pageId;
       const parentNodeId =
         move.parentNodeId === undefined ? node.parentNodeId : move.parentNodeId;
-      const position = await computeNodePosition(
+      const position = await computeNodePositionCached(
         ctx.db,
+        siblingCache,
         pageId,
         parentNodeId,
         move.afterNodeId ?? null,
@@ -6028,6 +6036,7 @@ export const moveNodesBatch = mutation({
         position,
         updatedAt: getTimestamp(),
       });
+      applyNodeMoveToSiblingCache(siblingCache, node, pageId, parentNodeId, position);
 
       touchedPageIds.add(previousPageId);
       touchedPageIds.add(pageId);

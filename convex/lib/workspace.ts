@@ -122,6 +122,124 @@ export async function computeNodePosition(
   return getPositionBetween(before, after);
 }
 
+// Batch mutations that place many nodes under the same parent must not
+// re-collect the full sibling list per node: N moves into a parent with S
+// children reads N*S documents and can blow Convex's per-execution read limit
+// (observed with moveNodesBatch). The cache reads each (page, parent) sibling
+// list once and is kept in sync by applyNodeMoveToSiblingCache as moves are
+// written, so cached lists always mirror the transaction's own writes.
+export type SiblingListCache = Map<string, Doc<"nodes">[]>;
+
+export function createSiblingListCache(): SiblingListCache {
+  return new Map();
+}
+
+function siblingCacheKey(pageId: Id<"pages">, parentNodeId: Id<"nodes"> | null) {
+  return `${pageId}:${parentNodeId ?? "root"}`;
+}
+
+async function getCachedSiblingNodes(
+  db: DatabaseReader,
+  cache: SiblingListCache,
+  pageId: Id<"pages">,
+  parentNodeId: Id<"nodes"> | null,
+) {
+  const key = siblingCacheKey(pageId, parentNodeId);
+  const cached = cache.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const siblings = await listSiblingNodes(db, pageId, parentNodeId);
+  cache.set(key, siblings);
+  return siblings;
+}
+
+export async function computeNodePositionCached(
+  db: DatabaseWriter,
+  cache: SiblingListCache,
+  pageId: Id<"pages">,
+  parentNodeId: Id<"nodes"> | null,
+  afterNodeId?: Id<"nodes"> | null,
+) {
+  const siblings = await getCachedSiblingNodes(db, cache, pageId, parentNodeId);
+
+  if (afterNodeId === undefined) {
+    return getAppendPosition(siblings[siblings.length - 1]?.position ?? null);
+  }
+
+  const sorted = [...siblings].sort((left, right) => left.position - right.position);
+
+  if (afterNodeId === null) {
+    return getPositionBetween(null, sorted[0]?.position ?? null);
+  }
+
+  const afterIndex = sorted.findIndex((sibling) => sibling._id === afterNodeId);
+  if (afterIndex === -1) {
+    return getAppendPosition(sorted[sorted.length - 1]?.position ?? null);
+  }
+
+  const before = sorted[afterIndex]?.position ?? null;
+  const after = sorted[afterIndex + 1]?.position ?? null;
+
+  if (needsSiblingRenormalization(before, after)) {
+    const normalized = buildRenormalizedPositions(sorted.map((sibling) => sibling._id));
+    const positionById = new Map(normalized.map((entry) => [entry.id, entry.position]));
+    const renormalized = sorted.map((sibling) => ({
+      ...sibling,
+      position: positionById.get(sibling._id) ?? sibling.position,
+    }));
+    for (const entry of normalized) {
+      await db.patch(entry.id as Id<"nodes">, { position: entry.position });
+    }
+    cache.set(siblingCacheKey(pageId, parentNodeId), renormalized);
+
+    const normalizedAfterIndex = renormalized.findIndex(
+      (sibling) => sibling._id === afterNodeId,
+    );
+    return getPositionBetween(
+      renormalized[normalizedAfterIndex]?.position ?? null,
+      renormalized[normalizedAfterIndex + 1]?.position ?? null,
+    );
+  }
+
+  return getPositionBetween(before, after);
+}
+
+export function applyNodeMoveToSiblingCache(
+  cache: SiblingListCache,
+  node: Doc<"nodes">,
+  nextPageId: Id<"pages">,
+  nextParentNodeId: Id<"nodes"> | null,
+  nextPosition: number,
+) {
+  const sourceKey = siblingCacheKey(node.pageId, node.parentNodeId);
+  const sourceList = cache.get(sourceKey);
+  if (sourceList) {
+    cache.set(
+      sourceKey,
+      sourceList.filter((sibling) => sibling._id !== node._id),
+    );
+  }
+
+  const destinationKey = siblingCacheKey(nextPageId, nextParentNodeId);
+  const destinationList = cache.get(destinationKey);
+  if (destinationList) {
+    cache.set(
+      destinationKey,
+      [
+        ...destinationList.filter((sibling) => sibling._id !== node._id),
+        {
+          ...node,
+          pageId: nextPageId,
+          parentNodeId: nextParentNodeId,
+          position: nextPosition,
+        },
+      ].sort((left, right) => left.position - right.position),
+    );
+  }
+}
+
 export async function computeAppendNodePosition(
   db: DatabaseReader,
   pageId: Id<"pages">,
