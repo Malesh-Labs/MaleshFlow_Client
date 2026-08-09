@@ -267,6 +267,31 @@ const SHORTCUT_SECTIONS = [
       { keys: ["Paste"], description: "Paste multiple lines to create multiple items" },
     ],
   },
+  {
+    title: "Link Tricks",
+    syntax: true,
+    items: [
+      { keys: ["[["], description: "Link a page or node — autocomplete opens as you type" },
+      { keys: ["[[["], description: "Link autocomplete that also searches archived pages" },
+      { keys: ["?parent"], description: "After a node link: show the linked item's parent in parentheses" },
+      { keys: ["?hidetags"], description: "After a node link: hide #tags from the linked text" },
+      { keys: ["?showchildren"], description: "After a node link: show the linked item's children inline" },
+      { keys: ["?parent&hidetags"], description: "Combine node link options with &" },
+    ],
+  },
+  {
+    title: "Text Syntax",
+    syntax: true,
+    items: [
+      { keys: ["#", "##", "###"], description: "Heading levels at the start of an item" },
+      { keys: ["%%"], description: "Dim an item — prefix at the start of the line" },
+      { keys: ["---"], description: "Separator line" },
+      { keys: ["**bold**", "__italic__"], description: "Bold or italicize inline text" },
+      { keys: ["~~strike~~", "`code`"], description: "Strike through or format inline code" },
+      { keys: ["#tag"], description: "Tag an item — autocomplete opens after #" },
+      { keys: ["||"], description: "OR operator in exact text find queries" },
+    ],
+  },
 ] as const;
 
 function normalizeWorkspaceTextBoxes(
@@ -8505,9 +8530,9 @@ function ConfiguredWorkspace({
       },
       {
         key: "view-shortcuts",
-        title: "View Shortcuts",
-        subtitle: "See the main keyboard shortcuts and selection gestures available in the app.",
-        keywords: ["shortcuts", "keyboard", "hotkeys", "keys", "help", "commands"],
+        title: "View Shortcuts Cheat Sheet",
+        subtitle: "See keyboard shortcuts, selection gestures, link modifiers, and text syntax tricks.",
+        keywords: ["shortcuts", "keyboard", "hotkeys", "keys", "help", "commands", "cheat", "cheat sheet", "tricks", "syntax", "link", "modifiers"],
         actionLabel: "Open",
         onSelect: () => {
           setPaletteOpen(false);
@@ -15657,7 +15682,7 @@ function ShortcutsSheet({
               Shortcuts
             </p>
             <p className="mt-1 text-sm text-[var(--workspace-text-faint)]">
-              Keyboard commands and selection gestures available across the app.
+              Keyboard commands, selection gestures, link modifiers, and text syntax.
             </p>
           </div>
           <button
@@ -15690,7 +15715,12 @@ function ShortcutsSheet({
                       {item.keys.map((key) => (
                         <kbd
                           key={`${section.title}:${item.description}:${key}`}
-                          className="border border-[var(--workspace-border)] bg-[var(--workspace-surface)] px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--workspace-text-faint)]"
+                          className={clsx(
+                            "border border-[var(--workspace-border)] bg-[var(--workspace-surface)] px-2 py-1 text-[11px] font-semibold text-[var(--workspace-text-faint)]",
+                            "syntax" in section && section.syntax
+                              ? "font-mono normal-case tracking-normal"
+                              : "uppercase tracking-[0.14em]",
+                          )}
                         >
                           {key}
                         </kbd>
