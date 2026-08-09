@@ -164,7 +164,7 @@ export function TaskSchedulePanel({
   };
 
   return (
-    <div className="flex h-[min(72vh,640px)] flex-col">
+    <div className="flex h-[min(72vh,640px)] max-h-full flex-col">
       <div className="border-b border-[var(--workspace-border-subtle)] px-5 py-4">
         <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--workspace-accent)]">
           Task Schedule

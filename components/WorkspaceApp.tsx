@@ -1170,6 +1170,7 @@ function MobileReorderToolbar({
   onMoveUp,
   onMoveDown,
   onToggleKind,
+  onZoomIntoItem,
 }: {
   canOutdent: boolean;
   canIndent: boolean;
@@ -1181,6 +1182,7 @@ function MobileReorderToolbar({
   onMoveUp: () => void;
   onMoveDown: () => void;
   onToggleKind: () => void;
+  onZoomIntoItem: () => void;
 }) {
   const vpStyle = useVisualViewportStyle();
   const buttonClass =
@@ -1243,6 +1245,16 @@ function MobileReorderToolbar({
         className={buttonClass}
       >
         {nodeKind === "task" ? "•" : "☐"}
+      </button>
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onZoomIntoItem}
+        aria-label="Focus on item"
+        title="Focus on item"
+        className={buttonClass}
+      >
+        ◎
       </button>
     </div>,
     document.body,
@@ -14636,7 +14648,7 @@ function ConfiguredWorkspace({
         >
           <div
             className={clsx(
-              "mx-auto mt-16 flex h-[calc(100vh-8rem)] w-full flex-col overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]",
+              "mx-auto mt-16 flex h-[calc(100dvh-8rem)] w-full flex-col overflow-hidden border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] shadow-[0_30px_90px_-45px_rgba(53,41,24,0.45)]",
               paletteMode === "replace" ||
                 paletteMode === "resolveLinks" ||
                 paletteMode === "archive" ||
@@ -21177,6 +21189,7 @@ function OutlineNodeEditor({
                   onToggleKind={() => {
                     void handleToggleNodeKind().catch(() => undefined);
                   }}
+                  onZoomIntoItem={zoomIntoCurrentNode}
                 />
               ) : null}
             </div>

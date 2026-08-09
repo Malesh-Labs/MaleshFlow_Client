@@ -121,7 +121,7 @@ export function ArchiveSearchPanel({
   }, [findArchivedNodesText, mode, ownerKey, query, searchArchivedNodes]);
 
   return (
-    <div className="flex h-[min(72vh,760px)] flex-col">
+    <div className="flex h-[min(72vh,760px)] max-h-full flex-col">
       <div className="border-b border-[var(--workspace-border-subtle)] px-5 py-4">
         <div className="mb-4 flex flex-wrap gap-2">
           <button

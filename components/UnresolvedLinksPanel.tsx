@@ -365,7 +365,7 @@ export function UnresolvedLinksPanel({
   ]);
 
   return (
-    <div className="flex h-[min(72vh,760px)] flex-col">
+    <div className="flex h-[min(72vh,760px)] max-h-full flex-col">
       <div className="border-b border-[var(--workspace-border-subtle)] px-5 py-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
