@@ -13,6 +13,7 @@ import {
   rewritePlainPageWikiLinksToTarget,
   sanitizeGeneratedWikiLinkLabel,
 } from "../lib/domain/links";
+import { linkSearchScore, normalizeLinkSearchQuery } from "../lib/domain/linkSearch";
 import {
   cycleHeadingSyntax,
   isDimmedSyntaxLine,
@@ -887,6 +888,30 @@ test("planner day merge duplicate matching rejects tiny shared prefixes", () => 
   assert.deepEqual(getPlannerMergeDuplicateResolution("go", "go outside"), {
     duplicate: false,
   });
+});
+
+test("linkSearchScore ranks fuzzy link autocomplete matches by tier", () => {
+  // Tier 0: prefix.
+  assert.equal(linkSearchScore("Coffee shop notes", "coffee"), 0);
+  // Tier 1: word start.
+  assert.equal(linkSearchScore("Go to coffee shop", "coffee"), 1);
+  // Tier 2: contiguous substring.
+  assert.equal(linkSearchScore("Encoffeenated ideas", "coffee"), 2);
+  // Tier 3: every query word matches a word start.
+  assert.equal(linkSearchScore("Go to coffee shop", "go cof"), 3);
+  assert.equal(linkSearchScore("Go to coffee shop", "cof go"), 3);
+  // Tier 4: scattered in-order characters.
+  assert.equal(linkSearchScore("Coffee shop", "cofsho"), 4);
+  assert.equal(linkSearchScore("Go to coffee shop", "gtcs"), 4);
+  // Subsequence matches need at least 3 letters to avoid noise.
+  assert.equal(linkSearchScore("Coffee shop", "cs"), Number.POSITIVE_INFINITY);
+  // Out-of-order characters never match.
+  assert.equal(linkSearchScore("Coffee shop", "shocof"), Number.POSITIVE_INFINITY);
+  assert.equal(linkSearchScore("Coffee shop", "xyz"), Number.POSITIVE_INFINITY);
+  // Empty queries match everything at the best tier.
+  assert.equal(linkSearchScore("Anything", ""), 0);
+  // Normalization collapses case and extra whitespace.
+  assert.equal(normalizeLinkSearchQuery("  Go   To "), "go to");
 });
 
 test("planner merge subtree equivalence guards duplicate archiving", () => {

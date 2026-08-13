@@ -56,6 +56,7 @@ import {
   listEligiblePlannerSourceTasks,
 } from "./lib/planner";
 import { replaceLiteralOccurrences } from "../lib/domain/findReplace";
+import { linkSearchScore, normalizeLinkSearchQuery } from "../lib/domain/linkSearch";
 import { getEffectiveTaskDueDateRange } from "../lib/domain/planner";
 import {
   collectRootSubtreeLines,
@@ -381,31 +382,7 @@ function hidesChildrenFromLinkAutocomplete(node: Pick<Doc<"nodes">, "sourceMeta"
   return getNodeSourceMeta(node).hideChildrenFromLinkAutocomplete === true;
 }
 
-function isHiddenByLinkAutocompleteAncestor(
-  node: Doc<"nodes">,
-  nodeMap: Map<string, Doc<"nodes">>,
-) {
-  const visitedNodeIds = new Set<string>();
-  let parentNodeId = node.parentNodeId as string | null;
-
-  while (parentNodeId) {
-    if (visitedNodeIds.has(parentNodeId)) {
-      break;
-    }
-    visitedNodeIds.add(parentNodeId);
-
-    const parentNode = nodeMap.get(parentNodeId);
-    if (!parentNode) {
-      break;
-    }
-    if (hidesChildrenFromLinkAutocomplete(parentNode)) {
-      return true;
-    }
-    parentNodeId = parentNode.parentNodeId as string | null;
-  }
-
-  return false;
-}
+const LINK_SEARCH_NODE_CANDIDATE_LIMIT = 64;
 
 const MIN_WORKSPACE_TEXT_BOX_COUNT = 2;
 const MAX_WORKSPACE_AI_MEMORY_TEXT_LENGTH = 200_000;
@@ -1322,10 +1299,6 @@ async function takePageDeletionNodeBatch(
     .take(PAGE_DELETE_NODE_BATCH_SIZE);
 }
 
-function normalizeLinkSearchQuery(value: string) {
-  return value.trim().toLowerCase();
-}
-
 function normalizePlainPageWikiLinkTitle(value: string) {
   return slugify(value, { lower: true, strict: true }) || "untitled";
 }
@@ -1394,28 +1367,6 @@ async function listActiveWorkspaceNodesForLinkMaintenance(
     nodes,
     truncated,
   };
-}
-
-function linkSearchScore(text: string, query: string) {
-  const normalizedText = text.toLowerCase();
-  if (query.length === 0) {
-    return 0;
-  }
-
-  if (normalizedText.startsWith(query)) {
-    return 0;
-  }
-
-  const wordStartPattern = new RegExp(`\\b${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
-  if (wordStartPattern.test(normalizedText)) {
-    return 1;
-  }
-
-  if (normalizedText.includes(query)) {
-    return 2;
-  }
-
-  return Number.POSITIVE_INFINITY;
 }
 
 function formatNodeForKnowledgeContext(
@@ -4000,21 +3951,83 @@ export const searchLinkTargets = query({
       .slice(0, limit);
 
     const searchablePageIds = new Set(visiblePages.map((page) => page._id));
-    const activeNodes = (await ctx.db.query("nodes").collect()).filter(
-      (node) => !node.archived && searchablePageIds.has(node.pageId),
-    );
-    const activeNodeMap = new Map(activeNodes.map((node) => [node._id as string, node]));
-    const nodes = activeNodes.filter(
-      (node) =>
-        node._id !== args.excludeNodeId &&
-        node.text.trim().length > 0 &&
-        node.text.trim() !== "." &&
-        !isHiddenByLinkAutocompleteAncestor(node, activeNodeMap),
-    );
     const pageMap = new Map(visiblePages.map((page) => [page._id, page]));
 
-    const nodeResults = nodes
-      .filter((node) => linkSearchScore(node.text, normalizedQuery) !== Number.POSITIVE_INFINITY)
+    // Candidate nodes come from the search index instead of a full table scan:
+    // one search with the raw query (word-prefix semantics handle multi-word
+    // queries), plus a short-prefix probe of the first word so fuzzy
+    // subsequence queries like "cofsho" still surface "coffee shop" candidates.
+    // Fuzzy scoring then re-ranks this bounded pool.
+    const candidateNodes: Doc<"nodes">[] = [];
+    if (normalizedQuery.length > 0) {
+      const seenCandidateIds = new Set<string>();
+      const addCandidates = (batch: Doc<"nodes">[]) => {
+        for (const node of batch) {
+          if (!seenCandidateIds.has(node._id as string)) {
+            seenCandidateIds.add(node._id as string);
+            candidateNodes.push(node);
+          }
+        }
+      };
+
+      addCandidates(
+        await ctx.db
+          .query("nodes")
+          .withSearchIndex("search_text", (search) =>
+            search.search("text", normalizedQuery).eq("archived", false),
+          )
+          .take(LINK_SEARCH_NODE_CANDIDATE_LIMIT),
+      );
+
+      const firstWord = normalizedQuery.split(" ")[0] ?? "";
+      const prefixProbe = firstWord.slice(0, 3);
+      if (prefixProbe.length >= 2 && prefixProbe !== normalizedQuery) {
+        addCandidates(
+          await ctx.db
+            .query("nodes")
+            .withSearchIndex("search_text", (search) =>
+              search.search("text", prefixProbe).eq("archived", false),
+            )
+            .take(LINK_SEARCH_NODE_CANDIDATE_LIMIT),
+        );
+      }
+    }
+
+    // Ancestor lookups are on-demand and memoized instead of materializing the
+    // whole nodes table for the hidden-children walk.
+    const ancestorCache = new Map<string, Doc<"nodes"> | null>();
+    const getAncestorNode = async (nodeId: string) => {
+      if (!ancestorCache.has(nodeId)) {
+        ancestorCache.set(nodeId, await ctx.db.get(nodeId as Id<"nodes">));
+      }
+      return ancestorCache.get(nodeId) ?? null;
+    };
+    const isHiddenByAncestor = async (node: Doc<"nodes">) => {
+      const visitedNodeIds = new Set<string>();
+      let parentNodeId = node.parentNodeId as string | null;
+      while (parentNodeId && !visitedNodeIds.has(parentNodeId)) {
+        visitedNodeIds.add(parentNodeId);
+        const parentNode = await getAncestorNode(parentNodeId);
+        if (!parentNode) {
+          break;
+        }
+        if (hidesChildrenFromLinkAutocomplete(parentNode)) {
+          return true;
+        }
+        parentNodeId = parentNode.parentNodeId as string | null;
+      }
+      return false;
+    };
+
+    const scoredCandidates = candidateNodes
+      .filter(
+        (node) =>
+          node._id !== args.excludeNodeId &&
+          searchablePageIds.has(node.pageId) &&
+          node.text.trim().length > 0 &&
+          node.text.trim() !== "." &&
+          linkSearchScore(node.text, normalizedQuery) !== Number.POSITIVE_INFINITY,
+      )
       .sort((left, right) => {
         const leftScore = linkSearchScore(left.text, normalizedQuery);
         const rightScore = linkSearchScore(right.text, normalizedQuery);
@@ -4026,20 +4039,32 @@ export const searchLinkTargets = query({
           return lengthDelta;
         }
         return right.updatedAt - left.updatedAt;
-      })
-      .slice(0, limit)
-      .map((node) => ({
+      });
+
+    const nodeResults: Array<{
+      node: Doc<"nodes">;
+      page: Doc<"pages"> | null;
+      parentNode: Doc<"nodes"> | null;
+    }> = [];
+    for (const node of scoredCandidates) {
+      if (nodeResults.length >= limit) {
+        break;
+      }
+      if (await isHiddenByAncestor(node)) {
+        continue;
+      }
+      nodeResults.push({
         node,
         page: pageMap.get(node.pageId) ?? null,
         parentNode: node.parentNodeId
-          ? activeNodeMap.get(node.parentNodeId as string) ?? null
+          ? await getAncestorNode(node.parentNodeId as string)
           : null,
-      }))
-      .filter((entry) => entry.page !== null);
+      });
+    }
 
     return {
       pages: pageResults,
-      nodes: nodeResults,
+      nodes: nodeResults.filter((entry) => entry.page !== null),
     };
   },
 });

@@ -84,6 +84,7 @@ import {
   replaceLinkMarkupWithLabels,
   sanitizeGeneratedWikiLinkLabel,
 } from "@/lib/domain/links";
+import { linkSearchScore, normalizeLinkSearchQuery } from "@/lib/domain/linkSearch";
 import {
   extractTagMatches,
   splitEdgeTagMatches,
@@ -188,6 +189,7 @@ const RECURRING_TASK_COMPLETION_MODE_STORAGE_KEY =
 const PLANNER_RIGHT_SIDEBAR_WIDTH_STORAGE_KEY =
   "maleshflow-planner-right-sidebar-width";
 const PLANNER_SYMBOL_MODE_STORAGE_KEY = "maleshflow-planner-symbol-mode";
+const LINK_AUTOCOMPLETE_DEBOUNCE_MS = 120;
 const PLANNER_RIGHT_SIDEBAR_DEFAULT_WIDTH = 272;
 const PLANNER_RIGHT_SIDEBAR_MIN_WIDTH = 220;
 const PLANNER_RIGHT_SIDEBAR_MAX_WIDTH = 560;
@@ -2580,10 +2582,14 @@ function readAiRequestPreview(message: Doc<"chatMessages">) {
   return typeof record.request === "string" ? record.request : null;
 }
 
-function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): LinkSuggestion[] {
+function buildLinkSuggestions(
+  results: LinkTargetSearchResults | undefined,
+  query = "",
+): LinkSuggestion[] {
   if (!results) {
     return [];
   }
+  const normalizedQuery = normalizeLinkSearchQuery(query);
 
   const pageSuggestions: LinkSuggestion[] = results.pages
     .map((page) => ({
@@ -2617,6 +2623,14 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
     });
 
   return [...pageSuggestions, ...nodeSuggestions].sort((left, right) => {
+    // Better fuzzy tiers first (prefix beats word-start beats substring beats
+    // scattered matches), then shorter titles within the same tier.
+    const leftScore = linkSearchScore(left.title, normalizedQuery);
+    const rightScore = linkSearchScore(right.title, normalizedQuery);
+    if (leftScore !== rightScore) {
+      return leftScore - rightScore;
+    }
+
     const lengthDelta = left.title.trim().length - right.title.trim().length;
     if (lengthDelta !== 0) {
       return lengthDelta;
@@ -2628,6 +2642,88 @@ function buildLinkSuggestions(results: LinkTargetSearchResults | undefined): Lin
 
     return left.title.localeCompare(right.title);
   });
+}
+
+// Debounced, stale-while-revalidate wrapper around searchLinkTargets for the
+// inline [[ autocomplete. Keeps the previous suggestions visible while a new
+// query is in flight and reports loading so the menu can show progress instead
+// of an empty pane. The first query after the token opens fires immediately;
+// subsequent keystrokes are debounced to cut subscription churn.
+function useLinkTargetSuggestions({
+  ownerKey,
+  activeLinkToken,
+  excludeNodeId,
+}: {
+  ownerKey: string;
+  activeLinkToken: { query: string; includeArchived: boolean } | null;
+  excludeNodeId?: Id<"nodes">;
+}) {
+  const tokenActive = activeLinkToken !== null && ownerKey.length > 0;
+  const tokenQuery = activeLinkToken?.query ?? "";
+  const tokenIncludeArchived = activeLinkToken?.includeArchived ?? false;
+  const [debouncedToken, setDebouncedToken] = useState<{
+    query: string;
+    includeArchived: boolean;
+  } | null>(null);
+  const wasTokenActiveRef = useRef(false);
+
+  useEffect(() => {
+    const delay =
+      tokenActive && wasTokenActiveRef.current ? LINK_AUTOCOMPLETE_DEBOUNCE_MS : 0;
+    wasTokenActiveRef.current = tokenActive;
+    const timeout = window.setTimeout(() => {
+      setDebouncedToken(
+        tokenActive ? { query: tokenQuery, includeArchived: tokenIncludeArchived } : null,
+      );
+    }, delay);
+    return () => window.clearTimeout(timeout);
+  }, [tokenActive, tokenIncludeArchived, tokenQuery]);
+
+  const results = useQuery(
+    api.workspace.searchLinkTargets,
+    tokenActive && debouncedToken
+      ? {
+          ownerKey,
+          query: debouncedToken.query,
+          limit: 12,
+          ...(excludeNodeId ? { excludeNodeId } : {}),
+          includeArchived: debouncedToken.includeArchived,
+        }
+      : SKIP,
+  ) as LinkTargetSearchResults | undefined;
+
+  // Stale-while-revalidate: remember the last delivered results so the menu
+  // keeps showing them while a newer query is in flight. Adjusted during
+  // render (guarded so it only fires on actual changes) rather than in an
+  // effect, per React's derived-state guidance.
+  const [stableResults, setStableResults] = useState<{
+    results: LinkTargetSearchResults;
+    query: string;
+  } | null>(null);
+  if (!tokenActive) {
+    if (stableResults !== null) {
+      setStableResults(null);
+    }
+  } else if (
+    results !== undefined &&
+    debouncedToken &&
+    stableResults?.results !== results
+  ) {
+    setStableResults({ results, query: debouncedToken.query });
+  }
+
+  const suggestions = useMemo(
+    () => buildLinkSuggestions(stableResults?.results, stableResults?.query ?? ""),
+    [stableResults],
+  );
+  const isLoading =
+    tokenActive &&
+    (debouncedToken === null ||
+      debouncedToken.query !== tokenQuery ||
+      debouncedToken.includeArchived !== tokenIncludeArchived ||
+      results === undefined);
+
+  return { suggestions, isLoading };
 }
 
 function buildTagSuggestions(
@@ -17134,6 +17230,7 @@ function LinkAutocompleteMenu({
   onSelect,
   anchorRef,
   emptyMessage = "No matching suggestions.",
+  isLoading = false,
 }: {
   suggestions: LinkSuggestion[];
   highlightIndex: number;
@@ -17141,6 +17238,7 @@ function LinkAutocompleteMenu({
   onSelect: (suggestion: LinkSuggestion) => void;
   anchorRef: RefObject<HTMLElement | null>;
   emptyMessage?: string;
+  isLoading?: boolean;
 }) {
   const position = useFloatingMenuPosition(anchorRef, true);
 
@@ -17160,10 +17258,29 @@ function LinkAutocompleteMenu({
     >
       {suggestions.length === 0 ? (
         <p className="px-3 py-2 text-sm text-[var(--workspace-text-subtle)]">
-          {emptyMessage}
+          {isLoading ? (
+            <span className="inline-flex items-center gap-2">
+              <span
+                aria-hidden="true"
+                className="h-3 w-3 animate-spin rounded-full border border-[var(--workspace-text-faint)] border-t-transparent"
+              />
+              Searching…
+            </span>
+          ) : (
+            emptyMessage
+          )}
         </p>
       ) : (
         <div className="overflow-y-auto py-1" style={{ maxHeight: position.maxHeight }}>
+          {isLoading ? (
+            <div className="flex items-center gap-2 px-3 py-1 text-[11px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]">
+              <span
+                aria-hidden="true"
+                className="h-2.5 w-2.5 animate-spin rounded-full border border-[var(--workspace-text-faint)] border-t-transparent"
+              />
+              Searching…
+            </div>
+          ) : null}
           {suggestions.map((suggestion, index) => (
             <button
               key={suggestion.key}
@@ -17974,21 +18091,11 @@ function WorkspaceAiChatPanel({
   const [isMemoryExpanded, setIsMemoryExpanded] = useState(false);
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
   const activeTagToken = activeLinkToken ? null : getActiveTagToken(draft, caretPosition);
-  const linkTargetResults = useQuery(
-    api.workspace.searchLinkTargets,
-    ownerKey && activeLinkToken
-        ? {
-            ownerKey,
-            query: activeLinkToken.query,
-            limit: 12,
-            includeArchived: activeLinkToken.includeArchived,
-          }
-        : SKIP,
-  ) as LinkTargetSearchResults | undefined;
-  const linkSuggestions = useMemo(
-    () => buildLinkSuggestions(linkTargetResults),
-    [linkTargetResults],
-  );
+  const { suggestions: linkSuggestions, isLoading: isLinkSearchLoading } =
+    useLinkTargetSuggestions({
+      ownerKey,
+      activeLinkToken,
+    });
   const tagSuggestions = useMemo(
     () =>
       activeTagToken ? buildTagSuggestions(availableTags, activeTagToken.query) : [],
@@ -18490,6 +18597,7 @@ function WorkspaceAiChatPanel({
                 ? "No matching pages or nodes."
                 : "No matching tags."
             }
+            isLoading={activeLinkToken ? isLinkSearchLoading : false}
           />
         ) : null}
         </div>
@@ -18878,22 +18986,12 @@ function OutlineNodeEditor({
         : "text-[var(--workspace-text)]";
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
   const activeTagToken = activeLinkToken ? null : getActiveTagToken(draft, caretPosition);
-  const linkTargetResults = useQuery(
-    api.workspace.searchLinkTargets,
-    ownerKey && isFocused && activeLinkToken
-        ? {
-            ownerKey,
-            query: activeLinkToken.query,
-            limit: 12,
-            excludeNodeId: node._id as Id<"nodes">,
-            includeArchived: activeLinkToken.includeArchived,
-          }
-        : SKIP,
-  ) as LinkTargetSearchResults | undefined;
-  const linkSuggestions = useMemo(
-    () => buildLinkSuggestions(linkTargetResults),
-    [linkTargetResults],
-  );
+  const { suggestions: linkSuggestions, isLoading: isLinkSearchLoading } =
+    useLinkTargetSuggestions({
+      ownerKey,
+      activeLinkToken: isFocused ? activeLinkToken : null,
+      excludeNodeId: node._id as Id<"nodes">,
+    });
   const tagSuggestions = useMemo(
     () =>
       activeTagToken ? buildTagSuggestions(availableTags, activeTagToken.query) : [],
@@ -21197,6 +21295,7 @@ function OutlineNodeEditor({
                       ? "No matching pages or nodes."
                       : "No matching tags."
                   }
+                  isLoading={activeLinkToken ? isLinkSearchLoading : false}
                 />
               ) : null}
               {isFocused && isMobileLayout && !isDisabled ? (
@@ -21723,21 +21822,11 @@ function InlineComposer({
   );
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
   const activeTagToken = activeLinkToken ? null : getActiveTagToken(draft, caretPosition);
-  const linkTargetResults = useQuery(
-    api.workspace.searchLinkTargets,
-    ownerKey && isFocused && activeLinkToken
-        ? {
-            ownerKey,
-            query: activeLinkToken.query,
-            limit: 12,
-            includeArchived: activeLinkToken.includeArchived,
-          }
-        : SKIP,
-  ) as LinkTargetSearchResults | undefined;
-  const linkSuggestions = useMemo(
-    () => buildLinkSuggestions(linkTargetResults),
-    [linkTargetResults],
-  );
+  const { suggestions: linkSuggestions, isLoading: isLinkSearchLoading } =
+    useLinkTargetSuggestions({
+      ownerKey,
+      activeLinkToken: isFocused ? activeLinkToken : null,
+    });
   const tagSuggestions = useMemo(
     () =>
       activeTagToken ? buildTagSuggestions(availableTags, activeTagToken.query) : [],
@@ -22296,6 +22385,7 @@ function InlineComposer({
               ? "No matching pages or nodes."
               : "No matching tags."
           }
+          isLoading={activeLinkToken ? isLinkSearchLoading : false}
         />
       ) : null}
     </div>
