@@ -880,6 +880,9 @@ type FocusedOutlineContextValue = {
 };
 
 const NodeZoomContext = createContext<(nodeId: string) => void>(() => undefined);
+// True while the once-per-session tag list is still being fetched, so the #tag
+// autocomplete can show a loading row instead of "No matching tags."
+const TagAutocompleteLoadingContext = createContext(false);
 const NodeScheduleActionContext = createContext<{
   openTaskSchedule: (nodeId: string, node?: SchedulePaletteNode | null) => void;
   openNoteDate: (nodeId: string, node?: SchedulePaletteNode | null) => void;
@@ -2736,33 +2739,31 @@ function buildTagSuggestions(
     return [];
   }
 
+  // Same fuzzy tiers as the [[ link autocomplete (prefix, word start,
+  // substring, scattered in-order letters), with an exact match always first
+  // and heavier-used tags winning ties.
   const rankedMatches = [...tags]
-    .filter((tag) => tag.normalizedValue.includes(normalizedQuery))
+    .map((tag) => ({
+      tag,
+      score:
+        tag.normalizedValue === normalizedQuery
+          ? -1
+          : linkSearchScore(tag.normalizedValue, normalizedQuery),
+    }))
+    .filter((entry) => entry.score !== Number.POSITIVE_INFINITY)
     .sort((left, right) => {
-      const leftRank =
-        left.normalizedValue === normalizedQuery
-          ? 0
-          : left.normalizedValue.startsWith(normalizedQuery)
-            ? 1
-            : 2;
-      const rightRank =
-        right.normalizedValue === normalizedQuery
-          ? 0
-          : right.normalizedValue.startsWith(normalizedQuery)
-            ? 1
-            : 2;
-
-      if (leftRank !== rightRank) {
-        return leftRank - rightRank;
+      if (left.score !== right.score) {
+        return left.score - right.score;
       }
 
-      if (left.count !== right.count) {
-        return right.count - left.count;
+      if (left.tag.count !== right.tag.count) {
+        return right.tag.count - left.tag.count;
       }
 
-      return left.normalizedValue.localeCompare(right.normalizedValue);
+      return left.tag.normalizedValue.localeCompare(right.tag.normalizedValue);
     })
-    .slice(0, limit);
+    .slice(0, limit)
+    .map((entry) => entry.tag);
 
   return rankedMatches.map((tag) => ({
     key: `tag:${tag.normalizedValue}`,
@@ -12256,6 +12257,7 @@ function ConfiguredWorkspace({
   return (
     <WorkspaceHistoryProvider value={history}>
       <NodeZoomContext.Provider value={handleZoomIntoNode}>
+      <TagAutocompleteLoadingContext.Provider value={cachedTags === null}>
       <NodeScheduleActionContext.Provider value={nodeScheduleActionContextValue}>
       <PageSectionCollapseContext.Provider value={pageSectionCollapseContextValue}>
       <main
@@ -15635,6 +15637,7 @@ function ConfiguredWorkspace({
       </main>
       </PageSectionCollapseContext.Provider>
       </NodeScheduleActionContext.Provider>
+      </TagAutocompleteLoadingContext.Provider>
       </NodeZoomContext.Provider>
     </WorkspaceHistoryProvider>
   );
@@ -18096,6 +18099,7 @@ function WorkspaceAiChatPanel({
       ownerKey,
       activeLinkToken,
     });
+  const isTagsAutocompleteLoading = useContext(TagAutocompleteLoadingContext);
   const tagSuggestions = useMemo(
     () =>
       activeTagToken ? buildTagSuggestions(availableTags, activeTagToken.query) : [],
@@ -18597,7 +18601,7 @@ function WorkspaceAiChatPanel({
                 ? "No matching pages or nodes."
                 : "No matching tags."
             }
-            isLoading={activeLinkToken ? isLinkSearchLoading : false}
+            isLoading={activeLinkToken ? isLinkSearchLoading : isTagsAutocompleteLoading}
           />
         ) : null}
         </div>
@@ -18992,6 +18996,7 @@ function OutlineNodeEditor({
       activeLinkToken: isFocused ? activeLinkToken : null,
       excludeNodeId: node._id as Id<"nodes">,
     });
+  const isTagsAutocompleteLoading = useContext(TagAutocompleteLoadingContext);
   const tagSuggestions = useMemo(
     () =>
       activeTagToken ? buildTagSuggestions(availableTags, activeTagToken.query) : [],
@@ -21295,7 +21300,7 @@ function OutlineNodeEditor({
                       ? "No matching pages or nodes."
                       : "No matching tags."
                   }
-                  isLoading={activeLinkToken ? isLinkSearchLoading : false}
+                  isLoading={activeLinkToken ? isLinkSearchLoading : isTagsAutocompleteLoading}
                 />
               ) : null}
               {isFocused && isMobileLayout && !isDisabled ? (
@@ -21827,6 +21832,7 @@ function InlineComposer({
       ownerKey,
       activeLinkToken: isFocused ? activeLinkToken : null,
     });
+  const isTagsAutocompleteLoading = useContext(TagAutocompleteLoadingContext);
   const tagSuggestions = useMemo(
     () =>
       activeTagToken ? buildTagSuggestions(availableTags, activeTagToken.query) : [],
@@ -22385,7 +22391,7 @@ function InlineComposer({
               ? "No matching pages or nodes."
               : "No matching tags."
           }
-          isLoading={activeLinkToken ? isLinkSearchLoading : false}
+          isLoading={activeLinkToken ? isLinkSearchLoading : isTagsAutocompleteLoading}
         />
       ) : null}
     </div>

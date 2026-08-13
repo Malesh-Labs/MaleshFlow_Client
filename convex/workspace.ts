@@ -129,6 +129,7 @@ const FIND_REPLACE_PREVIEW_LIMIT = 40;
 const FIND_REPLACE_BATCH_SIZE = 50;
 const UNRESOLVED_PAGE_LINK_SCAN_PAGE_LIMIT = 1000;
 const UNRESOLVED_PAGE_LINK_SCAN_NODE_LIMIT = 5000;
+const TAG_SCAN_NODE_LIMIT = 20_000;
 const UNRESOLVED_PAGE_LINK_GROUP_LIMIT = 100;
 const UNRESOLVED_PAGE_LINK_SAMPLE_LIMIT = 4;
 const UNRESOLVED_PAGE_LINK_REPLACE_BATCH_SIZE = 50;
@@ -2906,14 +2907,18 @@ export const listTags = query({
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
 
-    const pages = await ctx.db.query("pages").collect();
-    const activePageIds = new Set(
-      pages
-        .filter((page) => !page.archived)
-        .map((page) => page._id as string),
-    );
-    const nodes = (await ctx.db.query("nodes").collect()).filter(
-      (node) => !node.archived && activePageIds.has(node.pageId as string),
+    // Bounded per-page scan instead of collecting the whole nodes table: an
+    // unbounded collect() hard-fails once the workspace crosses Convex's
+    // per-execution document read limit, taking tag autocomplete down with it.
+    // Past the cap the tag list degrades to the first pages' tags instead.
+    const activePages = await ctx.db
+      .query("pages")
+      .withIndex("by_archived_position", (query) => query.eq("archived", false))
+      .collect();
+    const { nodes } = await listActiveWorkspaceNodesForLinkMaintenance(
+      ctx.db,
+      activePages,
+      TAG_SCAN_NODE_LIMIT,
     );
 
     const tagsByNormalizedValue = new Map<
