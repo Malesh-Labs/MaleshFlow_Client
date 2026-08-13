@@ -97,6 +97,7 @@ import {
 import { parseImportedTextToOutlineNodes } from "../lib/domain/importer";
 import {
   getEffectiveTaskDueDateRange,
+  arePlannerMergeSubtreeTextsEquivalent,
   getPlannerMergeDuplicateResolution,
   getPlannerDateRangeBoundary,
   plannerDayMatchesDueDateBoundary,
@@ -886,6 +887,53 @@ test("planner day merge duplicate matching rejects tiny shared prefixes", () => 
   assert.deepEqual(getPlannerMergeDuplicateResolution("go", "go outside"), {
     duplicate: false,
   });
+});
+
+test("planner merge subtree equivalence guards duplicate archiving", () => {
+  // Identical subtrees are redundant.
+  assert.equal(
+    arePlannerMergeSubtreeTextsEquivalent(
+      ["pack bag", "charge phone"],
+      ["pack bag", "charge phone"],
+    ),
+    true,
+  );
+  // Formatting, emoji, and punctuation differences do not count.
+  assert.equal(
+    arePlannerMergeSubtreeTextsEquivalent(
+      ["**Pack bag!** ☀️", "charge phone (9am)"],
+      ["pack bag", "charge phone 9am"],
+    ),
+    true,
+  );
+  // Two childless items are trivially equivalent.
+  assert.equal(arePlannerMergeSubtreeTextsEquivalent([], []), true);
+  // Any extra child means the subtrees are distinct.
+  assert.equal(
+    arePlannerMergeSubtreeTextsEquivalent(
+      ["pack bag", "charge phone"],
+      ["pack bag"],
+    ),
+    false,
+  );
+  // A childless item never matches one with children.
+  assert.equal(arePlannerMergeSubtreeTextsEquivalent(["pack bag"], []), false);
+  // Reordered children are treated as different (conservative: no merge).
+  assert.equal(
+    arePlannerMergeSubtreeTextsEquivalent(
+      ["pack bag", "charge phone"],
+      ["charge phone", "pack bag"],
+    ),
+    false,
+  );
+  // Differences anywhere in the depth-first flattening count.
+  assert.equal(
+    arePlannerMergeSubtreeTextsEquivalent(
+      ["pack bag", "charge phone", "buy beans"],
+      ["pack bag", "charge phone", "buy oat milk"],
+    ),
+    false,
+  );
 });
 
 test("planner symbol helpers validate generated emoji labels and deterministic fallback", () => {

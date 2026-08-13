@@ -174,6 +174,26 @@ export function getPlannerMergeItemRichnessScore(text: string) {
   return stripInlineFormattingMarkers(text).replace(/\s+/g, " ").trim().length;
 }
 
+// Compares two subtrees' texts (depth-first order) using the same canonical
+// fingerprint as duplicate matching, so formatting/emoji/punctuation differences
+// don't count but any textual or structural difference does. Order-sensitive on
+// purpose: a reordered subtree is treated as different, which errs on the safe
+// side for the duplicate merge (no merge rather than a destructive one).
+export function arePlannerMergeSubtreeTextsEquivalent(
+  leftTexts: string[],
+  rightTexts: string[],
+) {
+  if (leftTexts.length !== rightTexts.length) {
+    return false;
+  }
+
+  return leftTexts.every(
+    (text, index) =>
+      buildPlannerMergeDuplicateFingerprint(text).canonicalText ===
+      buildPlannerMergeDuplicateFingerprint(rightTexts[index]!).canonicalText,
+  );
+}
+
 export function getPlannerMergeDuplicateResolution(
   leftText: string,
   rightText: string,

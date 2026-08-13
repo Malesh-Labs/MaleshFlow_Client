@@ -33,6 +33,7 @@ import {
   setNodeTreeArchivedState,
 } from "./lib/workspace";
 import {
+  arePlannerMergeSubtreeTextsEquivalent,
   comparePlannerTaskOrder,
   getEffectiveTaskDueDateRange,
   getPlannerMergeDuplicateResolution,
@@ -215,84 +216,40 @@ type PlannerMergeDuplicateCandidate = {
   location: "focus" | "carry";
 };
 
-async function moveDirectPlannerMergeChildren(
+// Texts of a node's non-archived descendants in depth-first, position order
+// (excluding the node itself). Used to decide whether a duplicate-merge loser's
+// subtree is redundant: the merge may only archive a node whose subtree is
+// empty or canonically identical to the winner's, so a distinct item with
+// children is never sacrificed to a text-similar neighbor.
+async function collectPlannerMergeSubtreeTexts(
   ctx: MutationCtx,
-  args: {
-    fromParentId: Id<"nodes">;
-    toParentId: Id<"nodes">;
-    now: number;
-    plannerDate?: number | null;
-  },
+  rootNodeId: Id<"nodes">,
 ) {
-  const fromParent = await ctx.db.get(args.fromParentId);
-  const toParent = await ctx.db.get(args.toParentId);
-  if (!fromParent || !toParent || fromParent.archived || toParent.archived) {
-    return 0;
+  const nodes = await collectNodeTree(ctx.db, rootNodeId);
+  const childrenByParent = new Map<string, Doc<"nodes">[]>();
+  for (const node of nodes) {
+    if (node._id === rootNodeId || node.archived || !node.parentNodeId) {
+      continue;
+    }
+    const key = node.parentNodeId as string;
+    const siblings = childrenByParent.get(key) ?? [];
+    siblings.push(node);
+    childrenByParent.set(key, siblings);
   }
 
-  const children = (
-    await ctx.db
-      .query("nodes")
-      .withIndex("by_page_parent_position", (query) =>
-        query.eq("pageId", fromParent.pageId).eq("parentNodeId", fromParent._id),
-      )
-      .collect()
-  )
-    .filter((node) => !node.archived)
-    .sort((left, right) => left.position - right.position);
-  if (children.length === 0) {
-    return 0;
-  }
-
-  const targetChildren = (
-    await ctx.db
-      .query("nodes")
-      .withIndex("by_page_parent_position", (query) =>
-        query.eq("pageId", toParent.pageId).eq("parentNodeId", toParent._id),
-      )
-      .collect()
-  )
-    .filter((node) => !node.archived)
-    .sort((left, right) => left.position - right.position);
-  let afterNodeId = targetChildren[targetChildren.length - 1]?._id ?? null;
-  let movedCount = 0;
-
-  for (const child of children) {
-    const nextPosition = await computeNodePosition(
-      ctx.db,
-      toParent.pageId,
-      toParent._id,
-      afterNodeId,
+  const texts: string[] = [];
+  const visit = (parentId: string) => {
+    const children = (childrenByParent.get(parentId) ?? []).sort(
+      (left, right) => left.position - right.position,
     );
-    await ctx.db.patch(child._id, {
-      pageId: toParent.pageId,
-      parentNodeId: toParent._id,
-      position: nextPosition,
-      updatedAt: args.now,
-    });
-
-    if (child.pageId !== toParent.pageId) {
-      const subtree = await collectNodeTree(ctx.db, child._id);
-      for (const descendant of subtree) {
-        if (descendant._id === child._id) {
-          continue;
-        }
-        await ctx.db.patch(descendant._id, {
-          pageId: toParent.pageId,
-          updatedAt: args.now,
-        });
-      }
+    for (const child of children) {
+      texts.push(child.text);
+      visit(child._id as string);
     }
+  };
+  visit(rootNodeId as string);
 
-    if (typeof args.plannerDate === "number") {
-      await updateMovedPlannerSubtreeDate(ctx, child._id, args.plannerDate, args.now);
-    }
-
-    afterNodeId = child._id;
-    movedCount += 1;
-  }
-
-  return movedCount;
+  return texts;
 }
 
 export const ensurePlannerPageSections = mutation({
@@ -967,6 +924,29 @@ export const completePlannerDay = mutation({
       }
 
       if (duplicateMatch) {
+        // A duplicate loser may only be archived when its subtree is redundant:
+        // empty, or canonically identical to the winner's subtree. Otherwise
+        // treat the pair as distinct items — a text-similar neighbor must never
+        // swallow an item that carries its own children. When subtrees are
+        // identical the loser keeps its children into the archive (re-parenting
+        // them would double them under the winner).
+        const loserNode =
+          duplicateMatch.keep === "incoming" ? duplicateMatch.candidate.node : child;
+        const winnerNode =
+          duplicateMatch.keep === "incoming" ? child : duplicateMatch.candidate.node;
+        const loserSubtreeTexts = await collectPlannerMergeSubtreeTexts(ctx, loserNode._id);
+        if (loserSubtreeTexts.length > 0) {
+          const winnerSubtreeTexts = await collectPlannerMergeSubtreeTexts(
+            ctx,
+            winnerNode._id,
+          );
+          if (!arePlannerMergeSubtreeTextsEquivalent(loserSubtreeTexts, winnerSubtreeTexts)) {
+            duplicateMatch = null;
+          }
+        }
+      }
+
+      if (duplicateMatch) {
         const archivedDuplicateNode =
           duplicateMatch.keep === "incoming" ? duplicateMatch.candidate.node : child;
         archivedDuplicateTexts.push(
@@ -974,11 +954,6 @@ export const completePlannerDay = mutation({
         );
 
         if (duplicateMatch.keep === "incoming") {
-          await moveDirectPlannerMergeChildren(ctx, {
-            fromParentId: duplicateMatch.candidate.node._id,
-            toParentId: child._id,
-            now,
-          });
           await setNodeTreeArchivedState(ctx.db, duplicateMatch.candidate.node._id, true, now);
           keptCarryChildren = keptCarryChildren.filter(
             (node) => node._id !== duplicateMatch.candidate.node._id,
@@ -987,12 +962,6 @@ export const completePlannerDay = mutation({
           keptCarryChildren.push(child);
           addDuplicateCandidate(child, "carry");
         } else {
-          await moveDirectPlannerMergeChildren(ctx, {
-            fromParentId: child._id,
-            toParentId: duplicateMatch.candidate.node._id,
-            now,
-            plannerDate: topDayDate,
-          });
           await setNodeTreeArchivedState(ctx.db, child._id, true, now);
         }
         archivedDuplicateCount += 1;
