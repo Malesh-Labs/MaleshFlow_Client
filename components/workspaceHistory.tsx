@@ -108,7 +108,12 @@ export type HistoryEntry =
   | {
       type: "complete_planner_task";
       pageId: Id<"pages">;
-      plannerNodeId: Id<"nodes">;
+      // Which completion mutation redo should re-run: the planner-item flow or
+      // the task-page (archive-to-Done) flow. Undo always reverses via the
+      // receipt, which both flows produce in the same shape.
+      redoTarget:
+        | { kind: "plannerNode"; plannerNodeId: Id<"nodes"> }
+        | { kind: "taskPage"; nodeId: Id<"nodes"> };
       completionMode: "dueDate" | "today";
       // Server-issued record of everything the completion changed; refreshed
       // in place when the entry is redone so a later undo reverses the redo's
@@ -168,6 +173,12 @@ type CompletePlannerTaskFn = (args: {
   completionMode: "dueDate" | "today";
 }) => Promise<unknown>;
 
+type CompleteTaskPageTaskFn = (args: {
+  ownerKey: string;
+  nodeId: Id<"nodes">;
+  completionMode: "dueDate" | "today";
+}) => Promise<unknown>;
+
 type UndoCompletePlannerTaskFn = (args: {
   ownerKey: string;
   receipt: PlannerCompletionReceipt;
@@ -184,6 +195,7 @@ type UseWorkspaceHistoryArgs = {
   setNodeTreeArchived: SetNodeTreeArchivedFn;
   setNodeTreesArchivedBatch: SetNodeTreesArchivedBatchFn;
   completePlannerTask: CompletePlannerTaskFn;
+  completeTaskPageTask: CompleteTaskPageTaskFn;
   undoCompletePlannerTask: UndoCompletePlannerTaskFn;
   isDisabled?: boolean;
   draftCheckpointDelayMs?: number;
@@ -304,6 +316,7 @@ export function useWorkspaceHistoryController({
   setNodeTreeArchived,
   setNodeTreesArchivedBatch,
   completePlannerTask,
+  completeTaskPageTask,
   undoCompletePlannerTask,
   isDisabled = false,
   draftCheckpointDelayMs = 750,
@@ -716,14 +729,26 @@ export function useWorkspaceHistoryController({
           if (isUndo) {
             await undoCompletePlannerTask({ ownerKey, receipt: entry.receipt });
           } else {
-            const nextReceipt = await completePlannerTask({
-              ownerKey,
-              plannerNodeId: entry.plannerNodeId,
-              completionMode: entry.completionMode,
-            });
+            const redoResult =
+              entry.redoTarget.kind === "plannerNode"
+                ? await completePlannerTask({
+                    ownerKey,
+                    plannerNodeId: entry.redoTarget.plannerNodeId,
+                    completionMode: entry.completionMode,
+                  })
+                : await completeTaskPageTask({
+                    ownerKey,
+                    nodeId: entry.redoTarget.nodeId,
+                    completionMode: entry.completionMode,
+                  });
             // Entries move between the undo/redo stacks by reference, so
             // refreshing the receipt here keeps the next undo aligned with
-            // what this redo actually did (new clone ids, fresh syncs).
+            // what this redo actually did (new clone ids, fresh syncs). The
+            // task-page flow wraps the receipt in its result object.
+            const nextReceipt =
+              redoResult && typeof redoResult === "object" && "receipt" in redoResult
+                ? (redoResult as { receipt: unknown }).receipt
+                : redoResult;
             if (nextReceipt && typeof nextReceipt === "object") {
               entry.receipt = nextReceipt as PlannerCompletionReceipt;
             }
@@ -773,6 +798,7 @@ export function useWorkspaceHistoryController({
     },
     [
       completePlannerTask,
+      completeTaskPageTask,
       ensureDraftSession,
       moveNode,
       ownerKey,

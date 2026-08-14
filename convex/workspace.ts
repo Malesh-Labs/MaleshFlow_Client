@@ -54,10 +54,14 @@ import {
   isPlannerScanExcludedPage,
   isTaskSourcePage,
   listEligiblePlannerSourceTasks,
+  createPlannerCompletionReceipt,
 } from "./lib/planner";
 import { replaceLiteralOccurrences } from "../lib/domain/findReplace";
 import { linkSearchScore, normalizeLinkSearchQuery } from "../lib/domain/linkSearch";
-import { getEffectiveTaskDueDateRange } from "../lib/domain/planner";
+import {
+  getEffectiveTaskDueDateRange,
+  type PlannerCompletionReceipt,
+} from "../lib/domain/planner";
 import {
   collectRootSubtreeLines,
   shouldGenerateEmbeddingForNodeText,
@@ -1140,6 +1144,7 @@ async function archiveTaskPageSubtreeToDone(
   ctx: MutationCtx,
   taskRootNode: Doc<"nodes">,
   now: number,
+  receipt?: PlannerCompletionReceipt,
 ) {
   const taskSubtree = await collectNodeTree(ctx.db, taskRootNode._id);
   const donePage = await ensureDoneArchivePage(ctx);
@@ -1151,7 +1156,7 @@ async function archiveTaskPageSubtreeToDone(
       existingDoneRoots.length - 1
     ]?._id ?? null;
 
-  await clonePlannerSubtree(ctx, {
+  const cloneRootNodeId = await clonePlannerSubtree(ctx, {
     sourceNodes: taskSubtree,
     rootNodeId: taskRootNode._id,
     targetPageId: donePage._id,
@@ -1165,14 +1170,20 @@ async function archiveTaskPageSubtreeToDone(
     }),
   });
 
-  await deleteSidebarFavoritesForNodes(ctx.db, taskSubtree);
+  await deleteSidebarFavoritesForNodes(ctx.db, taskSubtree, receipt);
   await setNodeTreeArchivedState(ctx.db, taskRootNode._id, true, now);
   await enqueueContainingRootEmbeddingRefresh(ctx, taskRootNode);
+
+  if (receipt) {
+    receipt.archivedRootNodeId = taskRootNode._id as string;
+    receipt.pastWeeksCloneRootNodeId = (cloneRootNodeId as string | null) ?? null;
+  }
 }
 
 async function deleteSidebarFavoritesForNodes(
   db: DatabaseWriter,
   nodes: Doc<"nodes">[],
+  receipt?: PlannerCompletionReceipt,
 ) {
   const seenNodeIds = new Set<string>();
 
@@ -1193,6 +1204,12 @@ async function deleteSidebarFavoritesForNodes(
       .take(20);
 
     for (const favorite of favorites) {
+      receipt?.deletedFavorites.push({
+        targetKind: favorite.targetKind,
+        targetPageId: favorite.targetPageId as string,
+        targetNodeId: (favorite.targetNodeId as string | null) ?? null,
+        position: favorite.position,
+      });
       await db.delete(favorite._id);
     }
   }
@@ -5014,6 +5031,14 @@ export const completeTaskPageTask = mutation({
       }
     }
 
+    const receipt = createPlannerCompletionReceipt();
+    receipt.plannerNodes.push({
+      nodeId: node._id as string,
+      taskStatus: node.taskStatus ?? null,
+      dueAt: node.dueAt ?? null,
+      dueEndAt: node.dueEndAt ?? null,
+      sourceMeta: node.sourceMeta ?? null,
+    });
     await ctx.db.patch(node._id, nextPatch);
 
     const refreshedNode = await ctx.db.get(node._id);
@@ -5028,20 +5053,32 @@ export const completeTaskPageTask = mutation({
     if (!isTaskPageDoneArchiveEnabled(page)) {
       return {
         archivedRootNodeId: null as Id<"nodes"> | null,
+        receipt,
       };
     }
 
     if (refreshedNode.taskStatus === "done") {
-      await ctx.scheduler.runAfter(
-        0,
-        internal.workspace.archiveCompletedTaskPageRootIfReady,
-        {
-          nodeId: refreshedNode._id,
-        },
-      );
+      // Run the Done-archive inline rather than via the scheduler so it lands
+      // in the same transaction and its effects (clone, favorites, archive)
+      // are captured in the receipt the client stores for undo.
+      const pageNodes = await listPageNodes(ctx.db, node.pageId);
+      const archiveNodeMap = buildTaskArchiveNodeMap(pageNodes);
+      const archiveChildrenByParent = buildTaskArchiveChildrenByParent(pageNodes);
+      const currentNode = archiveNodeMap.get(node._id as string);
+      const archivableRoot = currentNode
+        ? findArchivableTaskPageRoot(currentNode, archiveNodeMap, archiveChildrenByParent)
+        : null;
+      if (archivableRoot) {
+        await archiveTaskPageSubtreeToDone(ctx, archivableRoot, getTimestamp(), receipt);
+        return {
+          archivedRootNodeId: archivableRoot._id as Id<"nodes"> | null,
+          receipt,
+        };
+      }
     }
     return {
       archivedRootNodeId: null as Id<"nodes"> | null,
+      receipt,
     };
   },
 });

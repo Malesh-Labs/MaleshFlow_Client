@@ -421,6 +421,7 @@ export function createPlannerCompletionReceipt(): PlannerCompletionReceipt {
     plannerNodes: [],
     sourceTasks: [],
     appendedPlannerNodeIds: [],
+    deletedFavorites: [],
     archivedRootNodeId: null,
     pastWeeksCloneRootNodeId: null,
   };
@@ -440,6 +441,8 @@ function recordPlannerNodeBeforeState(
   receipt.plannerNodes.push({
     nodeId: node._id as string,
     taskStatus: node.taskStatus ?? null,
+    dueAt: node.dueAt ?? null,
+    dueEndAt: node.dueEndAt ?? null,
     sourceMeta: node.sourceMeta ?? null,
   });
 }
@@ -1391,13 +1394,14 @@ export async function completePlannerSourceTaskInstance(
     };
   }
 
-  await completePlannerLinkedTask(ctx, {
+  const receipt = await completePlannerLinkedTask(ctx, {
     plannerNodeId: plannerNode._id,
     completionMode: args.completionMode,
   });
 
   return {
     completedPlannerNodeId: plannerNode._id as Id<"nodes"> | null,
+    receipt,
   };
 }
 

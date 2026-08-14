@@ -416,6 +416,8 @@ export function comparePlannerTaskOrder(
 export type PlannerCompletionPatchedNode = {
   nodeId: string;
   taskStatus: TaskStatus | null;
+  dueAt: number | null;
+  dueEndAt: number | null;
   sourceMeta: unknown;
 };
 
@@ -426,10 +428,20 @@ export type PlannerCompletionPatchedSourceTask = {
   dueEndAt: number | null;
 };
 
+export type PlannerCompletionDeletedFavorite = {
+  targetKind: "page" | "node";
+  targetPageId: string;
+  targetNodeId: string | null;
+  position: number;
+};
+
+// Also reused by task-page completion (archive-to-Done), which shares the
+// same clone-then-archive shape as the planner's Past Weeks flow.
 export type PlannerCompletionReceipt = {
   plannerNodes: PlannerCompletionPatchedNode[];
   sourceTasks: PlannerCompletionPatchedSourceTask[];
   appendedPlannerNodeIds: string[];
+  deletedFavorites: PlannerCompletionDeletedFavorite[];
   archivedRootNodeId: string | null;
   pastWeeksCloneRootNodeId: string | null;
 };
@@ -444,6 +456,7 @@ export function plannerCompletionReceiptHasEffects(
     receipt.plannerNodes.length > 0 ||
     receipt.sourceTasks.length > 0 ||
     receipt.appendedPlannerNodeIds.length > 0 ||
+    receipt.deletedFavorites.length > 0 ||
     receipt.archivedRootNodeId !== null ||
     receipt.pastWeeksCloneRootNodeId !== null
   );

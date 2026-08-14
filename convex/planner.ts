@@ -790,6 +790,8 @@ const plannerCompletionReceiptValidator = v.object({
     v.object({
       nodeId: v.string(),
       taskStatus: taskStatusValidator,
+      dueAt: v.union(v.number(), v.null()),
+      dueEndAt: v.union(v.number(), v.null()),
       sourceMeta: v.any(),
     }),
   ),
@@ -802,6 +804,14 @@ const plannerCompletionReceiptValidator = v.object({
     }),
   ),
   appendedPlannerNodeIds: v.array(v.string()),
+  deletedFavorites: v.array(
+    v.object({
+      targetKind: v.union(v.literal("page"), v.literal("node")),
+      targetPageId: v.string(),
+      targetNodeId: v.union(v.string(), v.null()),
+      position: v.number(),
+    }),
+  ),
   archivedRootNodeId: v.union(v.string(), v.null()),
   pastWeeksCloneRootNodeId: v.union(v.string(), v.null()),
 });
@@ -861,6 +871,8 @@ export const undoCompletePlannerTask = mutation({
       }
       await ctx.db.patch(nodeId, {
         taskStatus: entry.taskStatus,
+        dueAt: entry.dueAt,
+        dueEndAt: entry.dueEndAt,
         sourceMeta: entry.sourceMeta === null ? undefined : entry.sourceMeta,
         updatedAt: now,
       });
@@ -880,6 +892,36 @@ export const undoCompletePlannerTask = mutation({
         updatedAt: now,
       });
       touchedPageIds.add(node.pageId as string);
+    }
+
+    for (const favorite of args.receipt.deletedFavorites) {
+      const targetPageId = ctx.db.normalizeId("pages", favorite.targetPageId);
+      const targetNodeId = favorite.targetNodeId
+        ? ctx.db.normalizeId("nodes", favorite.targetNodeId)
+        : null;
+      if (!targetPageId || (favorite.targetNodeId && !targetNodeId)) {
+        continue;
+      }
+      const existing = await ctx.db
+        .query("sidebarFavorites")
+        .withIndex("by_target", (query) =>
+          query
+            .eq("targetKind", favorite.targetKind)
+            .eq("targetPageId", targetPageId)
+            .eq("targetNodeId", targetNodeId),
+        )
+        .first();
+      if (existing) {
+        continue;
+      }
+      await ctx.db.insert("sidebarFavorites", {
+        targetKind: favorite.targetKind,
+        targetPageId,
+        targetNodeId,
+        position: favorite.position,
+        createdAt: now,
+        updatedAt: now,
+      });
     }
 
     for (const pageId of touchedPageIds) {

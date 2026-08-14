@@ -287,6 +287,7 @@ function HistoryHarness() {
     setNodeTreeArchived: async () => undefined,
     setNodeTreesArchivedBatch: async () => undefined,
     completePlannerTask: async () => null,
+    completeTaskPageTask: async () => null,
     undoCompletePlannerTask: async () => undefined,
     draftCheckpointDelayMs: 20,
   });

@@ -5139,6 +5139,7 @@ function ConfiguredWorkspace({
     setNodeTreeArchived: setNodeTreeArchivedRaw,
     setNodeTreesArchivedBatch: setNodeTreesArchivedBatchRaw,
     completePlannerTask: completePlannerTaskRaw,
+    completeTaskPageTask: completeTaskPageTaskRaw,
     undoCompletePlannerTask: undoCompletePlannerTaskRaw,
     isDisabled: activePageTree?.page?.archived ?? false,
   });
@@ -10231,7 +10232,7 @@ function ConfiguredWorkspace({
           history.pushUndoEntry({
             type: "complete_planner_task",
             pageId: node.pageId as Id<"pages">,
-            plannerNodeId: node._id as Id<"nodes">,
+            redoTarget: { kind: "plannerNode", plannerNodeId: node._id as Id<"nodes"> },
             completionMode: recurringCompletionMode,
             receipt: receipt!,
             focusEditorId: getNodeEditorId(node._id as Id<"nodes">),
@@ -10249,12 +10250,23 @@ function ConfiguredWorkspace({
         getPageMeta(page).pageType === "task" &&
         pageSourceMeta?.archiveCompletedRootTasksToDone === true
       ) {
-        await completeTaskPageTask({
+        const taskPageResult = (await completeTaskPageTask({
           ownerKey,
           nodeId: node._id as Id<"nodes">,
           completionMode: recurringCompletionMode,
-        });
+        })) as { receipt?: PlannerCompletionReceipt } | null;
         clearNodeSelection();
+        const taskPageReceipt = taskPageResult?.receipt ?? null;
+        if (plannerCompletionReceiptHasEffects(taskPageReceipt)) {
+          history.pushUndoEntry({
+            type: "complete_planner_task",
+            pageId: node.pageId as Id<"pages">,
+            redoTarget: { kind: "taskPage", nodeId: node._id as Id<"nodes"> },
+            completionMode: recurringCompletionMode,
+            receipt: taskPageReceipt!,
+            focusEditorId: getNodeEditorId(node._id as Id<"nodes">),
+          });
+        }
         continue;
       }
 
@@ -19796,6 +19808,23 @@ function OutlineNodeEditor({
       sourceTaskNodeId: node._id as Id<"nodes">,
       completionMode: recurringCompletionMode,
     });
+    const sourceReceipt = (result as { receipt?: PlannerCompletionReceipt }).receipt ?? null;
+    if (
+      result.completedPlannerNodeId !== null &&
+      plannerCompletionReceiptHasEffects(sourceReceipt)
+    ) {
+      history.pushUndoEntry({
+        type: "complete_planner_task",
+        pageId: pageId as Id<"pages">,
+        redoTarget: {
+          kind: "plannerNode",
+          plannerNodeId: result.completedPlannerNodeId as Id<"nodes">,
+        },
+        completionMode: recurringCompletionMode,
+        receipt: sourceReceipt!,
+        focusEditorId: editorId,
+      });
+    }
     return result.completedPlannerNodeId !== null;
   };
 
@@ -19821,7 +19850,7 @@ function OutlineNodeEditor({
         history.pushUndoEntry({
           type: "complete_planner_task",
           pageId: pageId as Id<"pages">,
-          plannerNodeId: node._id as Id<"nodes">,
+          redoTarget: { kind: "plannerNode", plannerNodeId: node._id as Id<"nodes"> },
           completionMode: recurringCompletionMode,
           receipt: receipt!,
           focusEditorId: editorId,
@@ -19846,13 +19875,24 @@ function OutlineNodeEditor({
       getPageMeta(currentPage).pageType === "task" &&
       currentPageSourceMeta?.archiveCompletedRootTasksToDone === true
     ) {
-      await completeTaskPageTask({
+      const taskPageResult = (await completeTaskPageTask({
         ownerKey,
         nodeId: node._id as Id<"nodes">,
         completionMode: recurringCompletionMode,
-      });
+      })) as { receipt?: PlannerCompletionReceipt } | null;
       history.resetTrackedValue(editorId, editorTarget, saveResult.parsed.text);
       setDraft(saveResult.parsed.text);
+      const taskPageReceipt = taskPageResult?.receipt ?? null;
+      if (plannerCompletionReceiptHasEffects(taskPageReceipt)) {
+        history.pushUndoEntry({
+          type: "complete_planner_task",
+          pageId: pageId as Id<"pages">,
+          redoTarget: { kind: "taskPage", nodeId: node._id as Id<"nodes"> },
+          completionMode: recurringCompletionMode,
+          receipt: taskPageReceipt!,
+          focusEditorId: editorId,
+        });
+      }
       return;
     }
 
