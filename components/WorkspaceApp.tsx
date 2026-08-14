@@ -108,6 +108,8 @@ import {
 import { DEFAULT_AI_WORKING_MEMORY_TEXT } from "@/lib/domain/aiMemory";
 import {
   getEffectiveTaskDueDateRange,
+  plannerCompletionReceiptHasEffects,
+  type PlannerCompletionReceipt,
 } from "@/lib/domain/planner";
 import {
   isPlannerSymbolizableText,
@@ -4846,6 +4848,7 @@ function ConfiguredWorkspace({
   const addRandomPlannerTaskWithAi = useAction(api.plannerAi.addRandomPlannerTaskWithAi);
   const suggestNextPlannerTask = useAction(api.plannerAi.suggestNextPlannerTask);
   const completePlannerTaskRaw = useMutation(api.planner.completePlannerTask);
+  const undoCompletePlannerTaskRaw = useMutation(api.planner.undoCompletePlannerTask);
   const completePlannerTaskMutation = completePlannerTaskRaw.withOptimisticUpdate(
     (localStore, args) => {
       applyOptimisticPlannerTaskCompletion(localStore, args);
@@ -5135,6 +5138,8 @@ function ConfiguredWorkspace({
     moveNode: moveNodeRaw,
     setNodeTreeArchived: setNodeTreeArchivedRaw,
     setNodeTreesArchivedBatch: setNodeTreesArchivedBatchRaw,
+    completePlannerTask: completePlannerTaskRaw,
+    undoCompletePlannerTask: undoCompletePlannerTaskRaw,
     isDisabled: activePageTree?.page?.archived ?? false,
   });
 
@@ -10211,29 +10216,27 @@ function ConfiguredWorkspace({
       }
 
       if (
-        isPlannerCompletionTask(node, workspaceNodeMap) &&
-        node.taskStatus !== "done"
+        (isPlannerCompletionTask(node, workspaceNodeMap) && node.taskStatus !== "done") ||
+        (node.kind === "note" &&
+          !isNodeNoteCompleted(node) &&
+          isPlannerCompletionItem(node, workspaceNodeMap))
       ) {
-        await completePlannerTask({
+        const receipt = (await completePlannerTask({
           ownerKey,
           plannerNodeId: node._id as Id<"nodes">,
           completionMode: recurringCompletionMode,
-        });
+        })) as PlannerCompletionReceipt | null;
         clearNodeSelection();
-        continue;
-      }
-
-      if (
-        node.kind === "note" &&
-        !isNodeNoteCompleted(node) &&
-        isPlannerCompletionItem(node, workspaceNodeMap)
-      ) {
-        await completePlannerTask({
-          ownerKey,
-          plannerNodeId: node._id as Id<"nodes">,
-          completionMode: recurringCompletionMode,
-        });
-        clearNodeSelection();
+        if (plannerCompletionReceiptHasEffects(receipt)) {
+          history.pushUndoEntry({
+            type: "complete_planner_task",
+            pageId: node.pageId as Id<"pages">,
+            plannerNodeId: node._id as Id<"nodes">,
+            completionMode: recurringCompletionMode,
+            receipt: receipt!,
+            focusEditorId: getNodeEditorId(node._id as Id<"nodes">),
+          });
+        }
         continue;
       }
 
@@ -19807,13 +19810,23 @@ function OutlineNodeEditor({
     }
 
     if (isPlannerCompletionTask(node, nodeMap) && node.taskStatus !== "done") {
-      await completePlannerTaskMutation({
+      const receipt = (await completePlannerTaskMutation({
         ownerKey,
         plannerNodeId: node._id as Id<"nodes">,
         completionMode: recurringCompletionMode,
-      });
+      })) as PlannerCompletionReceipt | null;
       history.resetTrackedValue(editorId, editorTarget, saveResult.parsed.text);
       setDraft(saveResult.parsed.text);
+      if (plannerCompletionReceiptHasEffects(receipt)) {
+        history.pushUndoEntry({
+          type: "complete_planner_task",
+          pageId: pageId as Id<"pages">,
+          plannerNodeId: node._id as Id<"nodes">,
+          completionMode: recurringCompletionMode,
+          receipt: receipt!,
+          focusEditorId: editorId,
+        });
+      }
       return;
     }
 

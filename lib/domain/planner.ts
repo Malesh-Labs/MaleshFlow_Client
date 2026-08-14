@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { TaskStatus } from "./constants";
 import { formatDueDate, getTodayReferenceDate, isOverdueDueDateRange } from "./recurrence";
 import { extractLinkMatches } from "./links";
 import { stripInlineFormattingMarkers } from "./inlineFormatting";
@@ -406,4 +407,44 @@ export function comparePlannerTaskOrder(
   }
 
   return (left.position ?? Number.POSITIVE_INFINITY) - (right.position ?? Number.POSITIVE_INFINITY);
+}
+
+// Receipt of everything completePlannerTask changed, returned to the client so
+// an undo can reverse the full effect server-side: restore patched planner
+// nodes and source tasks, delete nodes the completion created (the Past Weeks
+// archive clone and any recurring sidebar copies), and unarchive the subtree.
+export type PlannerCompletionPatchedNode = {
+  nodeId: string;
+  taskStatus: TaskStatus | null;
+  sourceMeta: unknown;
+};
+
+export type PlannerCompletionPatchedSourceTask = {
+  nodeId: string;
+  taskStatus: TaskStatus | null;
+  dueAt: number | null;
+  dueEndAt: number | null;
+};
+
+export type PlannerCompletionReceipt = {
+  plannerNodes: PlannerCompletionPatchedNode[];
+  sourceTasks: PlannerCompletionPatchedSourceTask[];
+  appendedPlannerNodeIds: string[];
+  archivedRootNodeId: string | null;
+  pastWeeksCloneRootNodeId: string | null;
+};
+
+export function plannerCompletionReceiptHasEffects(
+  receipt: PlannerCompletionReceipt | null | undefined,
+) {
+  if (!receipt) {
+    return false;
+  }
+  return (
+    receipt.plannerNodes.length > 0 ||
+    receipt.sourceTasks.length > 0 ||
+    receipt.appendedPlannerNodeIds.length > 0 ||
+    receipt.archivedRootNodeId !== null ||
+    receipt.pastWeeksCloneRootNodeId !== null
+  );
 }

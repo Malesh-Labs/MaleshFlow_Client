@@ -19,6 +19,7 @@ import {
   getPlannerDateRangeBoundary,
   getPlannerWeekdayName,
   plannerDayMatchesDueDateBoundary,
+  type PlannerCompletionReceipt,
 } from "../../lib/domain/planner";
 import {
   advanceRecurringDueDateRange,
@@ -415,11 +416,58 @@ export function findPlannerCompletionNodeForSourceTask(
   return candidates[0] ?? null;
 }
 
+export function createPlannerCompletionReceipt(): PlannerCompletionReceipt {
+  return {
+    plannerNodes: [],
+    sourceTasks: [],
+    appendedPlannerNodeIds: [],
+    archivedRootNodeId: null,
+    pastWeeksCloneRootNodeId: null,
+  };
+}
+
+// Records a node's before-state exactly once (the first occurrence is the
+// pre-completion state). sourceMeta uses null for "field absent" so the value
+// survives the client round-trip; the undo mutation converts null back to a
+// field removal.
+function recordPlannerNodeBeforeState(
+  receipt: PlannerCompletionReceipt | undefined,
+  node: Doc<"nodes">,
+) {
+  if (!receipt || receipt.plannerNodes.some((entry) => entry.nodeId === (node._id as string))) {
+    return;
+  }
+  receipt.plannerNodes.push({
+    nodeId: node._id as string,
+    taskStatus: node.taskStatus ?? null,
+    sourceMeta: node.sourceMeta ?? null,
+  });
+}
+
+function recordSourceTaskBeforeState(
+  receipt: PlannerCompletionReceipt | undefined,
+  sourceTask: Doc<"nodes">,
+) {
+  if (
+    !receipt ||
+    receipt.sourceTasks.some((entry) => entry.nodeId === (sourceTask._id as string))
+  ) {
+    return;
+  }
+  receipt.sourceTasks.push({
+    nodeId: sourceTask._id as string,
+    taskStatus: sourceTask.taskStatus ?? null,
+    dueAt: sourceTask.dueAt ?? null,
+    dueEndAt: sourceTask.dueEndAt ?? null,
+  });
+}
+
 async function syncPlannerLinkedSourceTaskCompletion(
   ctx: MutationCtx,
   plannerNodes: Doc<"nodes">[],
   completionMode: RecurringCompletionMode,
   now: number,
+  receipt?: PlannerCompletionReceipt,
 ) {
   const syncedSourceTaskIds = new Set<string>();
   const touchedPageIds = new Set<string>();
@@ -451,6 +499,7 @@ async function syncPlannerLinkedSourceTaskCompletion(
       continue;
     }
 
+    recordSourceTaskBeforeState(receipt, sourceTask);
     if (recurrenceFrequency && sourceTask.dueAt) {
       const nextRange = advanceRecurringDueDateRange({
         dueAt: sourceTask.dueAt,
@@ -464,12 +513,15 @@ async function syncPlannerLinkedSourceTaskCompletion(
         dueEndAt: nextRange.dueEndAt,
         updatedAt: now,
       });
-      await appendPlannerSidebarSourceTaskToMatchingDay(ctx, {
+      const appendedPlannerNodeId = await appendPlannerSidebarSourceTaskToMatchingDay(ctx, {
         ...sourceTask,
         taskStatus: "todo",
         dueAt: nextRange.dueAt,
         dueEndAt: nextRange.dueEndAt,
       });
+      if (appendedPlannerNodeId && receipt) {
+        receipt.appendedPlannerNodeIds.push(appendedPlannerNodeId as string);
+      }
     } else {
       await ctx.db.patch(sourceTask._id, {
         taskStatus: "done",
@@ -477,6 +529,7 @@ async function syncPlannerLinkedSourceTaskCompletion(
       });
     }
 
+    recordPlannerNodeBeforeState(receipt, plannerNode);
     await ctx.db.patch(plannerNode._id, {
       sourceMeta: buildPlannerLinkedSourceCompletionMeta({
         plannerNode,
@@ -498,6 +551,7 @@ async function syncPlannerLinkedRecurringSourceTaskCompletionIfReady(
   plannerNode: Doc<"nodes">,
   completionMode: RecurringCompletionMode,
   now: number,
+  receipt?: PlannerCompletionReceipt,
 ) {
   const sourceTaskRef = getPlannerLinkedSourceTaskRef(plannerNode);
   const sourceTaskId = sourceTaskRef ? ctx.db.normalizeId("nodes", sourceTaskRef) : null;
@@ -519,6 +573,7 @@ async function syncPlannerLinkedRecurringSourceTaskCompletionIfReady(
     [plannerNode],
     completionMode,
     now,
+    receipt,
   );
   return true;
 }
@@ -528,14 +583,21 @@ async function archivePlannerSubtreeToPastWeeks(
   plannerRootNode: Doc<"nodes">,
   completionMode: RecurringCompletionMode,
   now: number,
+  receipt?: PlannerCompletionReceipt,
 ) {
   const plannerSubtree = await collectNodeTree(ctx.db, plannerRootNode._id);
-  await syncPlannerLinkedSourceTaskCompletion(ctx, plannerSubtree, completionMode, now);
+  await syncPlannerLinkedSourceTaskCompletion(
+    ctx,
+    plannerSubtree,
+    completionMode,
+    now,
+    receipt,
+  );
 
   const pastWeeksPage = await ensurePastWeeksPage(ctx);
   const rootPosition = await computeAppendNodePosition(ctx.db, pastWeeksPage._id, null);
 
-  await clonePlannerSubtree(ctx, {
+  const cloneRootNodeId = await clonePlannerSubtree(ctx, {
     sourceNodes: plannerSubtree,
     rootNodeId: plannerRootNode._id,
     targetPageId: pastWeeksPage._id,
@@ -558,6 +620,11 @@ async function archivePlannerSubtreeToPastWeeks(
 
   await setNodeTreeArchivedState(ctx.db, plannerRootNode._id, true, now);
   await enqueueContainingRootEmbeddingRefresh(ctx, plannerRootNode);
+
+  if (receipt) {
+    receipt.archivedRootNodeId = plannerRootNode._id as string;
+    receipt.pastWeeksCloneRootNodeId = (cloneRootNodeId as string | null) ?? null;
+  }
 }
 
 export async function clonePlannerSubtree(
@@ -1217,9 +1284,11 @@ export async function completePlannerLinkedTask(
 
   const now = Date.now();
   const completedThisCall = !isPlannerNodeCompleted(plannerNode);
+  const receipt = createPlannerCompletionReceipt();
 
   if (completedThisCall) {
     const sourceMeta = getNodeSourceMeta(plannerNode);
+    recordPlannerNodeBeforeState(receipt, plannerNode);
     if (plannerNode.kind === "task") {
       await ctx.db.patch(plannerNode._id, {
         taskStatus: "done",
@@ -1250,6 +1319,7 @@ export async function completePlannerLinkedTask(
       refreshedPlannerNode,
       args.completionMode,
       now,
+      receipt,
     )
     : false;
 
@@ -1275,13 +1345,21 @@ export async function completePlannerLinkedTask(
         [linkedCompletionRoot],
         args.completionMode,
         now,
+        receipt,
       );
     }
     await enqueuePageRootEmbeddingRefresh(ctx, refreshedPlannerNode.pageId);
-    return;
+    return receipt;
   }
 
-  await archivePlannerSubtreeToPastWeeks(ctx, archivableRoot, args.completionMode, now);
+  await archivePlannerSubtreeToPastWeeks(
+    ctx,
+    archivableRoot,
+    args.completionMode,
+    now,
+    receipt,
+  );
+  return receipt;
 }
 
 export async function completePlannerSourceTaskInstance(

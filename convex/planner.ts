@@ -8,6 +8,7 @@ import {
 } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { assertOwnerKey } from "./lib/auth";
+import { taskStatusValidator } from "./lib/validators";
 import {
   appendPlannerDayCore,
   appendPlannerLinkedTaskCopy,
@@ -28,9 +29,12 @@ import {
 import {
   collectNodeTree,
   computeNodePosition,
+  deleteNodeTree,
+  enqueueNodeAiWork,
   enqueuePageRootEmbeddingRefresh,
   listPageNodes,
   setNodeTreeArchivedState,
+  syncLinksForNode,
 } from "./lib/workspace";
 import {
   arePlannerMergeSubtreeTextsEquivalent,
@@ -774,10 +778,115 @@ export const completePlannerTask = mutation({
   },
   handler: async (ctx, args) => {
     assertOwnerKey(args.ownerKey);
-    await completePlannerLinkedTask(ctx, {
+    return await completePlannerLinkedTask(ctx, {
       plannerNodeId: args.plannerNodeId,
       completionMode: args.completionMode,
     });
+  },
+});
+
+const plannerCompletionReceiptValidator = v.object({
+  plannerNodes: v.array(
+    v.object({
+      nodeId: v.string(),
+      taskStatus: taskStatusValidator,
+      sourceMeta: v.any(),
+    }),
+  ),
+  sourceTasks: v.array(
+    v.object({
+      nodeId: v.string(),
+      taskStatus: taskStatusValidator,
+      dueAt: v.union(v.number(), v.null()),
+      dueEndAt: v.union(v.number(), v.null()),
+    }),
+  ),
+  appendedPlannerNodeIds: v.array(v.string()),
+  archivedRootNodeId: v.union(v.string(), v.null()),
+  pastWeeksCloneRootNodeId: v.union(v.string(), v.null()),
+});
+
+// Reverses a completePlannerTask call from its receipt: deletes the nodes the
+// completion created (Past Weeks archive clone, recurring sidebar copies),
+// unarchives the planner subtree, and restores the patched planner nodes and
+// source tasks to their recorded before-states. Nodes that no longer exist are
+// skipped so a stale receipt degrades to a partial restore instead of failing.
+export const undoCompletePlannerTask = mutation({
+  args: {
+    ownerKey: v.string(),
+    receipt: plannerCompletionReceiptValidator,
+  },
+  handler: async (ctx, args) => {
+    assertOwnerKey(args.ownerKey);
+    const now = Date.now();
+    const touchedPageIds = new Set<string>();
+
+    const createdNodeIds = [
+      ...(args.receipt.pastWeeksCloneRootNodeId
+        ? [args.receipt.pastWeeksCloneRootNodeId]
+        : []),
+      ...args.receipt.appendedPlannerNodeIds,
+    ];
+    for (const rawNodeId of createdNodeIds) {
+      const nodeId = ctx.db.normalizeId("nodes", rawNodeId);
+      if (!nodeId) {
+        continue;
+      }
+      const node = await ctx.db.get(nodeId);
+      if (!node) {
+        continue;
+      }
+      touchedPageIds.add(node.pageId as string);
+      await deleteNodeTree(ctx.db, nodeId);
+    }
+
+    if (args.receipt.archivedRootNodeId) {
+      const rootNodeId = ctx.db.normalizeId("nodes", args.receipt.archivedRootNodeId);
+      const rootNode = rootNodeId ? await ctx.db.get(rootNodeId) : null;
+      if (rootNodeId && rootNode) {
+        const descendants = await setNodeTreeArchivedState(ctx.db, rootNodeId, false, now);
+        for (const descendant of descendants) {
+          await syncLinksForNode(ctx.db, { ...descendant, archived: false });
+          await enqueueNodeAiWork(ctx, descendant._id);
+        }
+        touchedPageIds.add(rootNode.pageId as string);
+      }
+    }
+
+    for (const entry of args.receipt.plannerNodes) {
+      const nodeId = ctx.db.normalizeId("nodes", entry.nodeId);
+      const node = nodeId ? await ctx.db.get(nodeId) : null;
+      if (!nodeId || !node) {
+        continue;
+      }
+      await ctx.db.patch(nodeId, {
+        taskStatus: entry.taskStatus,
+        sourceMeta: entry.sourceMeta === null ? undefined : entry.sourceMeta,
+        updatedAt: now,
+      });
+      touchedPageIds.add(node.pageId as string);
+    }
+
+    for (const entry of args.receipt.sourceTasks) {
+      const nodeId = ctx.db.normalizeId("nodes", entry.nodeId);
+      const node = nodeId ? await ctx.db.get(nodeId) : null;
+      if (!nodeId || !node) {
+        continue;
+      }
+      await ctx.db.patch(nodeId, {
+        taskStatus: entry.taskStatus,
+        dueAt: entry.dueAt,
+        dueEndAt: entry.dueEndAt,
+        updatedAt: now,
+      });
+      touchedPageIds.add(node.pageId as string);
+    }
+
+    for (const pageId of touchedPageIds) {
+      await enqueuePageRootEmbeddingRefresh(ctx, pageId as Id<"pages">);
+    }
+
+    return null;
   },
 });
 

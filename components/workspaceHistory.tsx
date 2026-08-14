@@ -16,6 +16,7 @@ import {
   limitHistoryEntries,
 } from "@/lib/domain/workspaceHistory";
 import type { RecurrenceFrequency } from "@/lib/domain/recurrence";
+import type { PlannerCompletionReceipt } from "@/lib/domain/planner";
 
 type NodeKind = "note" | "task";
 type TaskStatus = "todo" | "in_progress" | "done" | "cancelled" | null;
@@ -105,6 +106,17 @@ export type HistoryEntry =
       focusAfterRedoId: string | null;
     }
   | {
+      type: "complete_planner_task";
+      pageId: Id<"pages">;
+      plannerNodeId: Id<"nodes">;
+      completionMode: "dueDate" | "today";
+      // Server-issued record of everything the completion changed; refreshed
+      // in place when the entry is redone so a later undo reverses the redo's
+      // own effects.
+      receipt: PlannerCompletionReceipt;
+      focusEditorId: string | null;
+    }
+  | {
       type: "compound";
       pageId: Id<"pages">;
       entries: HistoryEntry[];
@@ -150,6 +162,17 @@ type SetNodeTreesArchivedBatchFn = (args: {
   archived: boolean;
 }) => Promise<unknown>;
 
+type CompletePlannerTaskFn = (args: {
+  ownerKey: string;
+  plannerNodeId: Id<"nodes">;
+  completionMode: "dueDate" | "today";
+}) => Promise<unknown>;
+
+type UndoCompletePlannerTaskFn = (args: {
+  ownerKey: string;
+  receipt: PlannerCompletionReceipt;
+}) => Promise<unknown>;
+
 type UseWorkspaceHistoryArgs = {
   ownerKey: string;
   selectedPageId: Id<"pages"> | null;
@@ -160,6 +183,8 @@ type UseWorkspaceHistoryArgs = {
   moveNode: MoveNodeFn;
   setNodeTreeArchived: SetNodeTreeArchivedFn;
   setNodeTreesArchivedBatch: SetNodeTreesArchivedBatchFn;
+  completePlannerTask: CompletePlannerTaskFn;
+  undoCompletePlannerTask: UndoCompletePlannerTaskFn;
   isDisabled?: boolean;
   draftCheckpointDelayMs?: number;
 };
@@ -278,6 +303,8 @@ export function useWorkspaceHistoryController({
   moveNode,
   setNodeTreeArchived,
   setNodeTreesArchivedBatch,
+  completePlannerTask,
+  undoCompletePlannerTask,
   isDisabled = false,
   draftCheckpointDelayMs = 750,
 }: UseWorkspaceHistoryArgs) {
@@ -685,6 +712,26 @@ export function useWorkspaceHistoryController({
           return;
         }
 
+        case "complete_planner_task": {
+          if (isUndo) {
+            await undoCompletePlannerTask({ ownerKey, receipt: entry.receipt });
+          } else {
+            const nextReceipt = await completePlannerTask({
+              ownerKey,
+              plannerNodeId: entry.plannerNodeId,
+              completionMode: entry.completionMode,
+            });
+            // Entries move between the undo/redo stacks by reference, so
+            // refreshing the receipt here keeps the next undo aligned with
+            // what this redo actually did (new clone ids, fresh syncs).
+            if (nextReceipt && typeof nextReceipt === "object") {
+              entry.receipt = nextReceipt as PlannerCompletionReceipt;
+            }
+          }
+          scheduleFocus(entry.focusEditorId);
+          return;
+        }
+
         case "compound": {
           const archiveEntries = entry.entries.filter(
             (
@@ -725,6 +772,7 @@ export function useWorkspaceHistoryController({
       }
     },
     [
+      completePlannerTask,
       ensureDraftSession,
       moveNode,
       ownerKey,
@@ -734,6 +782,7 @@ export function useWorkspaceHistoryController({
       setNodeTreesArchivedBatch,
       setSelectedPage,
       syncCommittedValue,
+      undoCompletePlannerTask,
       updateNode,
     ],
   );
