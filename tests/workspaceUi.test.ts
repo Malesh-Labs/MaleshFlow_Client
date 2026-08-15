@@ -135,6 +135,33 @@ test("filterPagesForCommandPalette prioritizes active prefix matches before arch
   );
 });
 
+test("filterPagesForCommandPalette matches fuzzy scattered-letter queries", () => {
+  const results = filterPagesForCommandPalette(
+    [
+      { _id: "1", title: "Daily Journal", archived: false, position: 1024 },
+      { _id: "2", title: "Coffee Shop List", archived: false, position: 2048 },
+      { _id: "3", title: "Groceries", archived: false, position: 3072 },
+    ],
+    "cofshl",
+  );
+  assert.deepEqual(
+    results.map((page) => page._id),
+    ["2"],
+  );
+
+  const multiWord = filterPagesForCommandPalette(
+    [
+      { _id: "1", title: "Daily Journal", archived: false, position: 1024 },
+      { _id: "2", title: "Weekly Journal Review", archived: false, position: 2048 },
+    ],
+    "wee jour",
+  );
+  assert.deepEqual(
+    multiWord.map((page) => page._id),
+    ["2"],
+  );
+});
+
 test("filterPagesForCommandPalette matches page type search terms", () => {
   const results = filterPagesForCommandPalette(
     [

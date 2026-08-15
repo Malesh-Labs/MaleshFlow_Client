@@ -3,6 +3,9 @@ import { internalMutation, internalQuery, type QueryCtx } from "./_generated/ser
 import type { Doc } from "./_generated/dataModel";
 import { priorityValidator, taskStatusValidator } from "./lib/validators";
 import { isSeparatorLineText } from "../lib/domain/displaySyntax";
+import { linkSearchScore, normalizeLinkSearchQuery } from "../lib/domain/linkSearch";
+
+const TEXT_SEARCH_NODE_CANDIDATE_LIMIT = 128;
 
 async function hydrateSearchResultParentNodes<T extends { node: Doc<"nodes"> }>(
   db: QueryCtx["db"],
@@ -105,58 +108,105 @@ export const fallbackTextSearch = internalQuery({
     includeArchived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const rawNodes = args.pageId
-      ? await ctx.db
-          .query("nodes")
-          .withIndex("by_page_archived", (query) =>
-            query.eq("pageId", args.pageId!).eq("archived", args.includeArchived === true),
-          )
-          .collect()
-      : (await ctx.db.query("nodes").collect()).filter((node) =>
-          args.includeArchived === true ? node.archived : !node.archived,
-        );
-    const pageIds = [...new Set(rawNodes.map((node) => node.pageId))];
+    const includeArchived = args.includeArchived === true;
+    const normalizedQuery = normalizeLinkSearchQuery(args.query);
+    if (normalizedQuery.length === 0) {
+      return [];
+    }
+
+    // Candidates come from the search index instead of a full table scan
+    // (which exceeds Convex's read limit on large workspaces): one search
+    // with the raw query (word-prefix semantics cover multi-word input) plus
+    // a short first-word prefix probe so fuzzy in-order-letter queries like
+    // "cofsho" still surface "coffee shop" candidates.
+    const candidates: Doc<"nodes">[] = [];
+    const seenCandidateIds = new Set<string>();
+    const addCandidates = (batch: Doc<"nodes">[]) => {
+      for (const node of batch) {
+        if (!seenCandidateIds.has(node._id as string)) {
+          seenCandidateIds.add(node._id as string);
+          candidates.push(node);
+        }
+      }
+    };
+    const runSearch = async (searchQuery: string) =>
+      await ctx.db
+        .query("nodes")
+        .withSearchIndex("search_text", (search) => {
+          const withText = search.search("text", searchQuery).eq("archived", includeArchived);
+          return args.pageId ? withText.eq("pageId", args.pageId!) : withText;
+        })
+        .take(TEXT_SEARCH_NODE_CANDIDATE_LIMIT);
+
+    addCandidates(await runSearch(normalizedQuery));
+    const firstWord = normalizedQuery.split(" ")[0] ?? "";
+    const prefixProbe = firstWord.slice(0, 3);
+    if (prefixProbe.length >= 2 && prefixProbe !== normalizedQuery) {
+      addCandidates(await runSearch(prefixProbe));
+    }
+
+    const pageIds = [...new Set(candidates.map((node) => node.pageId))];
     const pages = await Promise.all(pageIds.map((pageId) => ctx.db.get(pageId)));
     const pageMap = new Map(
       pages
         .filter(
           (page): page is Doc<"pages"> =>
-            Boolean(page) &&
-            (args.includeArchived === true ? page!.archived : !page!.archived),
+            Boolean(page) && (includeArchived ? page!.archived : !page!.archived),
         )
         .map((page) => [page._id, page]),
     );
-    const nodes = rawNodes.filter((node) => pageMap.has(node.pageId));
-    const terms = args.query.toLowerCase().split(/\s+/).filter(Boolean);
+    const terms = normalizedQuery.split(" ").filter(Boolean);
 
-    const results = nodes
+    // A candidate is kept when it matches the fuzzy tiers (prefix, word
+    // start, substring, all-words, scattered letters) or contains at least
+    // one query term; ranking prefers better fuzzy tiers, then more matched
+    // terms, then shorter text.
+    const results = candidates
+      .filter((node) => pageMap.has(node.pageId))
       .map((node: Doc<"nodes">) => {
         const haystack = node.text.toLowerCase();
-        const score = terms.reduce((total, term) => {
-          if (!haystack.includes(term)) {
-            return total;
-          }
-          return total + 1;
-        }, 0);
+        const termScore = terms.reduce(
+          (total, term) => (haystack.includes(term) ? total + 1 : total),
+          0,
+        );
+        const fuzzyScore = linkSearchScore(node.text, normalizedQuery);
 
         return {
-          score,
+          score: termScore,
+          fuzzyScore,
           node,
           page: pageMap.get(node.pageId) ?? null,
           content: node.text,
         };
       })
-      .filter((entry: { score: number }) => entry.score > 0)
-      .sort(
-        (left: { score: number }, right: { score: number }) =>
-          right.score - left.score,
+      .filter(
+        (entry) => entry.score > 0 || entry.fuzzyScore !== Number.POSITIVE_INFINITY,
       )
-      .slice(0, args.limit);
+      .sort((left, right) => {
+        const leftTier =
+          left.fuzzyScore === Number.POSITIVE_INFINITY ? 5 : left.fuzzyScore;
+        const rightTier =
+          right.fuzzyScore === Number.POSITIVE_INFINITY ? 5 : right.fuzzyScore;
+        if (leftTier !== rightTier) {
+          return leftTier - rightTier;
+        }
+        if (left.score !== right.score) {
+          return right.score - left.score;
+        }
+        return left.node.text.trim().length - right.node.text.trim().length;
+      })
+      .slice(0, args.limit)
+      .map((entry) => ({
+        score: entry.score,
+        node: entry.node,
+        page: entry.page,
+        content: entry.content,
+      }));
 
     return await hydrateSearchResultParentNodes(
       ctx.db,
       results,
-      args.includeArchived === true,
+      includeArchived,
     );
   },
 });

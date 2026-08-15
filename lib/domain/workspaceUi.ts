@@ -1,3 +1,5 @@
+import { linkSearchScore } from "./linkSearch";
+
 export type CommandPalettePage = {
   _id: string;
   title: string;
@@ -12,22 +14,11 @@ function normalizeQuery(value: string) {
   return value.trim().toLowerCase();
 }
 
+// Delegates to the shared fuzzy scorer so palette page search matches the
+// same way as the [[ link autocomplete: prefix, word start, substring,
+// all-words-at-word-starts, then scattered in-order letters.
 function titleScore(title: string, query: string) {
-  const normalizedTitle = title.toLowerCase();
-  if (normalizedTitle.startsWith(query)) {
-    return 0;
-  }
-
-  const wordStartPattern = new RegExp(`\\b${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
-  if (wordStartPattern.test(normalizedTitle)) {
-    return 1;
-  }
-
-  if (normalizedTitle.includes(query)) {
-    return 2;
-  }
-
-  return Number.POSITIVE_INFINITY;
+  return linkSearchScore(title, query);
 }
 
 function metadataScore(terms: string[] | undefined, query: string) {

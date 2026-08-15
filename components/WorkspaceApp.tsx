@@ -15097,12 +15097,22 @@ function ConfiguredWorkspace({
                 <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">
                   Find plain text across all active notes and tasks in all pages. Use <span className="font-mono">||</span> for OR queries.
                 </p>
-              ) : isTextSearchLoading ? (
+              ) : isTextSearchLoading && textSearchResults.length === 0 ? (
                 <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">Finding text…</p>
               ) : textSearchResults.length === 0 ? (
                 <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">No matching text.</p>
               ) : (
-                textSearchResults.map((result, index) => {
+                <>
+                {isTextSearchLoading ? (
+                  <div className="flex items-center gap-2 px-5 py-1 text-[11px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]">
+                    <span
+                      aria-hidden="true"
+                      className="h-2.5 w-2.5 animate-spin rounded-full border border-[var(--workspace-text-faint)] border-t-transparent"
+                    />
+                    Searching…
+                  </div>
+                ) : null}
+                {textSearchResults.map((result, index) => {
                   return (
                     <button
                       key={result.resultKey ?? `${result.node._id}:${result.page?._id ?? "page"}:find`}
@@ -15130,17 +15140,28 @@ function ConfiguredWorkspace({
                       </span>
                     </button>
                   );
-                })
+                })}
+                </>
               ) : paletteMode === "nodes" ? paletteQuery.trim().length === 0 ? (
                 <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">
                   Search across all active notes and tasks in all pages.
                 </p>
-              ) : isNodeSearchLoading ? (
+              ) : isNodeSearchLoading && nodeSearchResults.length === 0 ? (
                 <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">Searching notes…</p>
               ) : nodeSearchResults.length === 0 ? (
                 <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">No matching notes.</p>
               ) : (
-                nodeSearchResults.map((result, index) => {
+                <>
+                {isNodeSearchLoading ? (
+                  <div className="flex items-center gap-2 px-5 py-1 text-[11px] uppercase tracking-[0.16em] text-[var(--workspace-text-faint)]">
+                    <span
+                      aria-hidden="true"
+                      className="h-2.5 w-2.5 animate-spin rounded-full border border-[var(--workspace-text-faint)] border-t-transparent"
+                    />
+                    Searching…
+                  </div>
+                ) : null}
+                {nodeSearchResults.map((result, index) => {
                   return (
                     <button
                       key={`${result.node._id}:${result.page?._id ?? "page"}`}
@@ -15168,7 +15189,8 @@ function ConfiguredWorkspace({
                       </span>
                     </button>
                   );
-                })
+                })}
+                </>
               ) : paletteMode === "overdueTasks" ? typeof overdueTaskQueryResults === "undefined" ? (
                 <p className="px-5 py-4 text-sm text-[var(--workspace-text-subtle)]">
                   Loading past due tasks...
