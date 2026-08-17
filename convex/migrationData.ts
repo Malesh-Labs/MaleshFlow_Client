@@ -9,7 +9,7 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { assertOwnerKey } from "./lib/auth";
+import { assertOwnerKeyGuarded } from "./lib/authThrottle";
 import {
   computeNodePosition,
   enqueueNodeAiWork,
@@ -613,7 +613,7 @@ export const listMigrationRuns = query({
     ownerKey: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     return await ctx.db
       .query("migrationRuns")
       .withIndex("by_createdAt")
@@ -632,7 +632,7 @@ export const getMigrationLessonsDoc = query({
     ),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const entry = await readMigrationLessonsDoc(ctx, args.sourceType);
     return {
       sourceType: args.sourceType,
@@ -647,7 +647,7 @@ export const getMigrationRun = query({
     runId: v.optional(v.id("migrationRuns")),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const run = args.runId
       ? await ctx.db.get(args.runId)
@@ -696,7 +696,7 @@ export const updateMigrationLessonsDoc = mutation({
     lessonsDoc: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const lessonsEntry = await ensureMigrationLessonsDoc(ctx, args.sourceType);
     await ctx.db.patch(lessonsEntry._id, {
       lessonsDoc: args.lessonsDoc,
@@ -720,7 +720,7 @@ export const abandonMigrationRun = mutation({
     runId: v.id("migrationRuns"),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const run = await ctx.db.get(args.runId);
     if (!run) {
       throw new Error("Migration run not found.");
@@ -740,7 +740,7 @@ export const skipMigrationChunk = mutation({
     chunkId: v.id("migrationChunks"),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const chunk = await ctx.db.get(args.chunkId);
     if (!chunk) {
       throw new Error("Chunk not found.");

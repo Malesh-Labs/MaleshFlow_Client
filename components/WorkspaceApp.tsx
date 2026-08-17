@@ -4117,6 +4117,36 @@ export default function WorkspaceApp() {
   const convexConfigured = Boolean(process.env.NEXT_PUBLIC_CONVEX_URL);
   const { ownerKey, setOwnerKey } = useOwnerKey();
   const [draftOwnerKey, setDraftOwnerKey] = useState("");
+  const [ownerKeyGateError, setOwnerKeyGateError] = useState("");
+  const [isCheckingOwnerKey, setIsCheckingOwnerKey] = useState(false);
+  const checkOwnerKey = useMutation(api.workspace.checkOwnerKey);
+
+  const handleUnlockSubmit = async () => {
+    const candidateKey = draftOwnerKey.trim();
+    if (!candidateKey || isCheckingOwnerKey) {
+      return;
+    }
+    setIsCheckingOwnerKey(true);
+    setOwnerKeyGateError("");
+    try {
+      const result = await checkOwnerKey({ ownerKey: candidateKey });
+      if (result.valid) {
+        setOwnerKey(candidateKey);
+        return;
+      }
+      setOwnerKeyGateError(
+        result.lockedUntil && result.lockedUntil > Date.now()
+          ? `Too many failed attempts. Locked until ${new Date(result.lockedUntil).toLocaleTimeString()}.`
+          : "That token is not valid.",
+      );
+    } catch (error) {
+      setOwnerKeyGateError(
+        error instanceof Error ? error.message : "Could not verify the token right now.",
+      );
+    } finally {
+      setIsCheckingOwnerKey(false);
+    }
+  };
 
   if (!convexConfigured) {
     return (
@@ -4151,7 +4181,7 @@ export default function WorkspaceApp() {
             className="mt-8 space-y-4"
             onSubmit={(event) => {
               event.preventDefault();
-              setOwnerKey(draftOwnerKey.trim());
+              void handleUnlockSubmit();
             }}
           >
             <input
@@ -4161,11 +4191,15 @@ export default function WorkspaceApp() {
               placeholder="Owner access token"
               className="w-full border border-[var(--workspace-border)] bg-[var(--workspace-surface-muted)] px-4 py-3 text-sm outline-none transition focus:border-[var(--workspace-accent)]"
             />
+            {ownerKeyGateError ? (
+              <p className="text-sm text-[var(--workspace-danger)]">{ownerKeyGateError}</p>
+            ) : null}
             <button
               type="submit"
-              className="w-full bg-[var(--workspace-brand)] px-4 py-3 text-sm font-semibold text-[var(--workspace-inverse-text)] transition hover:bg-[var(--workspace-brand-hover)]"
+              disabled={isCheckingOwnerKey}
+              className="w-full bg-[var(--workspace-brand)] px-4 py-3 text-sm font-semibold text-[var(--workspace-inverse-text)] transition hover:bg-[var(--workspace-brand-hover)] disabled:opacity-60"
             >
-              Unlock Workspace
+              {isCheckingOwnerKey ? "Checking…" : "Unlock Workspace"}
             </button>
           </form>
         </div>
@@ -4561,6 +4595,7 @@ function ConfiguredWorkspace({
   const deletePageForever = useMutation(api.workspace.deletePageForever);
   const rebuildEmbeddings = useMutation(api.workspace.rebuildEmbeddings);
   const ensureTaskCalendarFeed = useMutation(api.calendar.ensureTaskCalendarFeed);
+  const rotateTaskCalendarFeed = useMutation(api.calendar.rotateTaskCalendarFeed);
   const refreshSidebarLinks = useMutation(api.workspace.refreshSidebarLinks);
   const cancelEmbeddingRebuild = useMutation(api.workspace.cancelEmbeddingRebuild);
   const createNodesBatchRaw = useMutation(api.workspace.createNodesBatch);
@@ -7875,6 +7910,33 @@ function ConfiguredWorkspace({
     }
   }, [ensureTaskCalendarFeed, ownerKey]);
 
+  const handleRotateTaskCalendarFeed = useCallback(async () => {
+    if (
+      !window.confirm(
+        "Rotate the calendar feed token? The old ICS URL stops working immediately and you must re-subscribe with the new one (copied to your clipboard).",
+      )
+    ) {
+      return;
+    }
+    setIsPreparingTaskCalendarFeed(true);
+    try {
+      const result = await rotateTaskCalendarFeed({
+        ownerKey,
+      });
+      await copyTextToClipboard(result.url);
+      setCopySnackbarMessage("Rotated the feed token and copied the new URL");
+      setPaletteOpen(false);
+    } catch (error) {
+      setCopySnackbarMessage(
+        error instanceof Error
+          ? error.message
+          : "Could not rotate the calendar feed token.",
+      );
+    } finally {
+      setIsPreparingTaskCalendarFeed(false);
+    }
+  }, [ownerKey, rotateTaskCalendarFeed]);
+
   const handleExportDataDump = useCallback(async () => {
     if (isExportingDataDump) {
       return;
@@ -8820,6 +8882,27 @@ function ConfiguredWorkspace({
         },
       },
       {
+        key: "rotate-task-calendar-feed",
+        title: "Rotate Google Calendar Feed Token",
+        subtitle:
+          "Invalidate the current ICS URL and copy a fresh one, in case the old link leaked.",
+        keywords: [
+          "rotate",
+          "calendar",
+          "feed",
+          "token",
+          "ics",
+          "revoke",
+          "security",
+          "regenerate",
+        ],
+        actionLabel: isPreparingTaskCalendarFeed ? "Working…" : "Rotate",
+        disabled: isPreparingTaskCalendarFeed,
+        onSelect: () => {
+          void handleRotateTaskCalendarFeed();
+        },
+      },
+      {
         key: "search-archive",
         title: "Search Archive",
         subtitle: "Search archived pages and nodes without mixing them into active workspace results.",
@@ -8896,6 +8979,7 @@ function ConfiguredWorkspace({
     handleCreatePage,
     handleCreatePlannerPage,
     handleCopyTaskCalendarFeed,
+    handleRotateTaskCalendarFeed,
     handleExportDataDump,
     handleRebuildEmbeddings,
     handleResetLocalState,

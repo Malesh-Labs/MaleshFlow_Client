@@ -12,7 +12,12 @@ import {
   type QueryCtx,
 } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { assertOwnerKey, isOwnerKeyValid } from "./lib/auth";
+import { isOwnerKeyValid } from "./lib/auth";
+import {
+  assertOwnerKeyGuarded,
+  isAuthLocked,
+  recordOwnerKeyValidation,
+} from "./lib/authThrottle";
 import {
   applyNodeInsertToSiblingCache,
   applyNodeMoveToSiblingCache,
@@ -2023,7 +2028,7 @@ export const listPages = query({
     includeArchived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     if (args.includeArchived) {
       const [activePages, archivedPages] = await Promise.all([
         ctx.db
@@ -2061,7 +2066,7 @@ export const listSidebarFavorites = query({
     ownerKey: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const favorites = await ctx.db
       .query("sidebarFavorites")
@@ -2130,7 +2135,7 @@ export const getSidebarTree = query({
     ownerKey: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const pages = await ctx.db
       .query("pages")
@@ -2187,7 +2192,7 @@ export const getWorkspaceInbox = query({
     ownerKey: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const pages = await ctx.db
       .query("pages")
@@ -2214,7 +2219,7 @@ export const getWorkspaceRandomBox = query({
     ownerKey: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const pages = await ctx.db
       .query("pages")
@@ -2241,7 +2246,7 @@ export const getWorkspaceAiMemory = query({
     ownerKey: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const pages = await ctx.db
       .query("pages")
@@ -2268,7 +2273,7 @@ export const setWorkspaceAiMemory = mutation({
     text: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const text = normalizeWorkspaceAiMemoryText(args.text);
     const pages = await ctx.db
@@ -2326,7 +2331,7 @@ export const ensureSidebarPage = mutation({
     ownerKey: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const pages = await ctx.db.query("pages").collect();
     const existingSidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
@@ -2372,7 +2377,7 @@ export const setWorkspaceInbox = mutation({
     texts: v.array(v.string()),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const texts = [...args.texts];
     while (texts.length < MIN_WORKSPACE_TEXT_BOX_COUNT) {
@@ -2438,7 +2443,7 @@ export const clearWorkspaceInbox = mutation({
     text: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const pages = await ctx.db.query("pages").collect();
     const sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
@@ -2578,7 +2583,7 @@ export const setWorkspaceRandomBox = mutation({
     texts: v.array(v.string()),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const texts = [...args.texts];
     while (texts.length < MIN_WORKSPACE_TEXT_BOX_COUNT) {
@@ -2642,7 +2647,7 @@ export const refreshSidebarLinks = mutation({
     ownerKey: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const pages = await ctx.db.query("pages").collect();
     const sidebarPage = pages.find((page) => isSidebarSpecialPage(page)) ?? null;
@@ -2667,8 +2672,23 @@ export const validateOwnerKey = query({
   args: {
     ownerKey: v.string(),
   },
-  handler: async (_ctx, args) => {
+  handler: async (ctx, args) => {
+    if (await isAuthLocked(ctx.db)) {
+      return false;
+    }
     return isOwnerKeyValid(args.ownerKey);
+  },
+});
+
+// Non-throwing owner-key check used by the unlock form. This is the only
+// endpoint that COUNTS failed attempts (a throwing mutation would roll back
+// its own failure write); every other endpoint enforces the resulting lock.
+export const checkOwnerKey = mutation({
+  args: {
+    ownerKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    return await recordOwnerKeyValidation(ctx.db, args.ownerKey);
   },
 });
 
@@ -2677,7 +2697,7 @@ export const rebuildEmbeddings = mutation({
     ownerKey: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const now = getTimestamp();
     const runId = `${now}`;
     const existingState = await getEmbeddingRebuildState(ctx.db);
@@ -2723,7 +2743,7 @@ export const cancelEmbeddingRebuild = mutation({
     ownerKey: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const state = await getEmbeddingRebuildState(ctx.db);
     if (!state || state.status !== "running") {
       return {
@@ -2856,7 +2876,7 @@ export const getEmbeddingRebuildStatus = query({
     ownerKey: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const state = await getEmbeddingRebuildState(ctx.db);
     if (!state) {
       return buildEmbeddingRebuildStatus(null);
@@ -2884,7 +2904,7 @@ export const getRecentEmbeddingErrors = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const limit = Math.max(1, Math.min(args.limit ?? 6, 20));
     const jobs = await ctx.db
       .query("embeddingJobs")
@@ -2922,7 +2942,7 @@ export const listTags = query({
     ownerKey: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     // Bounded per-page scan instead of collecting the whole nodes table: an
     // unbounded collect() hard-fails once the workspace crosses Convex's
@@ -2976,7 +2996,7 @@ export const getPageTree = query({
     pageId: v.id("pages"),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const page = await ctx.db.get(args.pageId);
     if (!page || isPagePendingDeletion(page)) {
@@ -2993,7 +3013,7 @@ export const getMultiPageView = query({
     pageId: v.id("pages"),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const page = await ctx.db.get(args.pageId);
     if (!page || page.archived || isPagePendingDeletion(page) || !isMultiPageViewPage(page)) {
@@ -3251,7 +3271,7 @@ export const getPageRootAppendTarget = query({
     pageId: v.id("pages"),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const page = await ctx.db.get(args.pageId);
     if (!page || page.archived || isPagePendingDeletion(page)) {
@@ -3279,7 +3299,7 @@ export const previewFindAndReplace = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     if (args.find.length === 0) {
       return {
@@ -3341,7 +3361,7 @@ export const applyFindAndReplaceBatch = mutation({
     updatedBefore: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     if (args.find.length === 0) {
       return {
@@ -3423,7 +3443,7 @@ export const archivePage = mutation({
     archived: v.boolean(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const page = await ctx.db.get(args.pageId);
     if (!page) {
       throw new Error("Page not found.");
@@ -3446,7 +3466,7 @@ export const deletePageForever = mutation({
     pageId: v.id("pages"),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const page = await ctx.db.get(args.pageId);
     if (!page) {
       throw new Error("Page not found.");
@@ -3590,7 +3610,7 @@ export const getBacklinks = query({
     nodeId: v.optional(v.id("nodes")),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     if (args.nodeId) {
       const nodeId = args.nodeId;
@@ -3619,7 +3639,7 @@ export const listUnresolvedPageLinkGroups = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const limit = Math.max(
       1,
@@ -3895,7 +3915,7 @@ export const replaceUnresolvedPageLinksWithTarget = mutation({
     batchSize: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     return await replaceUnresolvedPageLinksWithTargetBatch(ctx, args);
   },
 });
@@ -3908,7 +3928,7 @@ export const replaceUnresolvedPageLinksWithNode = mutation({
     batchSize: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     return await replaceUnresolvedPageLinksWithTargetBatch(ctx, {
       normalizedTitle: args.normalizedTitle,
       target: {
@@ -3929,7 +3949,7 @@ export const searchLinkTargets = query({
     includeArchived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const normalizedQuery = normalizeLinkSearchQuery(args.query);
     const limit = Math.max(1, Math.min(args.limit ?? 12, 24));
@@ -4098,7 +4118,7 @@ export const resolveNodeLinks = query({
     showChildrenNodeIds: v.optional(v.array(v.id("nodes"))),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const uniqueNodeIds = [...new Set(args.nodeIds)];
     const showChildrenNodeIds = new Set(
@@ -4242,7 +4262,7 @@ export const listTasks = query({
     status: v.optional(taskStatusValidator),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const tasks = await ctx.db
       .query("nodes")
       .withIndex("by_kind_status", (query) =>
@@ -4278,7 +4298,7 @@ export const listOverdueTasks = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const tasks = await ctx.db
       .query("nodes")
       .withIndex("by_kind_status", (query) => query.eq("kind", "task"))
@@ -4567,7 +4587,7 @@ export const createPage = mutation({
     addToLatestJournalView: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const now = getTimestamp();
 
     const pages = await ctx.db
@@ -4711,7 +4731,7 @@ export const ensureTaskPageSidebarSection = mutation({
     pageId: v.id("pages"),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const page = await ctx.db.get(args.pageId);
     if (!page || page.archived) {
@@ -4771,7 +4791,7 @@ export const ensurePlannerPageSections = mutation({
     pageId: v.id("pages"),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const page = await ctx.db.get(args.pageId);
     if (!page || page.archived || !isPlannerPage(page)) {
@@ -4788,7 +4808,7 @@ export const ensureJournalPageSections = mutation({
     pageId: v.id("pages"),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const page = await ctx.db.get(args.pageId);
     if (!page || page.archived || getPageSourceMeta(page).pageType !== "journal") {
@@ -4805,7 +4825,7 @@ export const ensureMultiPagePageSections = mutation({
     pageId: v.id("pages"),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const page = await ctx.db.get(args.pageId);
     if (!page || page.archived || !isMultiPageViewPage(page)) {
@@ -4823,7 +4843,7 @@ export const setPlannerScanExcluded = mutation({
     excluded: v.boolean(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const page = await ctx.db.get(args.pageId);
     if (!page || page.archived || !isTaskSourcePage(page)) {
@@ -4850,7 +4870,7 @@ export const setTaskPageDoneArchiveEnabled = mutation({
     enabled: v.boolean(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const page = await ctx.db.get(args.pageId);
     if (!page || page.archived || !isTaskSourcePage(page)) {
@@ -4877,7 +4897,7 @@ export const setPageDataDumpExcluded = mutation({
     excluded: v.boolean(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const page = await ctx.db.get(args.pageId);
     if (!page || isSidebarSpecialPage(page) || isPagePendingDeletion(page)) {
@@ -4909,7 +4929,7 @@ export const setNodeChildrenLinkAutocompleteHidden = mutation({
     hidden: v.boolean(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const node = await ctx.db.get(args.nodeId);
     if (!node || node.archived) {
@@ -4941,7 +4961,7 @@ export const setNodeDataDumpExcluded = mutation({
     excluded: v.boolean(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const uniqueNodeIds = [
       ...new Set(args.nodeIds.map((nodeId) => nodeId as string)),
@@ -4985,7 +5005,7 @@ export const completeTaskPageTask = mutation({
     completionMode: v.union(v.literal("dueDate"), v.literal("today")),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const node = await ctx.db.get(args.nodeId);
     if (!node || node.archived) {
@@ -5090,7 +5110,7 @@ export const setModelPageCustomPrompt = mutation({
     prompt: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const page = await ctx.db.get(args.pageId);
     if (!page || page.archived) {
@@ -5121,7 +5141,7 @@ export const setPagePinnedInAllSidebar = mutation({
     pinned: v.boolean(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const page = await ctx.db.get(args.pageId);
     if (!page || page.archived || isSidebarSpecialPage(page) || isPagePendingDeletion(page)) {
@@ -5147,7 +5167,7 @@ export const mergePinnedPagesInAllSidebar = mutation({
     pageIds: v.array(v.id("pages")),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const uniquePageIds = [...new Set(args.pageIds.map((pageId) => pageId as string))] as Id<"pages">[];
     const now = getTimestamp();
@@ -5185,7 +5205,7 @@ export const setSidebarFavorite = mutation({
     favorited: v.boolean(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const page = await ctx.db.get(args.pageId);
     if (!page || page.archived || isPagePendingDeletion(page)) {
@@ -5253,7 +5273,7 @@ export const renamePage = mutation({
     title: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const page = await ctx.db.get(args.pageId);
     if (!page) {
       throw new Error("Page not found.");
@@ -5349,7 +5369,7 @@ export const createNode = mutation({
     recurrenceFrequency: v.optional(recurrenceFrequencyValidator),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const now = getTimestamp();
     const parentNodeId = args.parentNodeId ?? null;
     const position = await computeNodePosition(
@@ -5397,7 +5417,7 @@ export const createNodesBatch = mutation({
     nodes: v.array(nodeCreateInputValidator),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const now = getTimestamp();
     const createdNodes: Doc<"nodes">[] = [];
     let lastCreatedId: Id<"nodes"> | null = null;
@@ -5492,7 +5512,7 @@ export const updateNode = mutation({
     recurrenceFrequency: v.optional(recurrenceFrequencyValidator),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const node = await ctx.db.get(args.nodeId);
     if (!node) {
       throw new Error("Node not found.");
@@ -5613,7 +5633,7 @@ export const updateNodesBatch = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     if (args.updates.length === 0) {
       return null;
     }
@@ -5742,7 +5762,7 @@ export const insertNodeAbove = mutation({
     shiftedTaskStatus: v.optional(taskStatusValidator),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const node = await ctx.db.get(args.nodeId);
     if (!node) {
       throw new Error("Node not found.");
@@ -5845,7 +5865,7 @@ export const splitNode = mutation({
     tailTaskStatus: v.optional(taskStatusValidator),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const node = await ctx.db.get(args.nodeId);
     if (!node) {
       throw new Error("Node not found.");
@@ -5938,7 +5958,7 @@ export const replaceNodeAndInsertSiblings = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const node = await ctx.db.get(args.nodeId);
     if (!node) {
       throw new Error("Node not found.");
@@ -6030,7 +6050,7 @@ export const moveNode = mutation({
     afterNodeId: v.optional(nullableNodeIdValidator),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const node = await ctx.db.get(args.nodeId);
     if (!node) {
       throw new Error("Node not found.");
@@ -6075,7 +6095,7 @@ export const moveNodesBatch = mutation({
     ),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     if (args.moves.length === 0) {
       return null;
     }
@@ -6132,7 +6152,7 @@ export const reorderNode = mutation({
     afterNodeId: v.optional(nullableNodeIdValidator),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const node = await ctx.db.get(args.nodeId);
     if (!node) {
       throw new Error("Node not found.");
@@ -6161,7 +6181,7 @@ export const moveNodeTreesToPage = mutation({
     nodeIds: v.array(v.id("nodes")),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     if (args.nodeIds.length === 0) {
       return {
         movedNodeIds: [] as Id<"nodes">[],
@@ -6251,7 +6271,7 @@ export const archiveNode = mutation({
     archived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     await ctx.db.patch(args.nodeId, {
       archived: args.archived ?? true,
       updatedAt: getTimestamp(),
@@ -6266,7 +6286,7 @@ export const setNodeTreeArchived = mutation({
     archived: v.boolean(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const node = await ctx.db.get(args.nodeId);
     if (!node) {
       throw new Error("Node not found.");
@@ -6300,7 +6320,7 @@ export const setNodeTreesArchivedBatch = mutation({
     archived: v.boolean(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     if (args.nodeIds.length === 0) {
       return null;
     }
@@ -6341,7 +6361,7 @@ export const deleteNode = mutation({
     nodeId: v.id("nodes"),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     await deleteNodeTree(ctx.db, args.nodeId);
   },
 });

@@ -383,6 +383,13 @@ export default defineSchema({
       filterFields: ["pageId"],
     }),
 
+  authThrottle: defineTable({
+    key: v.string(),
+    failedCount: v.number(),
+    lockedUntil: v.union(v.number(), v.null()),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
   nodeSymbolCaches: defineTable({
     nodeId: v.id("nodes"),
     contentHash: v.string(),

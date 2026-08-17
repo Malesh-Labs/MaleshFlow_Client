@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { assertOwnerKey } from "./lib/auth";
+import { assertOwnerKeyGuarded } from "./lib/authThrottle";
 
 const LEGACY_SEARCH_SNIPPET_RADIUS = 160;
 
@@ -78,7 +78,7 @@ export const generateLegacyUploadUrl = mutation({
     ownerKey: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     return await ctx.storage.generateUploadUrl();
   },
 });
@@ -93,7 +93,7 @@ export const registerLegacyFile = mutation({
     size: v.number(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const extension = assertLegacyTextFile(args.fileName);
     const now = getTimestamp();
     return await ctx.db.insert("legacyFiles", {
@@ -121,7 +121,7 @@ export const listLegacyFiles = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const limit = Math.max(1, Math.min(args.limit ?? 100, 200));
     return await ctx.db
       .query("legacyFiles")
@@ -137,7 +137,7 @@ export const getLegacyFileViewer = query({
     fileId: v.id("legacyFiles"),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const file = await ctx.db.get(args.fileId);
     if (!file) {
       return null;
@@ -158,7 +158,7 @@ export const listLegacyFileChunksPage = query({
     numChunks: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const file = await ctx.db.get(args.fileId);
     if (!file) {
       return null;
@@ -197,7 +197,7 @@ export const searchLegacyText = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const normalizedQuery = args.query.trim();
     if (!normalizedQuery) {
       return [];

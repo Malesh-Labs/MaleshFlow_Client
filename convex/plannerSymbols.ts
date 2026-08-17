@@ -6,7 +6,7 @@ import {
   type DatabaseReader,
 } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { assertOwnerKey } from "./lib/auth";
+import { assertOwnerKeyGuarded } from "./lib/authThrottle";
 import { isPlannerPage } from "./lib/planner";
 import {
   isPlannerSymbolizableText,
@@ -86,7 +86,7 @@ export const getPlannerSymbolLabels = query({
     nodeIds: v.array(v.id("nodes")),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     await requirePlannerPage(ctx.db, args.plannerPageId);
 
     const sources = await getPlannerSymbolSources(ctx.db, args.nodeIds);

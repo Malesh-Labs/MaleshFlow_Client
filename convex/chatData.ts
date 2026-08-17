@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { assertOwnerKey } from "./lib/auth";
+import { assertOwnerKeyGuarded } from "./lib/authThrottle";
 import {
   buildUniquePageSlug,
   computeNodePosition,
@@ -42,7 +42,7 @@ export const ensureChatThread = mutation({
     pageId: v.optional(v.id("pages")),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const existing = args.pageId
       ? await ctx.db
           .query("chatThreads")
@@ -76,7 +76,7 @@ export const ensureWorkspaceKnowledgeThread = mutation({
     ownerKey: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const existing = await findWorkspaceKnowledgeThread(ctx);
     if (existing) {
@@ -101,7 +101,7 @@ export const getChatThread = query({
     pageId: v.optional(v.id("pages")),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const thread = args.threadId
       ? await ctx.db.get(args.threadId)
@@ -142,7 +142,7 @@ export const getWorkspaceKnowledgeThread = query({
     ownerKey: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const thread = await findWorkspaceKnowledgeThread(ctx);
     if (!thread) {
@@ -908,7 +908,7 @@ export const applyApprovedChatPlan = mutation({
     messageId: v.id("chatMessages"),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const message = await ctx.db.get(args.messageId);
     if (!message || message.role !== "assistant" || !message.proposedPlan) {
       throw new Error("No proposed plan found.");
@@ -960,7 +960,7 @@ export const applyApprovedPlannerPlan = mutation({
     completionMode: v.union(v.literal("dueDate"), v.literal("today")),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
     const message = await ctx.db.get(args.messageId);
     if (!message || message.role !== "assistant" || !message.proposedPlan) {
       throw new Error("No proposed planner plan found.");

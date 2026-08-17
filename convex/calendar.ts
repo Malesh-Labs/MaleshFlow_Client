@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internalQuery, mutation } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { assertOwnerKey } from "./lib/auth";
+import { assertOwnerKeyGuarded } from "./lib/authThrottle";
 import {
   isPlannerDerivedSourceTask,
   isPlannerPage,
@@ -102,7 +102,7 @@ export const ensureTaskCalendarFeed = mutation({
     ownerKey: v.string(),
   },
   handler: async (ctx, args) => {
-    assertOwnerKey(args.ownerKey);
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
 
     const now = getTimestamp();
     const existingFeed = await ctx.db
@@ -123,6 +123,39 @@ export const ensureTaskCalendarFeed = mutation({
     return {
       url: getTaskCalendarFeedUrl(token),
       created: existingFeed === null,
+    };
+  },
+});
+
+// Replaces the feed token so a leaked ICS URL stops working; calendar apps
+// must re-subscribe with the new URL returned here.
+export const rotateTaskCalendarFeed = mutation({
+  args: {
+    ownerKey: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
+
+    const now = getTimestamp();
+    const existingFeed = await ctx.db
+      .query("calendarFeeds")
+      .withIndex("by_kind", (query) => query.eq("kind", TASK_CALENDAR_FEED_KIND))
+      .unique();
+
+    const token = generateCalendarFeedToken();
+    if (existingFeed) {
+      await ctx.db.patch(existingFeed._id, { token, updatedAt: now });
+    } else {
+      await ctx.db.insert("calendarFeeds", {
+        kind: TASK_CALENDAR_FEED_KIND,
+        token,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    return {
+      url: getTaskCalendarFeedUrl(token),
     };
   },
 });
