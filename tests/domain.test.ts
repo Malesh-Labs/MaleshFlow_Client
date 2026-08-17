@@ -32,6 +32,7 @@ import {
   extractTags,
   splitEdgeTagMatches,
   stripTagsFromText,
+  textHasTag,
 } from "../lib/domain/tags";
 import { parseMarkdownFile, serializePageToMarkdown } from "../lib/domain/markdown";
 import {
@@ -888,6 +889,15 @@ test("planner day merge duplicate matching rejects tiny shared prefixes", () => 
   assert.deepEqual(getPlannerMergeDuplicateResolution("go", "go outside"), {
     duplicate: false,
   });
+});
+
+test("textHasTag matches whole normalized tags only", () => {
+  assert.equal(textHasTag("Buy beans #optional", "optional"), true);
+  assert.equal(textHasTag("#Optional errand", "optional"), true);
+  assert.equal(textHasTag("Handle #optionally tagged case", "optional"), false);
+  assert.equal(textHasTag("No tags here", "optional"), false);
+  // Tags inside link markup do not count.
+  assert.equal(textHasTag("[[#optional|page:abc123]]", "optional"), false);
 });
 
 test("linkSearchScore ranks fuzzy link autocomplete matches by tier", () => {

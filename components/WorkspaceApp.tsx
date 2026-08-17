@@ -89,6 +89,7 @@ import {
   extractTagMatches,
   splitEdgeTagMatches,
   stripTagsFromText,
+  textHasTag,
 } from "@/lib/domain/tags";
 import {
   buildPageBacklinkFindQuery,
@@ -19102,13 +19103,16 @@ function OutlineNodeEditor({
     !hasPageLinkPreview &&
     !hasPlannerSymbolPreview;
   const hasDisplayPreview = hasPlannerSymbolPreview || hasPageLinkPreview || hasPlainTextPreview;
+  const isOptionalTaggedTask = node.kind === "task" && textHasTag(draft, "optional");
   const completedTextClass = isCompleted
     ? "text-[var(--workspace-text-faint)] line-through"
     : isDimmedByCompletedAncestor
       ? "text-[var(--workspace-text-faint)]"
       : isDimmedLine
         ? "text-[var(--workspace-text-subtle)]"
-        : "text-[var(--workspace-text)]";
+        : isOptionalTaggedTask
+          ? "text-[var(--workspace-text)] opacity-75"
+          : "text-[var(--workspace-text)]";
   const activeLinkToken = getActiveLinkToken(draft, caretPosition);
   const activeTagToken = activeLinkToken ? null : getActiveTagToken(draft, caretPosition);
   const { suggestions: linkSuggestions, isLoading: isLinkSearchLoading } =

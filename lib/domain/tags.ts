@@ -56,6 +56,12 @@ export function extractTags(text: string) {
   return extractTagMatches(text).map((match) => match.value);
 }
 
+export function textHasTag(text: string, normalizedTag: string) {
+  return extractTagMatches(text).some(
+    (match) => match.normalizedValue === normalizedTag,
+  );
+}
+
 export function splitEdgeTagMatches(text: string) {
   let remaining = text.trimStart();
   const leadingTags: ExtractedTagMatch[] = [];
