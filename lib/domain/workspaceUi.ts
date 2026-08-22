@@ -91,8 +91,21 @@ export function filterPagesForCommandPalette<T extends CommandPalettePage>(
 export function filterPageAndFavoriteResultsForCommandPalette<
   T extends CommandPalettePage,
 >(favorites: T[], pages: T[], query: string, limit = 12) {
-  if (normalizeQuery(query).length > 0) {
-    return filterPagesForCommandPalette([...favorites, ...pages], query, limit);
+  const normalizedQuery = normalizeQuery(query);
+  if (normalizedQuery.length > 0) {
+    const exactPageMatches = filterPagesForCommandPalette(
+      pages.filter((page) => normalizeQuery(page.title) === normalizedQuery),
+      query,
+      limit,
+    );
+    const exactPageIds = new Set(exactPageMatches.map((page) => page._id));
+    const remainingMatches = filterPagesForCommandPalette(
+      [...favorites, ...pages],
+      query,
+      limit + exactPageMatches.length,
+    ).filter((result) => !exactPageIds.has(result._id));
+
+    return [...exactPageMatches, ...remainingMatches].slice(0, limit);
   }
 
   return [

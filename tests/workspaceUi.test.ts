@@ -287,10 +287,10 @@ test("filterPagesForCommandPalette prefers most recently updated or created page
   );
 });
 
-test("page palette search ranks exact pages ahead of weak favorite matches", () => {
+test("page palette search pins exact pages above all favorite matches", () => {
   const favorites = Array.from({ length: 14 }, (_, index) => ({
     _id: `favorite-${index}`,
-    title: `Unrelated favorite ${index}`,
+    title: index === 0 ? "Meta" : `Unrelated favorite ${index}`,
     archived: false,
     position: index,
     searchTerms: ["some metadata"],
@@ -307,7 +307,7 @@ test("page palette search ranks exact pages ahead of weak favorite matches", () 
   const results = filterPageAndFavoriteResultsForCommandPalette(
     favorites,
     pages,
-    "meta",
+    " META ",
     14,
   );
 
