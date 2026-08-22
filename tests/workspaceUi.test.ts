@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildPageBacklinkFindQuery,
   buildNodeSelectionIds,
+  filterPageAndFavoriteResultsForCommandPalette,
   filterPagesForCommandPalette,
   getActiveLinkAutocompleteToken,
   getActiveTagAutocompleteToken,
@@ -283,6 +284,62 @@ test("filterPagesForCommandPalette prefers most recently updated or created page
   assert.deepEqual(
     results.map((page) => page._id),
     ["2", "3", "1"],
+  );
+});
+
+test("page palette search ranks exact pages ahead of weak favorite matches", () => {
+  const favorites = Array.from({ length: 14 }, (_, index) => ({
+    _id: `favorite-${index}`,
+    title: `Unrelated favorite ${index}`,
+    archived: false,
+    position: index,
+    searchTerms: ["some metadata"],
+  }));
+  const pages = [
+    {
+      _id: "meta-page",
+      title: "Meta",
+      archived: false,
+      position: 1024,
+    },
+  ];
+
+  const results = filterPageAndFavoriteResultsForCommandPalette(
+    favorites,
+    pages,
+    "meta",
+    14,
+  );
+
+  assert.equal(results[0]?._id, "meta-page");
+  assert.equal(results.length, 14);
+});
+
+test("page palette keeps favorites first before a query is entered", () => {
+  const results = filterPageAndFavoriteResultsForCommandPalette(
+    [
+      {
+        _id: "favorite",
+        title: "Favorite",
+        archived: false,
+        position: 0,
+      },
+    ],
+    [
+      {
+        _id: "recent-page",
+        title: "Recent page",
+        archived: false,
+        position: 1024,
+        updatedAt: 500,
+      },
+    ],
+    "",
+  );
+
+  assert.deepEqual(
+    results.map((result) => result._id),
+    ["favorite", "recent-page"],
   );
 });
 

@@ -94,7 +94,7 @@ import {
 import {
   buildPageBacklinkFindQuery,
   buildNodeSelectionIds,
-  filterPagesForCommandPalette,
+  filterPageAndFavoriteResultsForCommandPalette,
   getActiveLinkAutocompleteToken as getActiveLinkToken,
   getActiveTagAutocompleteToken as getActiveTagToken,
   shouldAddSpaceAfterTagAutocomplete,
@@ -6683,10 +6683,12 @@ function ConfiguredWorkspace({
         searchTerms: [getPageTypeLabel(page), getPageMeta(page).sidebarSection],
       }));
 
-    return [
-      ...filterPagesForCommandPalette(favoriteEntries, paletteQuery, 14),
-      ...filterPagesForCommandPalette(pageEntries, paletteQuery, 14),
-    ].slice(0, 14);
+    return filterPageAndFavoriteResultsForCommandPalette(
+      favoriteEntries,
+      pageEntries,
+      paletteQuery,
+      14,
+    );
   }, [pages, pagesById, paletteQuery, sidebarFavorites]);
   const overdueTaskResults = useMemo(() => {
     const results = overdueTaskQueryResults ?? [];

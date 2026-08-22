@@ -88,6 +88,19 @@ export function filterPagesForCommandPalette<T extends CommandPalettePage>(
     .slice(0, limit);
 }
 
+export function filterPageAndFavoriteResultsForCommandPalette<
+  T extends CommandPalettePage,
+>(favorites: T[], pages: T[], query: string, limit = 12) {
+  if (normalizeQuery(query).length > 0) {
+    return filterPagesForCommandPalette([...favorites, ...pages], query, limit);
+  }
+
+  return [
+    ...filterPagesForCommandPalette(favorites, query, limit),
+    ...filterPagesForCommandPalette(pages, query, limit),
+  ].slice(0, limit);
+}
+
 export function buildNodeSelectionIds(
   orderedNodeIds: string[],
   anchorNodeId: string,
