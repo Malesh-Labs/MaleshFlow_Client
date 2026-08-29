@@ -4610,6 +4610,7 @@ function ConfiguredWorkspace({
   );
   const setPageDataDumpExcludedRaw = useMutation(api.workspace.setPageDataDumpExcluded);
   const completeTaskPageTaskRaw = useMutation(api.workspace.completeTaskPageTask);
+  const forceArchiveTaskPageItemRaw = useMutation(api.workspace.forceArchiveTaskPageItem);
   const setModelPageCustomPrompt = useMutation(api.workspace.setModelPageCustomPrompt);
   const setWorkspaceInbox = useMutation(api.workspace.setWorkspaceInbox);
   const clearWorkspaceInbox = useMutation(api.workspace.clearWorkspaceInbox);
@@ -5206,6 +5207,7 @@ function ConfiguredWorkspace({
     setNodeTreesArchivedBatch: setNodeTreesArchivedBatchRaw,
     completePlannerTask: completePlannerTaskRaw,
     completeTaskPageTask: completeTaskPageTaskRaw,
+    forceArchiveTaskPageItem: forceArchiveTaskPageItemRaw,
     undoCompletePlannerTask: undoCompletePlannerTaskRaw,
     isDisabled: activePageTree?.page?.archived ?? false,
   });
@@ -6096,6 +6098,23 @@ function ConfiguredWorkspace({
 
     return node;
   }, [paletteContextNodeId, pagesById, workspaceNodeMap]);
+  const forceArchiveTargetNode = useMemo(() => {
+    if (!favoriteTargetNode || isNodeLocked(favoriteTargetNode)) {
+      return null;
+    }
+    const page = pagesById.get(favoriteTargetNode.pageId as string) ?? null;
+    const pageSourceMeta =
+      page && typeof page.sourceMeta === "object" && page.sourceMeta
+        ? (page.sourceMeta as Record<string, unknown>)
+        : null;
+    if (
+      getPageMeta(page).pageType !== "task" ||
+      pageSourceMeta?.archiveCompletedRootTasksToDone !== true
+    ) {
+      return null;
+    }
+    return favoriteTargetNode;
+  }, [favoriteTargetNode, pagesById]);
   const favoriteTargetPage = useMemo(() => {
     if (favoriteTargetNode) {
       return pagesById.get(favoriteTargetNode.pageId as string) ?? null;
@@ -8096,6 +8115,36 @@ function ConfiguredWorkspace({
     }
   }, [ownerKey, rotateTaskCalendarFeed]);
 
+  const handleForceArchiveItem = useCallback(async () => {
+    if (!forceArchiveTargetNode) {
+      return;
+    }
+    const targetNode = forceArchiveTargetNode;
+    setPaletteOpen(false);
+    try {
+      const result = (await forceArchiveTaskPageItemRaw({
+        ownerKey,
+        nodeId: targetNode._id as Id<"nodes">,
+      })) as { receipt?: PlannerCompletionReceipt } | null;
+      setCopySnackbarMessage("Archived the item to Done");
+      const receipt = result?.receipt ?? null;
+      if (plannerCompletionReceiptHasEffects(receipt)) {
+        history.pushUndoEntry({
+          type: "complete_planner_task",
+          pageId: targetNode.pageId as Id<"pages">,
+          redoTarget: { kind: "forceArchive", nodeId: targetNode._id as Id<"nodes"> },
+          completionMode: recurringCompletionMode,
+          receipt: receipt!,
+          focusEditorId: getNodeEditorId(targetNode._id as Id<"nodes">),
+        });
+      }
+    } catch (error) {
+      setCopySnackbarMessage(
+        error instanceof Error ? error.message : "Could not force archive the item.",
+      );
+    }
+  }, [forceArchiveTargetNode, forceArchiveTaskPageItemRaw, history, ownerKey, recurringCompletionMode]);
+
   const handleExportDataDump = useCallback(async () => {
     if (isExportingDataDump) {
       return;
@@ -9062,6 +9111,28 @@ function ConfiguredWorkspace({
         },
       },
       {
+        key: "force-archive-item",
+        title: "Force Archive Item",
+        subtitle:
+          forceArchiveTargetNode !== null
+            ? `${forceArchiveTargetNode.text || "(empty item)"} • Archive to Done without completing children`
+            : "Highlight an item on a task page with done archiving on, then run this to archive it as-is.",
+        keywords: [
+          "force",
+          "archive",
+          "done",
+          "skip",
+          "item",
+          "task",
+          "move to done",
+        ],
+        actionLabel: "Archive",
+        disabled: forceArchiveTargetNode === null,
+        onSelect: () => {
+          void handleForceArchiveItem();
+        },
+      },
+      {
         key: "search-archive",
         title: "Search Archive",
         subtitle: "Search archived pages and nodes without mixing them into active workspace results.",
@@ -9137,7 +9208,9 @@ function ConfiguredWorkspace({
     embeddingRebuildStatus,
     handleCreatePage,
     handleCreatePlannerPage,
+    forceArchiveTargetNode,
     handleCopyTaskCalendarFeed,
+    handleForceArchiveItem,
     handleRotateTaskCalendarFeed,
     handleExportDataDump,
     handleRebuildEmbeddings,

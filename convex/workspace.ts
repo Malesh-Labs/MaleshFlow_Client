@@ -5293,6 +5293,37 @@ export const completeTaskPageTask = mutation({
   },
 });
 
+// Archives a task-page item's subtree to Done immediately, without requiring
+// the item or its children to be marked done first. Returns the same
+// completion receipt shape as completeTaskPageTask so the client can offer
+// undo.
+export const forceArchiveTaskPageItem = mutation({
+  args: {
+    ownerKey: v.string(),
+    nodeId: v.id("nodes"),
+  },
+  handler: async (ctx, args) => {
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
+
+    const node = await ctx.db.get(args.nodeId);
+    if (!node || node.archived) {
+      throw new Error("Item not found.");
+    }
+
+    const page = await ctx.db.get(node.pageId);
+    if (!page || page.archived || !isTaskSourcePage(page)) {
+      throw new Error("Force archive works on task pages.");
+    }
+    if (!isTaskPageDoneArchiveEnabled(page)) {
+      throw new Error("Enable done archiving on this page first.");
+    }
+
+    const receipt = createPlannerCompletionReceipt();
+    await archiveTaskPageSubtreeToDone(ctx, node, getTimestamp(), receipt);
+    return { receipt };
+  },
+});
+
 export const setModelPageCustomPrompt = mutation({
   args: {
     ownerKey: v.string(),
