@@ -838,6 +838,8 @@ type WorkspaceErrorBoundaryState = {
 type SectionSlot =
   | "noteMain"
   | "noteArchive"
+  | "templateMain"
+  | "templateArchive"
   | "taskSidebar"
   | "plannerSidebar"
   | "plannerRunningArchive"
@@ -1699,6 +1701,8 @@ function collectEmbeddedMultiPagePageExpandableNodeIds(page: PageDoc, tree: Tree
   const pageMeta = getPageMeta(page);
   const noteSection = findSectionNode(tree, "noteMain");
   const noteArchiveSection = findSectionNode(tree, "noteArchive");
+  const templateSection = findSectionNode(tree, "templateMain");
+  const templateArchiveSection = findSectionNode(tree, "templateArchive");
   const modelSection = findSectionNode(tree, "model");
   const recentExamplesSection = findSectionNode(tree, "recentExamples");
   const taskSidebarSection = findSectionNode(tree, "taskSidebar");
@@ -1712,6 +1716,17 @@ function collectEmbeddedMultiPagePageExpandableNodeIds(page: PageDoc, tree: Tree
     return [
       ...collectExpandableNodeIdsFromSection(noteSection),
       ...collectExpandableNodeIdsFromSection(noteArchiveSection),
+    ];
+  }
+
+  if (
+    pageMeta.sidebarSection === "Templates" &&
+    templateSection &&
+    templateArchiveSection
+  ) {
+    return [
+      ...collectExpandableNodeIdsFromSection(templateSection),
+      ...collectExpandableNodeIdsFromSection(templateArchiveSection),
     ];
   }
 
@@ -4585,6 +4600,7 @@ function ConfiguredWorkspace({
   const ensurePlannerPageSections = useMutation(api.planner.ensurePlannerPageSections);
   const ensureJournalPageSections = useMutation(api.workspace.ensureJournalPageSections);
   const ensureNotePageSections = useMutation(api.workspace.ensureNotePageSections);
+  const ensureTemplatePageSections = useMutation(api.workspace.ensureTemplatePageSections);
   const ensureMultiPagePageSections = useMutation(api.workspace.ensureMultiPagePageSections);
   const renamePageRaw = useMutation(api.workspace.renamePage);
   const archivePage = useMutation(api.workspace.archivePage);
@@ -4940,6 +4956,7 @@ function ConfiguredWorkspace({
   const hasRequestedPlannerSections = useRef(new Set<string>());
   const hasRequestedJournalSections = useRef(new Set<string>());
   const hasRequestedNoteSections = useRef(new Set<string>());
+  const hasRequestedTemplateSections = useRef(new Set<string>());
   const hasRequestedMultiPageSections = useRef(new Set<string>());
   const suppressNodeSelectionClearRef = useRef(0);
   const textSelectionGestureRef = useRef<{
@@ -5271,8 +5288,18 @@ function ConfiguredWorkspace({
   const journalFeedbackSection = findSectionNode(tree, "journalFeedback");
   const noteSection = findSectionNode(tree, "noteMain");
   const noteArchiveSection = findSectionNode(tree, "noteArchive");
+  const templateSection = findSectionNode(tree, "templateMain");
+  const templateArchiveSection = findSectionNode(tree, "templateArchive");
   const scratchpadLiveSection = findSectionNode(tree, "scratchpadLive");
   const scratchpadPreviousSection = findSectionNode(tree, "scratchpadPrevious");
+  const hasUnsectionedNoteRoots =
+    pageMeta.pageType === "note" &&
+    tree.some((node) => node._id !== noteSection?._id && node._id !== noteArchiveSection?._id);
+  const hasUnsectionedTemplateRoots =
+    pageMeta.sidebarSection === "Templates" &&
+    tree.some(
+      (node) => node._id !== templateSection?._id && node._id !== templateArchiveSection?._id,
+    );
   const twoSectionPageConfig =
     pageMeta.pageType === "scratchpad"
       ? {
@@ -5288,6 +5315,15 @@ function ConfiguredWorkspace({
             secondaryTitle: "Archive",
             secondarySection: noteArchiveSection,
           }
+        : pageMeta.sidebarSection === "Templates" &&
+            templateSection &&
+            templateArchiveSection
+          ? {
+              primaryTitle: "Template",
+              primarySection: templateSection,
+              secondaryTitle: "Archive",
+              secondarySection: templateArchiveSection,
+            }
         : null;
   const multiPageIncludedPagesSection = findSectionNode(tree, "multiPageIncludedPages");
   const multiPageIncludedRawItems = useMemo<MultiPageIncludedItemResult[]>(
@@ -7463,6 +7499,7 @@ function ConfiguredWorkspace({
       hasRequestedTaskSidebarSection.current.clear();
       hasRequestedJournalSections.current.clear();
       hasRequestedNoteSections.current.clear();
+      hasRequestedTemplateSections.current.clear();
       setSidebarBootstrapError("");
       setShowSidebarDiagnostics(false);
       return;
@@ -7595,7 +7632,7 @@ function ConfiguredWorkspace({
     }
 
     const pageId = selectedPage._id as string;
-    if (noteSection && noteArchiveSection) {
+    if (noteSection && noteArchiveSection && !hasUnsectionedNoteRoots) {
       hasRequestedNoteSections.current.delete(pageId);
       return;
     }
@@ -7613,6 +7650,7 @@ function ConfiguredWorkspace({
     });
   }, [
     ensureNotePageSections,
+    hasUnsectionedNoteRoots,
     isOwnerKeyValid,
     isPageArchived,
     noteArchiveSection,
@@ -7620,6 +7658,46 @@ function ConfiguredWorkspace({
     ownerKey,
     pageMeta.pageType,
     selectedPage,
+  ]);
+
+  useEffect(() => {
+    if (
+      !ownerKey ||
+      !isOwnerKeyValid ||
+      !selectedPage ||
+      pageMeta.sidebarSection !== "Templates" ||
+      isPageArchived
+    ) {
+      return;
+    }
+
+    const pageId = selectedPage._id as string;
+    if (templateSection && templateArchiveSection && !hasUnsectionedTemplateRoots) {
+      hasRequestedTemplateSections.current.delete(pageId);
+      return;
+    }
+
+    if (hasRequestedTemplateSections.current.has(pageId)) {
+      return;
+    }
+
+    hasRequestedTemplateSections.current.add(pageId);
+    void ensureTemplatePageSections({
+      ownerKey,
+      pageId: selectedPage._id,
+    }).catch(() => {
+      hasRequestedTemplateSections.current.delete(pageId);
+    });
+  }, [
+    ensureTemplatePageSections,
+    hasUnsectionedTemplateRoots,
+    isOwnerKeyValid,
+    isPageArchived,
+    ownerKey,
+    pageMeta.sidebarSection,
+    selectedPage,
+    templateArchiveSection,
+    templateSection,
   ]);
 
   useEffect(() => {
@@ -16143,6 +16221,8 @@ function EmbeddedMultiPageBlock({
   const isPageReadOnly = page.archived;
   const noteSection = findSectionNode(tree, "noteMain");
   const noteArchiveSection = findSectionNode(tree, "noteArchive");
+  const templateSection = findSectionNode(tree, "templateMain");
+  const templateArchiveSection = findSectionNode(tree, "templateArchive");
   const modelSection = findSectionNode(tree, "model");
   const recentExamplesSection = findSectionNode(tree, "recentExamples");
   const taskSidebarSection = findSectionNode(tree, "taskSidebar");
@@ -16166,6 +16246,15 @@ function EmbeddedMultiPageBlock({
             secondaryTitle: "Archive",
             secondarySection: noteArchiveSection,
           }
+        : pageMeta.sidebarSection === "Templates" &&
+            templateSection &&
+            templateArchiveSection
+          ? {
+              primaryTitle: "Template",
+              primarySection: templateSection,
+              secondaryTitle: "Archive",
+              secondarySection: templateArchiveSection,
+            }
         : null;
   const excludedSectionIds =
     twoSectionPageConfig

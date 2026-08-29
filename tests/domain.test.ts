@@ -2899,6 +2899,18 @@ test("migration destinations accept both note page sections", () => {
   }
 });
 
+test("migration destinations accept both template page sections", () => {
+  for (const sectionSlot of ["templateMain", "templateArchive"] as const) {
+    const destination = migrationDestinationSchema.parse({
+      pageType: "template",
+      title: "Morning",
+      archived: false,
+      sectionSlot,
+    });
+    assert.equal(destination.sectionSlot, sectionSlot);
+  }
+});
+
 test("serializePageToMarkdown emits readable markdown with tasks", () => {
   const markdown = serializePageToMarkdown(
     { title: "Inbox" },

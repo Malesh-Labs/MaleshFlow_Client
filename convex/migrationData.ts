@@ -1029,9 +1029,20 @@ export const applyMigrationChunkInternal = internalMutation({
     }
 
     const pageNodes = await listPageNodes(ctx.db, destinationPageId);
+    const destinationSourceMeta =
+      destinationPage.sourceMeta && typeof destinationPage.sourceMeta === "object"
+        ? (destinationPage.sourceMeta as Record<string, unknown>)
+        : {};
+    const defaultSectionSlot =
+      destinationSourceMeta.pageType === "note" ||
+      destinationSourceMeta.sidebarSection === "Notes"
+        ? "noteMain"
+        : destinationSourceMeta.sidebarSection === "Templates"
+          ? "templateMain"
+          : null;
     const sectionRootId = findSectionRootId(
       pageNodes,
-      plan.destination?.sectionSlot ?? null,
+      plan.destination?.sectionSlot ?? defaultSectionSlot,
     );
     const allSourceDocuments = await ctx.db
       .query("migrationSourceDocuments")

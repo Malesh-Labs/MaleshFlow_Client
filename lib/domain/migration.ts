@@ -39,6 +39,8 @@ export const MIGRATION_PAGE_TYPES = [
 export const MIGRATION_SECTION_SLOTS = [
   "noteMain",
   "noteArchive",
+  "templateMain",
+  "templateArchive",
   "model",
   "recentExamples",
   "journalThoughts",

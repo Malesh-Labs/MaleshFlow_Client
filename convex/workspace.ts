@@ -720,7 +720,25 @@ const NOTE_SECTION_SPECS = [
   },
 ] as const;
 
-async function ensureNoteSections(ctx: MutationCtx, page: Doc<"pages">) {
+const TEMPLATE_SECTION_SPECS = [
+  {
+    slot: "templateMain",
+    title: "Template",
+  },
+  {
+    slot: "templateArchive",
+    title: "Archive",
+  },
+] as const;
+
+async function ensureArchivedOutlineSections(
+  ctx: MutationCtx,
+  page: Doc<"pages">,
+  sectionSpecs: readonly [
+    { readonly slot: string; readonly title: string },
+    { readonly slot: string; readonly title: string },
+  ],
+) {
   const nodes = await listPageNodes(ctx.db, page._id);
   const rootNodes = nodes
     .filter((node) => node.parentNodeId === null)
@@ -735,15 +753,15 @@ async function ensureNoteSections(ctx: MutationCtx, page: Doc<"pages">) {
 
   const now = getTimestamp();
   const sectionIds: {
-    noteSectionId: Id<"nodes"> | null;
+    primarySectionId: Id<"nodes"> | null;
     archiveSectionId: Id<"nodes"> | null;
   } = {
-    noteSectionId: null,
+    primarySectionId: null,
     archiveSectionId: null,
   };
   let afterNodeId: Id<"nodes"> | null = null;
 
-  for (const spec of NOTE_SECTION_SPECS) {
+  for (const [index, spec] of sectionSpecs.entries()) {
     const existingSection = nodesBySlot.get(spec.slot) ?? null;
     if (existingSection) {
       afterNodeId = existingSection._id;
@@ -754,8 +772,8 @@ async function ensureNoteSections(ctx: MutationCtx, page: Doc<"pages">) {
         });
       }
 
-      if (spec.slot === "noteMain") {
-        sectionIds.noteSectionId = existingSection._id;
+      if (index === 0) {
+        sectionIds.primarySectionId = existingSection._id;
       } else {
         sectionIds.archiveSectionId = existingSection._id;
       }
@@ -784,29 +802,46 @@ async function ensureNoteSections(ctx: MutationCtx, page: Doc<"pages">) {
     });
     afterNodeId = sectionId;
 
-    if (spec.slot === "noteMain") {
-      sectionIds.noteSectionId = sectionId;
+    if (index === 0) {
+      sectionIds.primarySectionId = sectionId;
     } else {
       sectionIds.archiveSectionId = sectionId;
     }
   }
 
-  if (!sectionIds.noteSectionId) {
-    throw new Error("Could not create the Note section.");
+  if (!sectionIds.primarySectionId) {
+    throw new Error(`Could not create the ${sectionSpecs[0].title} section.`);
   }
 
+  const sectionSlots = new Set(sectionSpecs.map((spec) => spec.slot));
   for (const rootNode of rootNodes) {
     const sectionSlot = getNodeSourceMeta(rootNode).sectionSlot;
-    if (sectionSlot === "noteMain" || sectionSlot === "noteArchive") {
+    if (typeof sectionSlot === "string" && sectionSlots.has(sectionSlot)) {
       continue;
     }
     await ctx.db.patch(rootNode._id, {
-      parentNodeId: sectionIds.noteSectionId,
+      parentNodeId: sectionIds.primarySectionId,
     });
   }
 
   await enqueuePageRootEmbeddingRefresh(ctx, page._id);
   return sectionIds;
+}
+
+async function ensureNoteSections(ctx: MutationCtx, page: Doc<"pages">) {
+  const sectionIds = await ensureArchivedOutlineSections(ctx, page, NOTE_SECTION_SPECS);
+  return {
+    noteSectionId: sectionIds.primarySectionId,
+    archiveSectionId: sectionIds.archiveSectionId,
+  };
+}
+
+async function ensureTemplateSections(ctx: MutationCtx, page: Doc<"pages">) {
+  const sectionIds = await ensureArchivedOutlineSections(ctx, page, TEMPLATE_SECTION_SPECS);
+  return {
+    templateSectionId: sectionIds.primarySectionId,
+    archiveSectionId: sectionIds.archiveSectionId,
+  };
 }
 
 async function ensureScratchpadSections(ctx: MutationCtx, page: Doc<"pages">) {
@@ -4819,6 +4854,13 @@ export const createPage = mutation({
       }
     }
 
+    if ((args.pageType ?? "default") === "default" && args.sidebarSection === "Templates") {
+      const templatePage = await ctx.db.get(pageId);
+      if (templatePage) {
+        await ensureTemplateSections(ctx, templatePage);
+      }
+    }
+
     if (args.pageType === "multiPage") {
       const multiPage = await ctx.db.get(pageId);
       if (multiPage) {
@@ -4944,6 +4986,26 @@ export const ensureNotePageSections = mutation({
     }
 
     return await ensureNoteSections(ctx, page);
+  },
+});
+
+export const ensureTemplatePageSections = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+  },
+  handler: async (ctx, args) => {
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
+
+    const page = await ctx.db.get(args.pageId);
+    const sourceMeta = getPageSourceMeta(page);
+    const isTemplatePage =
+      sourceMeta.specialPage !== "sidebar" && sourceMeta.sidebarSection === "Templates";
+    if (!page || page.archived || !isTemplatePage) {
+      throw new Error("Only active template pages can have template sections.");
+    }
+
+    return await ensureTemplateSections(ctx, page);
   },
 });
 
