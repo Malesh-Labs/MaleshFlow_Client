@@ -11635,7 +11635,11 @@ function ConfiguredWorkspace({
       if (
         event.target instanceof HTMLElement &&
         (event.target.closest("[data-node-shell]") ||
-          event.target.closest("[data-selection-gutter='true']"))
+          event.target.closest("[data-selection-gutter='true']") ||
+          // Clicks inside the command palette must not clear the selection:
+          // node-context actions (favorite, schedule, force archive) target
+          // the item that was selected when the palette opened.
+          event.target.closest("[data-command-palette='true']"))
       ) {
         return;
       }
@@ -15091,6 +15095,7 @@ function ConfiguredWorkspace({
       </div>
       {paletteOpen ? (
         <div
+          data-command-palette="true"
           className="fixed inset-0 z-50 overflow-hidden bg-[var(--workspace-text)]/20 p-4 sm:p-8"
           onClick={() => {
             setPaletteOpen(false);
