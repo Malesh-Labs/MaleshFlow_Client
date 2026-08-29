@@ -41,7 +41,12 @@ function pageSearchScore(page: CommandPalettePage, query: string) {
   return Math.min(
     titleScore(page.title, query),
     metadataScore(page.searchTerms, query),
+    page.archived ? metadataScore(["Archive", "Archived"], query) : Number.POSITIVE_INFINITY,
   );
+}
+
+function isArchivedPageQuery(query: string) {
+  return query === "archive" || query === "archived";
 }
 
 function getPageRecency(page: CommandPalettePage) {
@@ -99,6 +104,16 @@ export function filterPageAndFavoriteResultsForCommandPalette<
       limit,
     );
     const exactPageIds = new Set(exactPageMatches.map((page) => page._id));
+    if (isArchivedPageQuery(normalizedQuery)) {
+      const archivedMatches = filterPagesForCommandPalette(
+        [...favorites, ...pages].filter((page) => page.archived),
+        query,
+        favorites.length + pages.length,
+      ).filter((result) => !exactPageIds.has(result._id));
+
+      return [...exactPageMatches, ...archivedMatches];
+    }
+
     const remainingMatches = filterPagesForCommandPalette(
       [...favorites, ...pages],
       query,

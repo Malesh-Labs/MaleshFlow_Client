@@ -136,6 +136,22 @@ test("filterPagesForCommandPalette prioritizes active prefix matches before arch
   );
 });
 
+test("filterPagesForCommandPalette matches archived page state", () => {
+  const results = filterPagesForCommandPalette(
+    [
+      { _id: "1", title: "Current Notes", archived: false, position: 1024 },
+      { _id: "2", title: "Old Ideas", archived: true, position: 2048 },
+      { _id: "3", title: "Past Plans", archived: true, position: 3072 },
+    ],
+    "archive",
+  );
+
+  assert.deepEqual(
+    results.map((page) => page._id),
+    ["2", "3"],
+  );
+});
+
 test("filterPagesForCommandPalette matches fuzzy scattered-letter queries", () => {
   const results = filterPagesForCommandPalette(
     [
@@ -313,6 +329,37 @@ test("page palette search pins exact pages above all favorite matches", () => {
 
   assert.equal(results[0]?._id, "meta-page");
   assert.equal(results.length, 14);
+});
+
+test("page palette archive query returns every archived page after an exact title", () => {
+  const archivedPages = Array.from({ length: 16 }, (_, index) => ({
+    _id: `archived-${index}`,
+    title: `Past page ${index}`,
+    archived: true,
+    position: index,
+    updatedAt: 100 - index,
+  }));
+  const results = filterPageAndFavoriteResultsForCommandPalette(
+    [],
+    [
+      {
+        _id: "exact-active-page",
+        title: "Archive",
+        archived: false,
+        position: 1024,
+      },
+      ...archivedPages,
+    ],
+    "archive",
+    14,
+  );
+
+  assert.equal(results[0]?._id, "exact-active-page");
+  assert.equal(results.length, 17);
+  assert.deepEqual(
+    results.slice(1).map((page) => page._id),
+    archivedPages.map((page) => page._id),
+  );
 });
 
 test("page palette keeps favorites first before a query is entered", () => {

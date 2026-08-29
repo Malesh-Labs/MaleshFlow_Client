@@ -6719,7 +6719,8 @@ function ConfiguredWorkspace({
             favorite.targetKind === "page"
               ? `Favorite page • ${getPageTypeDisplayLabel(targetPage)}`
               : `Favorite item • ${favorite.pageTitle}`,
-          archived: false,
+          archived:
+            favorite.targetKind === "page" ? (targetPage?.archived ?? false) : false,
           position: index,
           updatedAt: undefined,
           createdAt: undefined,
