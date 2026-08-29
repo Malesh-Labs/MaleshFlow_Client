@@ -79,6 +79,7 @@ import {
 } from "../lib/domain/recurrence";
 import {
   buildDefaultMigrationLessonsDoc,
+  migrationDestinationSchema,
   normalizeImportedOutlineText,
 } from "../lib/domain/migration";
 import {
@@ -2884,6 +2885,18 @@ test("buildDefaultMigrationLessonsDoc seeds dynalist-specific guidance", () => {
   assert.match(doc, /Dynalist Migration Lessons/);
   assert.match(doc, /\[\[label\]\]/);
   assert.match(doc, /---/);
+});
+
+test("migration destinations accept both note page sections", () => {
+  for (const sectionSlot of ["noteMain", "noteArchive"] as const) {
+    const destination = migrationDestinationSchema.parse({
+      pageType: "note",
+      title: "Reference",
+      archived: false,
+      sectionSlot,
+    });
+    assert.equal(destination.sectionSlot, sectionSlot);
+  }
 });
 
 test("serializePageToMarkdown emits readable markdown with tasks", () => {

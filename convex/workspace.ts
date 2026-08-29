@@ -709,6 +709,106 @@ const SCRATCHPAD_SECTION_SPECS = [
   },
 ] as const;
 
+const NOTE_SECTION_SPECS = [
+  {
+    slot: "noteMain",
+    title: "Note",
+  },
+  {
+    slot: "noteArchive",
+    title: "Archive",
+  },
+] as const;
+
+async function ensureNoteSections(ctx: MutationCtx, page: Doc<"pages">) {
+  const nodes = await listPageNodes(ctx.db, page._id);
+  const rootNodes = nodes
+    .filter((node) => node.parentNodeId === null)
+    .sort((left, right) => left.position - right.position);
+  const nodesBySlot = new Map<string, Doc<"nodes">>();
+  for (const node of rootNodes) {
+    const sectionSlot = getNodeSourceMeta(node).sectionSlot;
+    if (typeof sectionSlot === "string" && !nodesBySlot.has(sectionSlot)) {
+      nodesBySlot.set(sectionSlot, node);
+    }
+  }
+
+  const now = getTimestamp();
+  const sectionIds: {
+    noteSectionId: Id<"nodes"> | null;
+    archiveSectionId: Id<"nodes"> | null;
+  } = {
+    noteSectionId: null,
+    archiveSectionId: null,
+  };
+  let afterNodeId: Id<"nodes"> | null = null;
+
+  for (const spec of NOTE_SECTION_SPECS) {
+    const existingSection = nodesBySlot.get(spec.slot) ?? null;
+    if (existingSection) {
+      afterNodeId = existingSection._id;
+      if (existingSection.text !== spec.title) {
+        await ctx.db.patch(existingSection._id, {
+          text: spec.title,
+          updatedAt: now,
+        });
+      }
+
+      if (spec.slot === "noteMain") {
+        sectionIds.noteSectionId = existingSection._id;
+      } else {
+        sectionIds.archiveSectionId = existingSection._id;
+      }
+      continue;
+    }
+
+    const position = await computeNodePosition(ctx.db, page._id, null, afterNodeId);
+    const sectionId = await ctx.db.insert("nodes", {
+      pageId: page._id,
+      parentNodeId: null,
+      position,
+      text: spec.title,
+      kind: "note",
+      taskStatus: null,
+      priority: null,
+      dueAt: null,
+      dueEndAt: null,
+      archived: false,
+      sourceMeta: {
+        sourceType: "system",
+        sectionSlot: spec.slot,
+        locked: true,
+      },
+      createdAt: now,
+      updatedAt: now,
+    });
+    afterNodeId = sectionId;
+
+    if (spec.slot === "noteMain") {
+      sectionIds.noteSectionId = sectionId;
+    } else {
+      sectionIds.archiveSectionId = sectionId;
+    }
+  }
+
+  if (!sectionIds.noteSectionId) {
+    throw new Error("Could not create the Note section.");
+  }
+
+  for (const rootNode of rootNodes) {
+    const sectionSlot = getNodeSourceMeta(rootNode).sectionSlot;
+    if (sectionSlot === "noteMain" || sectionSlot === "noteArchive") {
+      continue;
+    }
+    await ctx.db.patch(rootNode._id, {
+      parentNodeId: sectionIds.noteSectionId,
+    });
+  }
+
+  await enqueuePageRootEmbeddingRefresh(ctx, page._id);
+  return sectionIds;
+}
+
 async function ensureScratchpadSections(ctx: MutationCtx, page: Doc<"pages">) {
   const nodes = await listPageNodes(ctx.db, page._id);
   const rootNodes = nodes
@@ -4712,6 +4812,13 @@ export const createPage = mutation({
       }
     }
 
+    if (args.pageType === "note") {
+      const notePage = await ctx.db.get(pageId);
+      if (notePage) {
+        await ensureNoteSections(ctx, notePage);
+      }
+    }
+
     if (args.pageType === "multiPage") {
       const multiPage = await ctx.db.get(pageId);
       if (multiPage) {
@@ -4816,6 +4923,27 @@ export const ensureJournalPageSections = mutation({
     }
 
     return await ensureJournalSections(ctx, page);
+  },
+});
+
+export const ensureNotePageSections = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+  },
+  handler: async (ctx, args) => {
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
+
+    const page = await ctx.db.get(args.pageId);
+    const sourceMeta = getPageSourceMeta(page);
+    const isNotePage =
+      sourceMeta.specialPage !== "sidebar" &&
+      (sourceMeta.pageType === "note" || sourceMeta.sidebarSection === "Notes");
+    if (!page || page.archived || !isNotePage) {
+      throw new Error("Only active note pages can have note sections.");
+    }
+
+    return await ensureNoteSections(ctx, page);
   },
 });
 

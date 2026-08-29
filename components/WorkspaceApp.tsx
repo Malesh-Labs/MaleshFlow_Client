@@ -836,6 +836,8 @@ type WorkspaceErrorBoundaryState = {
 };
 
 type SectionSlot =
+  | "noteMain"
+  | "noteArchive"
   | "taskSidebar"
   | "plannerSidebar"
   | "plannerRunningArchive"
@@ -1695,6 +1697,8 @@ function collectPlannerSymbolCandidateNodeIds(
 
 function collectEmbeddedMultiPagePageExpandableNodeIds(page: PageDoc, tree: TreeNode[]) {
   const pageMeta = getPageMeta(page);
+  const noteSection = findSectionNode(tree, "noteMain");
+  const noteArchiveSection = findSectionNode(tree, "noteArchive");
   const modelSection = findSectionNode(tree, "model");
   const recentExamplesSection = findSectionNode(tree, "recentExamples");
   const taskSidebarSection = findSectionNode(tree, "taskSidebar");
@@ -1703,6 +1707,13 @@ function collectEmbeddedMultiPagePageExpandableNodeIds(page: PageDoc, tree: Tree
   const journalFeedbackSection = findSectionNode(tree, "journalFeedback");
   const scratchpadLiveSection = findSectionNode(tree, "scratchpadLive");
   const scratchpadPreviousSection = findSectionNode(tree, "scratchpadPrevious");
+
+  if (pageMeta.pageType === "note" && noteSection && noteArchiveSection) {
+    return [
+      ...collectExpandableNodeIdsFromSection(noteSection),
+      ...collectExpandableNodeIdsFromSection(noteArchiveSection),
+    ];
+  }
 
   if (pageMeta.pageType === "task") {
     const genericRoots = collectChildren(
@@ -4573,6 +4584,7 @@ function ConfiguredWorkspace({
   );
   const ensurePlannerPageSections = useMutation(api.planner.ensurePlannerPageSections);
   const ensureJournalPageSections = useMutation(api.workspace.ensureJournalPageSections);
+  const ensureNotePageSections = useMutation(api.workspace.ensureNotePageSections);
   const ensureMultiPagePageSections = useMutation(api.workspace.ensureMultiPagePageSections);
   const renamePageRaw = useMutation(api.workspace.renamePage);
   const archivePage = useMutation(api.workspace.archivePage);
@@ -4927,6 +4939,7 @@ function ConfiguredWorkspace({
   const hasRequestedTaskSidebarSection = useRef(new Set<string>());
   const hasRequestedPlannerSections = useRef(new Set<string>());
   const hasRequestedJournalSections = useRef(new Set<string>());
+  const hasRequestedNoteSections = useRef(new Set<string>());
   const hasRequestedMultiPageSections = useRef(new Set<string>());
   const suppressNodeSelectionClearRef = useRef(0);
   const textSelectionGestureRef = useRef<{
@@ -5256,8 +5269,26 @@ function ConfiguredWorkspace({
   const journalThoughtsSection = findSectionNode(tree, "journalThoughts");
   const journalWhatHappenedSection = findSectionNode(tree, "journalWhatHappened");
   const journalFeedbackSection = findSectionNode(tree, "journalFeedback");
+  const noteSection = findSectionNode(tree, "noteMain");
+  const noteArchiveSection = findSectionNode(tree, "noteArchive");
   const scratchpadLiveSection = findSectionNode(tree, "scratchpadLive");
   const scratchpadPreviousSection = findSectionNode(tree, "scratchpadPrevious");
+  const twoSectionPageConfig =
+    pageMeta.pageType === "scratchpad"
+      ? {
+          primaryTitle: "Live",
+          primarySection: scratchpadLiveSection,
+          secondaryTitle: "Previous",
+          secondarySection: scratchpadPreviousSection,
+        }
+      : pageMeta.pageType === "note" && noteSection && noteArchiveSection
+        ? {
+            primaryTitle: "Note",
+            primarySection: noteSection,
+            secondaryTitle: "Archive",
+            secondarySection: noteArchiveSection,
+          }
+        : null;
   const multiPageIncludedPagesSection = findSectionNode(tree, "multiPageIncludedPages");
   const multiPageIncludedRawItems = useMemo<MultiPageIncludedItemResult[]>(
     () =>
@@ -5468,11 +5499,14 @@ function ConfiguredWorkspace({
               ].filter(Boolean) as string[],
             ),
           )
-        : pageMeta.pageType === "scratchpad"
+      : twoSectionPageConfig
           ? collectChildren(
               tree,
               new Set(
-                [scratchpadLiveSection?._id, scratchpadPreviousSection?._id].filter(Boolean) as string[],
+                [
+                  twoSectionPageConfig.primarySection?._id,
+                  twoSectionPageConfig.secondarySection?._id,
+                ].filter(Boolean) as string[],
               ),
             )
           : pageMeta.pageType === "multiPage"
@@ -5609,10 +5643,13 @@ function ConfiguredWorkspace({
     journalWhatHappenedSection,
     journalFeedbackSection,
   ].filter((node): node is TreeNode => Boolean(node));
-  const scratchpadVisibleRoots = [scratchpadLiveSection, scratchpadPreviousSection].filter(
+  const twoSectionVisibleRoots = [
+    twoSectionPageConfig?.primarySection,
+    twoSectionPageConfig?.secondarySection,
+  ].filter(
     (node): node is TreeNode => Boolean(node),
   );
-  const scratchpadSelectionRoots = scratchpadVisibleRoots.flatMap((node) => node.children);
+  const twoSectionSelectionRoots = twoSectionVisibleRoots.flatMap((node) => node.children);
   const multiPageVisibleRoots = [multiPageIncludedPagesSection].filter(
     (node): node is TreeNode => Boolean(node),
   );
@@ -5687,9 +5724,9 @@ function ConfiguredWorkspace({
       ? flattenTreeNodes([...modelVisibleRoots, ...genericRoots], effectiveCollapsedNodeIds)
         : pageMeta.pageType === "journal"
         ? flattenTreeNodes([...journalVisibleRoots, ...genericRoots], effectiveCollapsedNodeIds)
-        : pageMeta.pageType === "scratchpad"
+        : twoSectionPageConfig
           ? flattenTreeNodes(
-              [...scratchpadSelectionRoots, ...genericRoots],
+              [...twoSectionSelectionRoots, ...genericRoots],
               effectiveCollapsedNodeIds,
             )
         : pageMeta.pageType === "multiPage"
@@ -7425,6 +7462,7 @@ function ConfiguredWorkspace({
       hasRequestedSidebarPage.current = false;
       hasRequestedTaskSidebarSection.current.clear();
       hasRequestedJournalSections.current.clear();
+      hasRequestedNoteSections.current.clear();
       setSidebarBootstrapError("");
       setShowSidebarDiagnostics(false);
       return;
@@ -7540,6 +7578,45 @@ function ConfiguredWorkspace({
     journalFeedbackSection,
     journalThoughtsSection,
     journalWhatHappenedSection,
+    ownerKey,
+    pageMeta.pageType,
+    selectedPage,
+  ]);
+
+  useEffect(() => {
+    if (
+      !ownerKey ||
+      !isOwnerKeyValid ||
+      !selectedPage ||
+      pageMeta.pageType !== "note" ||
+      isPageArchived
+    ) {
+      return;
+    }
+
+    const pageId = selectedPage._id as string;
+    if (noteSection && noteArchiveSection) {
+      hasRequestedNoteSections.current.delete(pageId);
+      return;
+    }
+
+    if (hasRequestedNoteSections.current.has(pageId)) {
+      return;
+    }
+
+    hasRequestedNoteSections.current.add(pageId);
+    void ensureNotePageSections({
+      ownerKey,
+      pageId: selectedPage._id,
+    }).catch(() => {
+      hasRequestedNoteSections.current.delete(pageId);
+    });
+  }, [
+    ensureNotePageSections,
+    isOwnerKeyValid,
+    isPageArchived,
+    noteArchiveSection,
+    noteSection,
     ownerKey,
     pageMeta.pageType,
     selectedPage,
@@ -14483,12 +14560,12 @@ function ConfiguredWorkspace({
                       />
                     </div>
                   </div>
-                ) : pageMeta.pageType === "scratchpad" ? (
+                ) : twoSectionPageConfig ? (
                   <div className="divide-y divide-[var(--workspace-border-subtle)]">
                     <div className="pb-8">
                       <PageSection
-                        title="Live"
-                        sectionNode={scratchpadLiveSection}
+                        title={twoSectionPageConfig.primaryTitle}
+                        sectionNode={twoSectionPageConfig.primarySection}
                         ownerKey={ownerKey}
                         pageId={selectedPage._id}
                         nodeBacklinkCounts={pageNodeBacklinkCounts}
@@ -14538,8 +14615,8 @@ function ConfiguredWorkspace({
                     </div>
                     <div className="pt-8">
                       <PageSection
-                        title="Previous"
-                        sectionNode={scratchpadPreviousSection}
+                        title={twoSectionPageConfig.secondaryTitle}
+                        sectionNode={twoSectionPageConfig.secondarySection}
                         ownerKey={ownerKey}
                         pageId={selectedPage._id}
                         nodeBacklinkCounts={pageNodeBacklinkCounts}
@@ -16064,6 +16141,8 @@ function EmbeddedMultiPageBlock({
   const pageId = page._id;
   const pageMeta = getPageMeta(page);
   const isPageReadOnly = page.archived;
+  const noteSection = findSectionNode(tree, "noteMain");
+  const noteArchiveSection = findSectionNode(tree, "noteArchive");
   const modelSection = findSectionNode(tree, "model");
   const recentExamplesSection = findSectionNode(tree, "recentExamples");
   const taskSidebarSection = findSectionNode(tree, "taskSidebar");
@@ -16072,8 +16151,31 @@ function EmbeddedMultiPageBlock({
   const journalFeedbackSection = findSectionNode(tree, "journalFeedback");
   const scratchpadLiveSection = findSectionNode(tree, "scratchpadLive");
   const scratchpadPreviousSection = findSectionNode(tree, "scratchpadPrevious");
+  const twoSectionPageConfig =
+    pageMeta.pageType === "scratchpad"
+      ? {
+          primaryTitle: "Live",
+          primarySection: scratchpadLiveSection,
+          secondaryTitle: "Previous",
+          secondarySection: scratchpadPreviousSection,
+        }
+      : pageMeta.pageType === "note" && noteSection && noteArchiveSection
+        ? {
+            primaryTitle: "Note",
+            primarySection: noteSection,
+            secondaryTitle: "Archive",
+            secondarySection: noteArchiveSection,
+          }
+        : null;
   const excludedSectionIds =
-    pageMeta.pageType === "task"
+    twoSectionPageConfig
+      ? new Set(
+          [
+            twoSectionPageConfig.primarySection?._id,
+            twoSectionPageConfig.secondarySection?._id,
+          ].filter(Boolean) as string[],
+        )
+      : pageMeta.pageType === "task"
       ? new Set([taskSidebarSection?._id].filter(Boolean) as string[])
       : pageMeta.pageType === "model"
         ? new Set([modelSection?._id, recentExamplesSection?._id].filter(Boolean) as string[])
@@ -16085,11 +16187,7 @@ function EmbeddedMultiPageBlock({
                 journalFeedbackSection?._id,
               ].filter(Boolean) as string[],
             )
-          : pageMeta.pageType === "scratchpad"
-            ? new Set(
-                [scratchpadLiveSection?._id, scratchpadPreviousSection?._id].filter(Boolean) as string[],
-              )
-            : new Set<string>();
+          : new Set<string>();
   const genericRoots = collectChildren(tree, excludedSectionIds);
   const dropWithinPage = async (payload: DraggedNodePayload, dropTarget: NodeDropTarget) => {
     if (payload.pageId !== pageId) {
@@ -16229,20 +16327,20 @@ function EmbeddedMultiPageBlock({
             />
           </div>
         </div>
-      ) : pageMeta.pageType === "scratchpad" ? (
+      ) : twoSectionPageConfig ? (
         <div className="divide-y divide-[var(--workspace-border-subtle)]">
           <div className="pb-6">
             <PageSection
-              title="Live"
-              sectionNode={scratchpadLiveSection}
+              title={twoSectionPageConfig.primaryTitle}
+              sectionNode={twoSectionPageConfig.primarySection}
               depthOffset={depthOffset}
               {...sectionProps}
             />
           </div>
           <div className="pt-6">
             <PageSection
-              title="Previous"
-              sectionNode={scratchpadPreviousSection}
+              title={twoSectionPageConfig.secondaryTitle}
+              sectionNode={twoSectionPageConfig.secondarySection}
               depthOffset={depthOffset}
               {...sectionProps}
             />
