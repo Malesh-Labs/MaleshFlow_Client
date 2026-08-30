@@ -4600,6 +4600,7 @@ function ConfiguredWorkspace({
   const ensurePlannerPageSections = useMutation(api.planner.ensurePlannerPageSections);
   const ensureJournalPageSections = useMutation(api.workspace.ensureJournalPageSections);
   const ensureNotePageSections = useMutation(api.workspace.ensureNotePageSections);
+  const ensureScratchpadPageSections = useMutation(api.workspace.ensureScratchpadPageSections);
   const ensureTemplatePageSections = useMutation(api.workspace.ensureTemplatePageSections);
   const ensureMultiPagePageSections = useMutation(api.workspace.ensureMultiPagePageSections);
   const renamePageRaw = useMutation(api.workspace.renamePage);
@@ -4957,6 +4958,7 @@ function ConfiguredWorkspace({
   const hasRequestedPlannerSections = useRef(new Set<string>());
   const hasRequestedJournalSections = useRef(new Set<string>());
   const hasRequestedNoteSections = useRef(new Set<string>());
+  const hasRequestedScratchpadSections = useRef(new Set<string>());
   const hasRequestedTemplateSections = useRef(new Set<string>());
   const hasRequestedMultiPageSections = useRef(new Set<string>());
   const suppressNodeSelectionClearRef = useRef(0);
@@ -5305,9 +5307,9 @@ function ConfiguredWorkspace({
   const twoSectionPageConfig =
     pageMeta.pageType === "scratchpad"
       ? {
-          primaryTitle: "Live",
+          primaryTitle: "Scratchpad",
           primarySection: scratchpadLiveSection,
-          secondaryTitle: "Previous",
+          secondaryTitle: "Archive",
           secondarySection: scratchpadPreviousSection,
         }
       : pageMeta.pageType === "note" && noteSection && noteArchiveSection
@@ -7519,6 +7521,7 @@ function ConfiguredWorkspace({
       hasRequestedTaskSidebarSection.current.clear();
       hasRequestedJournalSections.current.clear();
       hasRequestedNoteSections.current.clear();
+      hasRequestedScratchpadSections.current.clear();
       hasRequestedTemplateSections.current.clear();
       setSidebarBootstrapError("");
       setShowSidebarDiagnostics(false);
@@ -7677,6 +7680,48 @@ function ConfiguredWorkspace({
     noteSection,
     ownerKey,
     pageMeta.pageType,
+    selectedPage,
+  ]);
+
+  useEffect(() => {
+    if (
+      !ownerKey ||
+      !isOwnerKeyValid ||
+      !selectedPage ||
+      pageMeta.pageType !== "scratchpad" ||
+      isPageArchived
+    ) {
+      return;
+    }
+
+    const pageId = selectedPage._id as string;
+    const hasCurrentSectionTitles =
+      scratchpadLiveSection?.text === "Scratchpad" &&
+      scratchpadPreviousSection?.text === "Archive";
+    if (hasCurrentSectionTitles) {
+      hasRequestedScratchpadSections.current.delete(pageId);
+      return;
+    }
+
+    if (hasRequestedScratchpadSections.current.has(pageId)) {
+      return;
+    }
+
+    hasRequestedScratchpadSections.current.add(pageId);
+    void ensureScratchpadPageSections({
+      ownerKey,
+      pageId: selectedPage._id,
+    }).catch(() => {
+      hasRequestedScratchpadSections.current.delete(pageId);
+    });
+  }, [
+    ensureScratchpadPageSections,
+    isOwnerKeyValid,
+    isPageArchived,
+    ownerKey,
+    pageMeta.pageType,
+    scratchpadLiveSection?.text,
+    scratchpadPreviousSection?.text,
     selectedPage,
   ]);
 
@@ -16313,9 +16358,9 @@ function EmbeddedMultiPageBlock({
   const twoSectionPageConfig =
     pageMeta.pageType === "scratchpad"
       ? {
-          primaryTitle: "Live",
+          primaryTitle: "Scratchpad",
           primarySection: scratchpadLiveSection,
-          secondaryTitle: "Previous",
+          secondaryTitle: "Archive",
           secondarySection: scratchpadPreviousSection,
         }
       : pageMeta.pageType === "note" && noteSection && noteArchiveSection

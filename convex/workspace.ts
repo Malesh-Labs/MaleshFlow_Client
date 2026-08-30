@@ -701,11 +701,11 @@ async function ensureJournalSections(ctx: MutationCtx, page: Doc<"pages">) {
 const SCRATCHPAD_SECTION_SPECS = [
   {
     slot: "scratchpadLive",
-    title: "Live",
+    title: "Scratchpad",
   },
   {
     slot: "scratchpadPrevious",
-    title: "Previous",
+    title: "Archive",
   },
 ] as const;
 
@@ -4986,6 +4986,23 @@ export const ensureNotePageSections = mutation({
     }
 
     return await ensureNoteSections(ctx, page);
+  },
+});
+
+export const ensureScratchpadPageSections = mutation({
+  args: {
+    ownerKey: v.string(),
+    pageId: v.id("pages"),
+  },
+  handler: async (ctx, args) => {
+    await assertOwnerKeyGuarded(ctx.db, args.ownerKey);
+
+    const page = await ctx.db.get(args.pageId);
+    if (!page || page.archived || getPageSourceMeta(page).pageType !== "scratchpad") {
+      throw new Error("Only active scratchpad pages can have scratchpad sections.");
+    }
+
+    return await ensureScratchpadSections(ctx, page);
   },
 });
 
