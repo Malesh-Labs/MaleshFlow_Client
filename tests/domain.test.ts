@@ -657,27 +657,27 @@ test("extractLinks finds plain email addresses", () => {
   ]);
 });
 
-test("extractLinks parses parent-inclusive node wiki links", () => {
+test("extractLinks parses showparent-inclusive node wiki links", () => {
   const links = extractLinks(
-    "See [[node:node_123?parent]], [[Custom label|node:node_456?parent]], [[Autocomplete label|node:node_789]]?parent, [[node:node_tagged?hidetags]], [[Tagged trailing|node:node_trailing]]?hidetags, [[node:node_children?showChildren]], [[Lower children|node:node_lower?showchildren]], [[Mixed children|node:node_mixed?ShowChildren]], [[Trailing children|node:node_trailing_children]]?showChildren, and [[Tagged parent|node:node_both?parent&hideTags&showChildren]].",
+    "See [[node:node_123?showparent]], [[Custom label|node:node_456?showparent]], [[Autocomplete label|node:node_789]]?showparent, [[node:node_tagged?hidetags]], [[Tagged trailing|node:node_trailing]]?hidetags, [[node:node_children?showChildren]], [[Lower children|node:node_lower?showchildren]], [[Mixed children|node:node_mixed?ShowChildren]], [[Trailing children|node:node_trailing_children]]?showChildren, and [[Tagged parent|node:node_both?showparent&hideTags&showChildren]].",
   );
 
   assert.deepEqual(links, [
     {
       kind: "node",
-      label: "[[node:node_123?parent]]",
+      label: "[[node:node_123?showparent]]",
       targetNodeRef: "node_123",
       includeParent: true,
     },
     {
       kind: "node",
-      label: "[[Custom label|node:node_456?parent]]",
+      label: "[[Custom label|node:node_456?showparent]]",
       targetNodeRef: "node_456",
       includeParent: true,
     },
     {
       kind: "node",
-      label: "[[Autocomplete label|node:node_789]]?parent",
+      label: "[[Autocomplete label|node:node_789]]?showparent",
       targetNodeRef: "node_789",
       includeParent: true,
     },
@@ -719,7 +719,7 @@ test("extractLinks parses parent-inclusive node wiki links", () => {
     },
     {
       kind: "node",
-      label: "[[Tagged parent|node:node_both?parent&hideTags&showChildren]]",
+      label: "[[Tagged parent|node:node_both?showparent&hideTags&showChildren]]",
       targetNodeRef: "node_both",
       includeParent: true,
       hideTags: true,
@@ -768,15 +768,15 @@ test("extractLinks composes repeated question-mark node modifiers", () => {
   ]);
 });
 
-test("getExplicitWikiLinkPreviewText strips parent-inclusive node targets", () => {
-  assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123?parent]]"), "");
-  assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123]]?parent"), "");
+test("getExplicitWikiLinkPreviewText strips showparent-inclusive node targets", () => {
+  assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123?showparent]]"), "");
+  assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123]]?showparent"), "");
   assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123?hidetags]]"), "");
   assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123]]?hidetags"), "");
-  assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123?parent&hidetags]]"), "");
+  assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123?showparent&hidetags]]"), "");
   assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123?showChildren]]"), "");
   assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123]]?showChildren"), "");
-  assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123?parent&hideTags&showChildren]]"), "");
+  assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123?showparent&hideTags&showChildren]]"), "");
   assert.equal(
     getExplicitWikiLinkPreviewText("[[node:node_123?showParent?hideTags?showChildren]]"),
     "",
@@ -786,11 +786,11 @@ test("getExplicitWikiLinkPreviewText strips parent-inclusive node targets", () =
     "",
   );
   assert.equal(
-    getExplicitWikiLinkPreviewText("[[Custom label|node:node_456?parent]]"),
+    getExplicitWikiLinkPreviewText("[[Custom label|node:node_456?showparent]]"),
     "Custom label",
   );
   assert.equal(
-    getExplicitWikiLinkPreviewText("[[Custom label|node:node_456]]?parent"),
+    getExplicitWikiLinkPreviewText("[[Custom label|node:node_456]]?showparent"),
     "Custom label",
   );
   assert.equal(
@@ -817,9 +817,9 @@ test("getExplicitWikiLinkPreviewText strips parent-inclusive node targets", () =
   );
 });
 
-test("replaceLinkMarkupWithLabels consumes trailing parent node link options", () => {
+test("replaceLinkMarkupWithLabels consumes trailing showparent node link options", () => {
   assert.equal(
-    replaceLinkMarkupWithLabels("See [[Custom label|node:node_456]]?parent now."),
+    replaceLinkMarkupWithLabels("See [[Custom label|node:node_456]]?showparent now."),
     "See Custom label now.",
   );
   assert.equal(
@@ -827,7 +827,7 @@ test("replaceLinkMarkupWithLabels consumes trailing parent node link options", (
     "See Custom label now.",
   );
   assert.equal(
-    replaceLinkMarkupWithLabels("See [[Custom label|node:node_456]]?parent&hidetags now."),
+    replaceLinkMarkupWithLabels("See [[Custom label|node:node_456]]?showparent&hidetags now."),
     "See Custom label now.",
   );
   assert.equal(
@@ -843,6 +843,19 @@ test("replaceLinkMarkupWithLabels consumes trailing parent node link options", (
       "See [[Custom label|node:node_456]]?showParent?hideTags?showChildren now.",
     ),
     "See Custom label now.",
+  );
+});
+
+test("legacy parent text is not consumed as a node-link modifier", () => {
+  const [link] = extractLinks("[[node:node_123]]?parent");
+  assert.deepEqual(link, {
+    kind: "node",
+    label: "[[node:node_123]]",
+    targetNodeRef: "node_123",
+  });
+  assert.equal(
+    replaceLinkMarkupWithLabels("See [[Custom label|node:node_456]]?parent now."),
+    "See Custom label?parent now.",
   );
 });
 

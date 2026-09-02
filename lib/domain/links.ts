@@ -39,7 +39,7 @@ const BARE_NODE_WIKI_TARGET_PATTERN = /^(?:node_[a-zA-Z0-9_-]+|k17[0-9a-z]{20,})
 const BARE_NODE_WIKI_TARGET_WITH_OPTIONS_PATTERN =
   /^((?:node_[a-zA-Z0-9_-]+|k17[0-9a-z]{20,}))(\?[A-Za-z]+(?:[?&][A-Za-z]+)*)?$/i;
 const NODE_LINK_OPTION_TEXT_PATTERN =
-  /\?(?:parent|showparent|hidetags|showchildren)(?:[?&](?:parent|showparent|hidetags|showchildren))*$/i;
+  /\?(?:showparent|hidetags|showchildren)(?:[?&](?:showparent|hidetags|showchildren))*$/i;
 const NODE_LINK_OPTION_CANDIDATE_PATTERN = /^\?[A-Za-z]+(?:[?&][A-Za-z]+)*/;
 const COMPLETE_MARKDOWN_LINK_PATTERN = /^\[([^\]]+)\]\(([^)]*)\)$/;
 const COMPLETE_WIKI_LINK_PATTERN = /^\[\[([^[\]]+)\]\]$/;
@@ -179,7 +179,6 @@ function parseNodeLinkOptions(optionText: string | null | undefined) {
   if (
     ![...optionSet].every(
       (option) =>
-        option === "parent" ||
         option === "showparent" ||
         option === "hidetags" ||
         option === "showchildren",
@@ -190,7 +189,7 @@ function parseNodeLinkOptions(optionText: string | null | undefined) {
 
   return {
     text: optionText,
-    includeParent: optionSet.has("parent") || optionSet.has("showparent"),
+    includeParent: optionSet.has("showparent"),
     hideTags: optionSet.has("hidetags"),
     showChildren: optionSet.has("showchildren"),
   };
@@ -479,16 +478,16 @@ export function getExplicitWikiLinkPreviewText(label: string) {
   return wikiLabel
     .slice(2, -2)
     .replace(
-      /^node:[a-zA-Z0-9_-]+(?:\?(?:parent|showparent|hidetags|showchildren)(?:[?&](?:parent|showparent|hidetags|showchildren))*)?$/i,
+      /^node:[a-zA-Z0-9_-]+(?:\?(?:showparent|hidetags|showchildren)(?:[?&](?:showparent|hidetags|showchildren))*)?$/i,
       "",
     )
     .replace(
-      /^(?:node_[a-zA-Z0-9_-]+|k17[0-9a-z]{20,})(?:\?(?:parent|showparent|hidetags|showchildren)(?:[?&](?:parent|showparent|hidetags|showchildren))*)?$/i,
+      /^(?:node_[a-zA-Z0-9_-]+|k17[0-9a-z]{20,})(?:\?(?:showparent|hidetags|showchildren)(?:[?&](?:showparent|hidetags|showchildren))*)?$/i,
       "",
     )
     .replace(/^page:[a-zA-Z0-9_-]+$/, "")
     .replace(
-      /\|node:[a-zA-Z0-9_-]+(?:\?(?:parent|showparent|hidetags|showchildren)(?:[?&](?:parent|showparent|hidetags|showchildren))*)?$/i,
+      /\|node:[a-zA-Z0-9_-]+(?:\?(?:showparent|hidetags|showchildren)(?:[?&](?:showparent|hidetags|showchildren))*)?$/i,
       "",
     )
     .replace(/\|page:[a-zA-Z0-9_-]+$/, "")
