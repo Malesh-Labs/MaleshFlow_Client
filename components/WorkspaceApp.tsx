@@ -278,10 +278,10 @@ const SHORTCUT_SECTIONS = [
     items: [
       { keys: ["[["], description: "Link a page or node — autocomplete opens as you type" },
       { keys: ["[[["], description: "Link autocomplete that also searches archived pages" },
-      { keys: ["?parent"], description: "After a node link: show the linked item's parent in parentheses" },
+      { keys: ["?showparent"], description: "After a node link: show the linked item's parent in parentheses" },
       { keys: ["?hidetags"], description: "After a node link: hide #tags from the linked text" },
       { keys: ["?showchildren"], description: "After a node link: show the linked item's children inline" },
-      { keys: ["?parent&hidetags"], description: "Combine node link options with &" },
+      { keys: ["?hidetags?showchildren"], description: "Combine node link options with ? or &" },
     ],
   },
   {

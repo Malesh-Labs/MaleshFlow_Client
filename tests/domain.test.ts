@@ -728,6 +728,46 @@ test("extractLinks parses parent-inclusive node wiki links", () => {
   ]);
 });
 
+test("extractLinks composes repeated question-mark node modifiers", () => {
+  const links = extractLinks(
+    "See [[node:node_inline?hideTags?showChildren?showParent]], [[Label|node:node_trailing]]?SHOWPARENT?HIDETAGS?SHOWCHILDREN, [[node_456]]?hideTags?showChildren, and [[node_789?showParent&hideTags?showChildren]].",
+  );
+
+  assert.deepEqual(links, [
+    {
+      kind: "node",
+      label: "[[node:node_inline?hideTags?showChildren?showParent]]",
+      targetNodeRef: "node_inline",
+      includeParent: true,
+      hideTags: true,
+      showChildren: true,
+    },
+    {
+      kind: "node",
+      label: "[[Label|node:node_trailing]]?SHOWPARENT?HIDETAGS?SHOWCHILDREN",
+      targetNodeRef: "node_trailing",
+      includeParent: true,
+      hideTags: true,
+      showChildren: true,
+    },
+    {
+      kind: "node",
+      label: "[[node_456]]?hideTags?showChildren",
+      targetNodeRef: "node_456",
+      hideTags: true,
+      showChildren: true,
+    },
+    {
+      kind: "node",
+      label: "[[node_789?showParent&hideTags?showChildren]]",
+      targetNodeRef: "node_789",
+      includeParent: true,
+      hideTags: true,
+      showChildren: true,
+    },
+  ]);
+});
+
 test("getExplicitWikiLinkPreviewText strips parent-inclusive node targets", () => {
   assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123?parent]]"), "");
   assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123]]?parent"), "");
@@ -737,6 +777,14 @@ test("getExplicitWikiLinkPreviewText strips parent-inclusive node targets", () =
   assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123?showChildren]]"), "");
   assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123]]?showChildren"), "");
   assert.equal(getExplicitWikiLinkPreviewText("[[node:node_123?parent&hideTags&showChildren]]"), "");
+  assert.equal(
+    getExplicitWikiLinkPreviewText("[[node:node_123?showParent?hideTags?showChildren]]"),
+    "",
+  );
+  assert.equal(
+    getExplicitWikiLinkPreviewText("[[node_456]]?showParent?hideTags?showChildren"),
+    "",
+  );
   assert.equal(
     getExplicitWikiLinkPreviewText("[[Custom label|node:node_456?parent]]"),
     "Custom label",
@@ -761,6 +809,12 @@ test("getExplicitWikiLinkPreviewText strips parent-inclusive node targets", () =
     getExplicitWikiLinkPreviewText("[[Custom label|node:node_456]]?showChildren"),
     "Custom label",
   );
+  assert.equal(
+    getExplicitWikiLinkPreviewText(
+      "[[Custom label|node:node_456]]?showParent?hideTags?showChildren",
+    ),
+    "Custom label",
+  );
 });
 
 test("replaceLinkMarkupWithLabels consumes trailing parent node link options", () => {
@@ -782,6 +836,12 @@ test("replaceLinkMarkupWithLabels consumes trailing parent node link options", (
   );
   assert.equal(
     replaceLinkMarkupWithLabels("See [[Custom label|node:node_456]]?hideTags&showChildren now."),
+    "See Custom label now.",
+  );
+  assert.equal(
+    replaceLinkMarkupWithLabels(
+      "See [[Custom label|node:node_456]]?showParent?hideTags?showChildren now.",
+    ),
     "See Custom label now.",
   );
 });
