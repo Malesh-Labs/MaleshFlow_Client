@@ -193,13 +193,59 @@ function isPlannerPlaceholderTaskText(text: string) {
   return text.trim() === "__small__";
 }
 
+type PlannerNodeTreeIndex = {
+  nodesById: Map<string, Doc<"nodes">>;
+  childrenByParent: Map<string, Doc<"nodes">[]>;
+};
+
+function buildPlannerNodeTreeIndex(nodes: Doc<"nodes">[]): PlannerNodeTreeIndex {
+  const nodesById = new Map<string, Doc<"nodes">>();
+  const childrenByParent = new Map<string, Doc<"nodes">[]>();
+
+  for (const node of nodes) {
+    nodesById.set(node._id as string, node);
+    if (!node.parentNodeId) {
+      continue;
+    }
+    const parentId = node.parentNodeId as string;
+    const siblings = childrenByParent.get(parentId) ?? [];
+    siblings.push(node);
+    childrenByParent.set(parentId, siblings);
+  }
+
+  for (const siblings of childrenByParent.values()) {
+    siblings.sort((left, right) => left.position - right.position);
+  }
+
+  return { nodesById, childrenByParent };
+}
+
+function collectPlannerNodeSubtree(
+  treeIndex: PlannerNodeTreeIndex,
+  rootNodeId: Id<"nodes">,
+) {
+  const root = treeIndex.nodesById.get(rootNodeId as string);
+  if (!root) {
+    return [];
+  }
+
+  const collected: Doc<"nodes">[] = [];
+  const queue = [root];
+  while (queue.length > 0) {
+    const node = queue.shift()!;
+    collected.push(node);
+    queue.push(...(treeIndex.childrenByParent.get(node._id as string) ?? []));
+  }
+
+  return collected;
+}
+
 async function updateMovedPlannerSubtreeDate(
   ctx: MutationCtx,
-  rootNodeId: Id<"nodes">,
+  subtree: Doc<"nodes">[],
   plannerDate: number,
   now: number,
 ) {
-  const subtree = await collectNodeTree(ctx.db, rootNodeId);
   for (const node of subtree) {
     const sourceMeta = getNodeSourceMeta(node);
     if (typeof sourceMeta.plannerDate !== "number") {
@@ -225,28 +271,17 @@ type PlannerMergeDuplicateCandidate = {
 // subtree is redundant: the merge may only archive a node whose subtree is
 // empty or canonically identical to the winner's, so a distinct item with
 // children is never sacrificed to a text-similar neighbor.
-async function collectPlannerMergeSubtreeTexts(
-  ctx: MutationCtx,
+function collectPlannerMergeSubtreeTexts(
+  treeIndex: PlannerNodeTreeIndex,
   rootNodeId: Id<"nodes">,
 ) {
-  const nodes = await collectNodeTree(ctx.db, rootNodeId);
-  const childrenByParent = new Map<string, Doc<"nodes">[]>();
-  for (const node of nodes) {
-    if (node._id === rootNodeId || node.archived || !node.parentNodeId) {
-      continue;
-    }
-    const key = node.parentNodeId as string;
-    const siblings = childrenByParent.get(key) ?? [];
-    siblings.push(node);
-    childrenByParent.set(key, siblings);
-  }
-
   const texts: string[] = [];
   const visit = (parentId: string) => {
-    const children = (childrenByParent.get(parentId) ?? []).sort(
-      (left, right) => left.position - right.position,
-    );
+    const children = treeIndex.childrenByParent.get(parentId) ?? [];
     for (const child of children) {
+      if (child.archived) {
+        continue;
+      }
       texts.push(child.text);
       visit(child._id as string);
     }
@@ -254,6 +289,20 @@ async function collectPlannerMergeSubtreeTexts(
   visit(rootNodeId as string);
 
   return texts;
+}
+
+async function archivePlannerNodeSubtree(
+  ctx: MutationCtx,
+  treeIndex: PlannerNodeTreeIndex,
+  rootNodeId: Id<"nodes">,
+  now: number,
+) {
+  for (const node of collectPlannerNodeSubtree(treeIndex, rootNodeId)) {
+    await ctx.db.patch(node._id, {
+      archived: true,
+      updatedAt: now,
+    });
+  }
 }
 
 export const ensurePlannerPageSections = mutation({
@@ -963,6 +1012,7 @@ export const completePlannerDay = mutation({
 
     const ensuredSections = await ensurePlannerSections(ctx, page);
     const nodes = await listPageNodes(ctx.db, page._id);
+    const treeIndex = buildPlannerNodeTreeIndex(nodes);
     const focusSection =
       findPlannerSectionNode(nodes, PLANNER_FOCUS_SLOT) ??
       (ensuredSections.focusSectionId
@@ -984,11 +1034,11 @@ export const completePlannerDay = mutation({
     }
 
     const now = Date.now();
-    const topDayTree = await collectNodeTree(ctx.db, topDay._id);
+    const topDayTree = collectPlannerNodeSubtree(treeIndex, topDay._id);
     const topDayChildren = topDayTree
       .filter((node) => node.parentNodeId === topDay._id && !node.archived)
       .sort((left, right) => left.position - right.position);
-    const focusTree = await collectNodeTree(ctx.db, focusSection._id);
+    const focusTree = collectPlannerNodeSubtree(treeIndex, focusSection._id);
     const focusDirectChildren = focusTree
       .filter((node) => node.parentNodeId === focusSection._id && !node.archived)
       .sort((left, right) => left.position - right.position);
@@ -1085,10 +1135,10 @@ export const completePlannerDay = mutation({
           duplicateMatch.keep === "incoming" ? duplicateMatch.candidate.node : child;
         const winnerNode =
           duplicateMatch.keep === "incoming" ? child : duplicateMatch.candidate.node;
-        const loserSubtreeTexts = await collectPlannerMergeSubtreeTexts(ctx, loserNode._id);
+        const loserSubtreeTexts = collectPlannerMergeSubtreeTexts(treeIndex, loserNode._id);
         if (loserSubtreeTexts.length > 0) {
-          const winnerSubtreeTexts = await collectPlannerMergeSubtreeTexts(
-            ctx,
+          const winnerSubtreeTexts = collectPlannerMergeSubtreeTexts(
+            treeIndex,
             winnerNode._id,
           );
           if (!arePlannerMergeSubtreeTextsEquivalent(loserSubtreeTexts, winnerSubtreeTexts)) {
@@ -1105,7 +1155,12 @@ export const completePlannerDay = mutation({
         );
 
         if (duplicateMatch.keep === "incoming") {
-          await setNodeTreeArchivedState(ctx.db, duplicateMatch.candidate.node._id, true, now);
+          await archivePlannerNodeSubtree(
+            ctx,
+            treeIndex,
+            duplicateMatch.candidate.node._id,
+            now,
+          );
           keptCarryChildren = keptCarryChildren.filter(
             (node) => node._id !== duplicateMatch.candidate.node._id,
           );
@@ -1113,7 +1168,7 @@ export const completePlannerDay = mutation({
           keptCarryChildren.push(child);
           addDuplicateCandidate(child, "carry");
         } else {
-          await setNodeTreeArchivedState(ctx.db, child._id, true, now);
+          await archivePlannerNodeSubtree(ctx, treeIndex, child._id, now);
         }
         archivedDuplicateCount += 1;
         continue;
@@ -1133,12 +1188,22 @@ export const completePlannerDay = mutation({
         position: nextCarryPosition,
         updatedAt: now,
       });
-      await updateMovedPlannerSubtreeDate(ctx, node._id, topDayDate, now);
+      await updateMovedPlannerSubtreeDate(
+        ctx,
+        collectPlannerNodeSubtree(treeIndex, node._id),
+        topDayDate,
+        now,
+      );
       movedCount += 1;
       nextCarryPosition = getAppendPosition(nextCarryPosition);
     }
 
-    await setNodeTreeArchivedState(ctx.db, topDay._id, true, now);
+    // All active direct children were either moved or archived above, so only
+    // the now-empty day root remains to archive.
+    await ctx.db.patch(topDay._id, {
+      archived: true,
+      updatedAt: now,
+    });
     await enqueuePageRootEmbeddingRefresh(ctx, page._id);
 
     return {
